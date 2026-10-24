@@ -605,7 +605,7 @@ else:
         trend_fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified", xaxis_title="Source candle date", yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0))
         st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
 
-tabs = st.tabs(["Overview", "Live charts", "Technical analysis", "Sector rotation", "Global markets", "FII/DII & news", "Derivatives", "History & sources"])
+tabs = st.tabs(["Overview", "Live charts", "Technical analysis", "Sector rotation", "Global markets", "FII/DII & news", "Derivatives", "History & sources", "NIFTY historical returns"])
 with tabs[0]:
     st.subheader("Market snapshot and historical source data")
     rows = []
@@ -819,6 +819,62 @@ with tabs[7]:
         st.dataframe(dldf.tail(20), use_container_width=True, hide_index=True)
     else:
         st.info("No data to export for this instrument.")
+
+with tabs[8]:
+    st.subheader("NIFTY 50 historical returns")
+    st.caption("Calendar-year returns and monthly return heatmap, calculated from returned daily NIFTY 50 closing prices. Historical performance is not a prediction.")
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def _nifty_long_history(ticker: str):
+        return get_history(ticker, "10y", "1d")
+    with st.spinner("Loading up to 10 years of NIFTY 50 daily history…"):
+        nifty_long, nifty_long_error = _nifty_long_history(INDEXES["NIFTY 50"])
+    if nifty_long.empty or "Close" not in nifty_long.columns:
+        st.warning(f"Long-history data unavailable: {nifty_long_error or 'No usable NIFTY 50 daily closes returned.'}")
+    else:
+        hist = nifty_long.copy()
+        hist["Date"] = pd.to_datetime(hist["Date"], errors="coerce")
+        hist = hist.dropna(subset=["Date", "Close"]).sort_values("Date")
+        hist["Year"] = hist["Date"].dt.year
+        hist["Month"] = hist["Date"].dt.month
+        annual_closes = hist.groupby("Year", as_index=False).tail(1).sort_values("Year").set_index("Year")["Close"]
+        annual_rows = []
+        current_year = int(hist["Year"].max())
+        for year in range(max(2018, int(hist["Year"].min()) + 1), current_year + 1):
+            if year in annual_closes.index and (year - 1) in annual_closes.index:
+                ref_close = float(annual_closes.loc[year - 1])
+                end_close = float(annual_closes.loc[year])
+                annual_rows.append({"Year": f"{year} YTD" if year == current_year and hist["Date"].max().month < 12 else str(year), "Reference close": ref_close, "Year-end/latest close": end_close, "Return (%)": (end_close / ref_close - 1) * 100})
+        if annual_rows:
+            annual_df = pd.DataFrame(annual_rows)
+            st.markdown("#### Comparative yearly performance")
+            st.dataframe(annual_df.style.format({"Reference close": "{:,.2f}", "Year-end/latest close": "{:,.2f}", "Return (%)": "{:+.2f}"}), use_container_width=True, hide_index=True)
+            annual_fig = go.Figure(go.Bar(x=annual_df["Year"], y=annual_df["Return (%)"], marker_color=["#22c55e" if v >= 0 else "#ef4444" for v in annual_df["Return (%)"]], text=[f"{v:+.2f}%" for v in annual_df["Return (%)"]], textposition="outside", cliponaxis=False))
+            annual_fig.add_hline(y=0, line_color="#9ca3af", line_width=1)
+            annual_fig.update_layout(template="plotly_dark", title="NIFTY 50 Calendar-Year Returns (latest year is YTD)", yaxis_title="Return (%)", height=360, margin=dict(l=10, r=10, t=55, b=10), showlegend=False)
+            st.plotly_chart(annual_fig, use_container_width=True, config={"displaylogo": False}, key="nifty_annual_returns")
+        else:
+            st.info("Not enough prior year-end data to calculate calendar-year returns.")
+        month_ends = hist.groupby(["Year", "Month"], as_index=False).tail(1).sort_values("Date").copy()
+        month_ends["Monthly return (%)"] = month_ends["Close"].pct_change() * 100
+        month_ends.loc[month_ends.index[0], "Monthly return (%)"] = np.nan
+        month_ends = month_ends[month_ends["Year"] >= 2018]
+        years = list(range(2018, current_year + 1))
+        heat = pd.DataFrame(index=years, columns=range(1, 13), dtype=float)
+        for _, row in month_ends.iterrows():
+            y, m, val = int(row["Year"]), int(row["Month"]), row["Monthly return (%)"]
+            if y in heat.index and pd.notna(val):
+                heat.loc[y, m] = float(val)
+        st.markdown("#### Monthly percentage returns heat map")
+        st.caption("Each cell compares the month-end close with the previous available month-end close. Green = positive; red = negative; blank = unavailable. The first displayed month may use a prior-year reference close.")
+        month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        z = heat.to_numpy(dtype=float)
+        text_values = [[("" if pd.isna(v) else f"{v:.1f}") for v in row] for row in z]
+        heat_fig = go.Figure(go.Heatmap(z=z, x=month_names, y=[str(y) for y in years], colorscale=[[0, "#991b1b"], [0.5, "#4b5563"], [1, "#047857"]], zmin=-10, zmax=10, zmid=0, text=text_values, texttemplate="%{text}", textfont={"size": 10}, colorbar={"title": "Monthly return (%)"}, hovertemplate="Year %{y}<br>%{x}: %{z:.2f}%<extra></extra>", xgap=2, ygap=2))
+        heat_fig.update_layout(template="plotly_dark", title="Monthly NIFTY 50 Returns (%)", height=max(360, 38 * len(years) + 100), margin=dict(l=10, r=10, t=50, b=10), xaxis_title="", yaxis_title="Year")
+        st.plotly_chart(heat_fig, use_container_width=True, config={"displaylogo": False}, key="nifty_monthly_return_heatmap")
+        st.markdown("#### Interpretation and limitations")
+        st.write("Returns are calculated from the daily closing prices returned by the public data source. The latest year is year-to-date when the calendar year is incomplete. Price returns exclude dividends and do not guarantee future performance.")
+        st.caption(f"Source: Yahoo Finance via yfinance · Last returned daily bar: {hist['Date'].max():%d %b %Y} · app retrieval timestamp is not an exchange timestamp.")
 
 st.divider()
 st.caption("For research and monitoring only. Verify exchange timestamps and official sources before trading. Public widgets and public-source data may be delayed, incomplete or unavailable; this dashboard is not an execution system or investment advice.")
