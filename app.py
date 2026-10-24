@@ -341,32 +341,32 @@ if "auth_code" in st.query_params:
 
 if "fyers_access_token" in st.session_state and fyers_credentials():
     fyers_app_id = fyers_credentials()[0]
-    st.subheader("FYERS live market snapshot")
-    # Hidden explanatory note retained in code; keep the section heading only.
-    fyers_symbols = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:INFY-EQ"]
-    if st.button("Fetch FYERS live quotes", key="fyers_fetch_quotes"):
-        quote_rows, quote_error = fyers_live_quotes(fyers_app_id, st.session_state["fyers_access_token"], fyers_symbols)
-        if quote_error:
-            st.warning(f"FYERS quote data unavailable: {quote_error}")
-        elif not quote_rows:
-            st.info("FYERS returned no quote rows for the selected symbols.")
-        else:
-            normalized = []
-            for item in quote_rows:
-                values = item.get("v") or {}
-                normalized.append({
-                    "Symbol": item.get("n", values.get("symbol", "Unknown")),
-                    "Last price": values.get("lp"),
-                    "Change": values.get("ch"),
-                    "Change %": values.get("chp"),
-                    "Open": values.get("open_price"),
-                    "High": values.get("high_price"),
-                    "Low": values.get("low_price"),
-                    "Previous close": values.get("prev_close_price"),
-                    "Volume": values.get("volume"),
-                })
-            st.dataframe(pd.DataFrame(normalized), use_container_width=True, hide_index=True)
-            st.caption("Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
+    # Keep the optional live-quote tool available without taking space on the main dashboard.
+    with st.expander("FYERS live market snapshot · optional", expanded=False):
+        fyers_symbols = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:INFY-EQ"]
+        if st.button("Fetch FYERS live quotes", key="fyers_fetch_quotes"):
+            quote_rows, quote_error = fyers_live_quotes(fyers_app_id, st.session_state["fyers_access_token"], fyers_symbols)
+            if quote_error:
+                st.warning(f"FYERS quote data unavailable: {quote_error}")
+            elif not quote_rows:
+                st.info("FYERS returned no quote rows for the selected symbols.")
+            else:
+                normalized = []
+                for item in quote_rows:
+                    values = item.get("v") or {}
+                    normalized.append({
+                        "Symbol": item.get("n", values.get("symbol", "Unknown")),
+                        "Last price": values.get("lp"),
+                        "Change": values.get("ch"),
+                        "Change %": values.get("chp"),
+                        "Open": values.get("open_price"),
+                        "High": values.get("high_price"),
+                        "Low": values.get("low_price"),
+                        "Previous close": values.get("prev_close_price"),
+                        "Volume": values.get("volume"),
+                    })
+                st.dataframe(pd.DataFrame(normalized), use_container_width=True, hide_index=True)
+                st.caption("Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -660,7 +660,7 @@ for gift_source_name, gift_url in gift_sources:
         gift_score = 1 if gift_change_pct > 0 else -1 if gift_change_pct < 0 else 0
         sentiment_parts.append((gift_score, 0.40))
         gift_asof_match = re.search(r"Last updated:\s*([^·]{1,80})", gift_search_text, flags=re.IGNORECASE)
-        gift_asof = gift_asof_match.group(1).strip() if gift_asof_match else "Timestamp not parsed; verify source"
+        gift_asof = gift_asof_match.group(1).strip()[:24] if gift_asof_match else "Timestamp unavailable"
         sentiment_details.append({
             "Factor": f"GIFT Nifty · {gift_source_name}",
             "Latest change": f"{gift_change_pct:+.2f}% ({gift_change_points:+,.2f} pts)",
@@ -678,7 +678,7 @@ if not gift_loaded:
         "Factor": "GIFT Nifty · GiftCityNifty.com (last confirmed snapshot; stale)",
         "Latest change": "-0.32% (-72.50 pts)",
         "Signal": "Negative",
-        "Source bar": "24 Oct 2026, 02:29 IST · Market closed",
+        "Source bar": "24 Oct 2026 · stale",
     })
     sentiment_errors.append("GIFT Nifty live quote unavailable; showing the last confirmed 24 Oct snapshot for reference only (" + "; ".join(gift_failures) + ")")
 _sentiment_change("Brent crude (inverse impact)", "BZ=F", 0.20, inverse=True)
