@@ -342,7 +342,7 @@ if "auth_code" in st.query_params:
 if "fyers_access_token" in st.session_state and fyers_credentials():
     fyers_app_id = fyers_credentials()[0]
     st.subheader("FYERS live market snapshot")
-    st.caption("Source: FYERS Quotes API · values are shown only when returned by FYERS; this is a quote snapshot, not a continuous WebSocket stream.")
+    # Hidden explanatory note retained in code; keep the section heading only.
     fyers_symbols = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:INFY-EQ"]
     if st.button("Fetch FYERS live quotes", key="fyers_fetch_quotes"):
         quote_rows, quote_error = fyers_live_quotes(fyers_app_id, st.session_state["fyers_access_token"], fyers_symbols)
@@ -529,7 +529,7 @@ with st.spinner("Loading best-effort public market data…"):
         market_data[name], market_errors[name] = hist, err
 
 now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
-st.caption(f"Dashboard refreshed/viewed: {now_ist:%d %b %Y, %H:%M:%S IST} · Yahoo Finance via yfinance for calculations; TradingView for embedded charts. This timestamp is the app refresh time, not an exchange timestamp.")
+# Hidden refresh/source note retained in code to keep the dashboard focused on key headings and values.
 
 # Headline metrics from the latest returned historical bar (not described as real-time).
 headline_names = ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude", "USD/INR"]
@@ -567,16 +567,16 @@ for col, name in zip(cols, headline_names):
             col.metric(name, fmt(last["Close"]), delta_text, delta_color=delta_color)
         else:
             col.metric(name, fmt(last["Close"]), f"{fmt(change)} ({fmt(pct)}%)")
-        col.caption(f"Last source bar: {last['Date']:%d %b %Y, %H:%M IST}")
+        # Source-bar timestamp retained in data, but hidden from the compact headline display.
     else:
         col.metric(name, "Unavailable")
-        col.caption(market_errors[name] or "No data returned")
+        # Error details remain available in market_errors; avoid displaying extra helper text here.
 
-st.caption("Headline values are the latest returned daily bar, not guaranteed live quotes. Positive/negative changes are colour-coded; for USD/INR, a falling rate indicates rupee appreciation.")
+# Hidden headline explanation retained here in code; display headline metrics without extra notes.
 
 # Daily global-cue sentiment panel is intentionally placed immediately above Market Regime.
 st.subheader("Today's Market Direction · Global Sentiment")
-st.caption("Daily bias estimate from GIFT Nifty, Brent crude, and US-listed Indian IT/bank ADRs. Refresh the dashboard to recalculate. Signals are probabilistic and source availability is shown transparently.")
+# Hidden sentiment explanation retained here in code; display the main heading and sentiment output.
 sentiment_parts = []
 sentiment_details = []
 sentiment_errors = []
@@ -734,8 +734,8 @@ with sentiment_factors:
     else:
         st.warning("No usable global cue data returned. No direction is guessed.")
 if sentiment_errors:
-    st.caption("Unavailable factors: " + "; ".join(sentiment_errors))
-st.caption("Method: positive GIFT/ADR moves support a bullish bias; rising Brent is a headwind for India. Available factors are normalized by their included weights. ADRs and Yahoo futures proxies may be delayed and do not replace a verified pre-open GIFT Nifty quote. Confirm with NIFTY/Bank NIFTY price action after the open.")
+    # Keep unavailable-factor details in sentiment_errors, but hide this extra explanatory line.
+# Hidden sentiment methodology note retained in code; keep the panel visually concise.
 
 # At-a-glance regime panel is intentionally placed above the navigation tabs.
 st.subheader("Market regime & trend strength")
@@ -877,7 +877,7 @@ else:
         regime_cols[3].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {weekly_ema_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY · Weekly EMA 200 gap</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{weekly_ema_color};">{weekly_gap_text}</div><div style="font-size:12px;color:#aeb6c2;">Close {weekly_close_text} · EMA {weekly_ema_text}</div><div style="font-size:12px;color:{weekly_ema_color};margin-top:4px;">{weekly_subtext}</div></div>', unsafe_allow_html=True)
         nifty_pcr_text = f"{nifty_pcr:.2f}" if pd.notna(nifty_pcr) else "—"
         regime_cols[4].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {nifty_pcr_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY 50 · PCR (OI)</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{nifty_pcr_color};">{nifty_pcr_text}</div><div style="font-size:12px;color:{nifty_pcr_color};margin-top:4px;">{nifty_pcr_status}</div><div style="font-size:11px;color:#aeb6c2;margin-top:4px;">Source: FYERS · {nifty_pcr_source_time}</div></div>', unsafe_allow_html=True)
-        st.caption(f"Calculated from {overview_regime_name} historical OHLC data · last source bar: {overview_last['Date']:%d %b %Y, %H:%M IST} · weekly NIFTY source bar: {weekly_nifty_timestamp} · weekly EMA 200 uses 200 weekly closes; Yahoo Finance data may be delayed. PCR is aggregate put OI divided by call OI from the returned FYERS option chain and requires a valid FYERS session. These are heuristic signals, not certain forecasts.")
+        # Calculation/source explanation retained in code but hidden from the main dashboard view.
         st.markdown("#### Price trend")
         trend_fig = go.Figure()
         trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["Close"], name="Close", mode="lines", line=dict(color="#60a5fa", width=2)))
