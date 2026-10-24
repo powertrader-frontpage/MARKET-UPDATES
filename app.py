@@ -277,6 +277,9 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
         with col_period:
             chart_days_label = st.selectbox("History window", ["5 days", "1 month", "3 months", "6 months", "1 year"], index=2, key="fyers_chart_days")
         chart_days = {"5 days": 5, "1 month": 31, "3 months": 92, "6 months": 183, "1 year": 365}[chart_days_label]
+        if chart_resolution in {"1", "5"} and chart_days > 5:
+            st.warning("For 1-minute and 5-minute candles, the chart automatically limits history to the most recent 5 calendar days to avoid oversized or unsupported requests.")
+            chart_days = 5
         if st.button("Load / refresh FYERS chart", key="fyers_load_chart"):
             chart_symbol = symbol_labels[selected_label]
             with st.spinner(f"Fetching FYERS candles for {chart_symbol}..."):
@@ -285,19 +288,39 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
             if candle_error:
                 st.warning(f"Chart data unavailable: {candle_error}")
             else:
-                fig = go.Figure(data=[go.Candlestick(x=candles["Date"], open=candles["Open"], high=candles["High"], low=candles["Low"], close=candles["Close"], name=chart_symbol)])
-                current_ltp = (live_rows[0].get("v") or {}).get("lp") if live_rows else None
-                if current_ltp is not None:
-                    fig.add_hline(y=float(current_ltp), line_dash="dot", annotation_text=f"Latest FYERS quote: {float(current_ltp):,.2f}")
-                fig.update_layout(title=f"{chart_symbol} · FYERS candles", xaxis_title="Time (IST)", yaxis_title="Price", xaxis_rangeslider_visible=False, height=600, margin=dict(l=20, r=20, t=60, b=20))
-                st.plotly_chart(fig, use_container_width=True)
-                latest_candle_time = candles["Date"].max().strftime("%Y-%m-%d %H:%M:%S %Z")
-                st.caption(f"Source: FYERS Historical Data · latest returned candle: {latest_candle_time} · chart fetched: {datetime.now(ZoneInfo('Asia/Kolkata')).strftime('%Y-%m-%d %H:%M:%S IST')}")
-                if current_ltp is not None:
-                    st.metric("Latest FYERS quote", f"{float(current_ltp):,.2f}")
-                elif quote_error:
-                    st.info(f"Candles loaded, but latest quote unavailable: {quote_error}")
-                st.info("Click Load / refresh FYERS chart to fetch newer candles and quotes. Continuous live updates require a persistent FYERS WebSocket service; this chart refreshes on request.")
+                candles = candles.copy()
+                candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
+                candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
+                if candles.empty:
+                    st.warning("FYERS returned no valid OHLC candles for this selection.")
+                else:
+                    current_ltp = (live_rows[0].get("v") or {}).get("lp") if live_rows else None
+                    fig = go.Figure(data=[go.Candlestick(x=candles["Date"], open=candles["Open"], high=candles["High"], low=candles["Low"], close=candles["Close"], name=chart_symbol)])
+                    if current_ltp is not None:
+                        fig.add_hline(y=float(current_ltp), line_dash="dot", annotation_text=f"Latest FYERS quote: {float(current_ltp):,.2f}")
+                    fig.update_layout(
+                        title=f"{chart_symbol} · FYERS candles",
+                        xaxis_title="Time (IST)", yaxis_title="Price",
+                        xaxis_rangeslider_visible=False, height=650,
+                        hovermode="x unified",
+                        margin=dict(l=20, r=20, t=60, b=20),
+                    )
+                    fig.update_xaxes(
+                        type="date",
+                        tickformat="%d %b %H:%M" if chart_resolution != "1D" else "%d %b %Y",
+                        showspikes=True,
+                        spikemode="across",
+                        spikesnap="cursor",
+                    )
+                    fig.update_yaxes(fixedrange=False)
+                    st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False})
+                    latest_candle_time = candles["Date"].max().strftime("%Y-%m-%d %H:%M:%S %Z")
+                    st.caption(f"Source: FYERS Historical Data · candles: {len(candles):,} · latest returned candle: {latest_candle_time} · chart fetched: {datetime.now(ZoneInfo('Asia/Kolkata')).strftime('%Y-%m-%d %H:%M:%S IST')}")
+                    if current_ltp is not None:
+                        st.metric("Latest FYERS quote", f"{float(current_ltp):,.2f}")
+                    elif quote_error:
+                        st.info(f"Candles loaded, but latest quote unavailable: {quote_error}")
+                    st.info("Click Load / refresh FYERS chart to fetch newer candles and quotes. Continuous live updates require a persistent FYERS WebSocket service; this chart refreshes on request.")
 
 if refresh:
     st.cache_data.clear()
