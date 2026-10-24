@@ -770,8 +770,9 @@ with tabs[3]:
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.warning("No sector index series were returned by the public source. No values have been substituted.")
-    st.markdown("#### TradingView stock heatmap (global coverage; exchange coverage may vary)")
-    tv_widget("stock-heatmap", {"dataSource": "SPX500", "blockSize": "market_cap_basic", "blockColor": "change", "grouping": "sector", "locale": "en", "colorTheme": "dark", "hasTopBar": False, "isDataSetEnabled": False, "isZoomEnabled": True, "hasSymbolTooltip": True, "isMonoSize": False, "width": "100%", "height": 520}, 530)
+    st.markdown("#### NIFTY 50 stock heatmap")
+    st.caption("Focused on NIFTY 50 constituents only · Tile size reflects market capitalization · Color reflects daily change")
+    tv_widget("stock-heatmap", {"dataSource": "NIFTY50", "blockSize": "market_cap_basic", "blockColor": "change", "grouping": "sector", "locale": "en", "colorTheme": "dark", "hasTopBar": False, "isDataSetEnabled": False, "isZoomEnabled": True, "hasSymbolTooltip": True, "isMonoSize": False, "width": "100%", "height": 520}, 530)
 
 with tabs[4]:
     st.subheader("Global markets and commodities")
