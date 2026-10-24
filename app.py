@@ -15,7 +15,9 @@ import streamlit.components.v1 as components
 import yfinance as yf
 
 import hashlib
+import hmac
 import secrets
+import time
 from urllib.parse import urlencode
 
 st.set_page_config(page_title="Market Intelligence Terminal", page_icon="📈", layout="wide")
@@ -77,6 +79,22 @@ def fyers_credentials():
         pass
     return None
 
+def fyers_make_state(app_secret: str) -> str:
+    issued = str(int(time.time()))
+    nonce = secrets.token_urlsafe(18)
+    message = f"{issued}.{nonce}"
+    signature = hmac.new(app_secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{message}.{signature}"
+
+def fyers_check_state(app_secret: str, state: str) -> bool:
+    try:
+        issued, nonce, signature = state.split(".", 2)
+        message = f"{issued}.{nonce}"
+        expected = hmac.new(app_secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+        return abs(int(time.time()) - int(issued)) <= 600 and hmac.compare_digest(signature, expected)
+    except Exception:
+        return False
+
 def fyers_login_url(app_id: str, redirect_uri: str, state: str) -> str:
     params = {
         "client_id": app_id,
@@ -124,8 +142,6 @@ with st.sidebar:
         st.warning("Add FYERS_APP_ID, FYERS_APP_SECRET and FYERS_REDIRECT_URI in Streamlit Cloud Secrets to enable the connection.")
     else:
         fyers_app_id, fyers_app_secret, fyers_redirect_uri = fyers_config
-        if "fyers_state" not in st.session_state:
-            st.session_state["fyers_state"] = secrets.token_urlsafe(24)
         if st.session_state.get("fyers_access_token"):
             st.success("FYERS session connected for this app session.")
             if st.button("Disconnect FYERS session", use_container_width=True):
@@ -135,7 +151,7 @@ with st.sidebar:
         else:
             st.link_button(
                 "Connect FYERS account",
-                fyers_login_url(fyers_app_id, fyers_redirect_uri, st.session_state["fyers_state"]),
+                fyers_login_url(fyers_app_id, fyers_redirect_uri, fyers_make_state(fyers_app_secret)),
                 use_container_width=True,
             )
             st.caption("Read-only market data. You may need to authorize again when the daily access token expires.")
@@ -147,15 +163,14 @@ if "auth_code" in st.query_params:
     auth_code = st.query_params.get("auth_code", "")
     if not fyers_config:
         st.error("FYERS credentials are not configured in Streamlit Secrets.")
-    elif not returned_state or returned_state != st.session_state.get("fyers_state"):
-        st.error("FYERS login state could not be verified in this session. Please click Connect FYERS account and try again.")
+    elif not returned_state or not fyers_check_state(fyers_config[1], returned_state):
+        st.error("FYERS login state could not be verified or has expired. Please click Connect FYERS account and try again.")
     elif auth_code:
         with st.spinner("Completing FYERS authorization..."):
             token, token_error = fyers_exchange_auth_code(fyers_config[0], fyers_config[1], auth_code)
         if token:
             st.session_state["fyers_access_token"] = token
             st.session_state["fyers_connected_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
-            st.session_state.pop("fyers_state", None)
             st.query_params.clear()
             st.success("FYERS connected. Access token is held in this Streamlit session only.")
             st.rerun()
