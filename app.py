@@ -44,6 +44,7 @@ INDEXES = {
     "BANK NIFTY": "^NSEBANK",
     "India VIX": "^INDIAVIX",
     "Brent Crude": "BZ=F",
+    "USD/INR": "INR=X",
     "INFY": "INFY.NS",
     "WIPRO": "WIPRO.NS",
     "RELIANCE": "RELIANCE.NS",
@@ -645,19 +646,27 @@ now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
 st.caption(f"Dashboard refreshed/viewed: {now_ist:%d %b %Y, %H:%M:%S IST} · Yahoo Finance via yfinance for calculations; TradingView for embedded charts. This timestamp is the app refresh time, not an exchange timestamp.")
 
 # Headline metrics from the latest returned historical bar (not described as real-time).
-cols = st.columns(4)
-for col, name in zip(cols, ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude"]):
+headline_names = ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude", "USD/INR"]
+cols = st.columns(5)
+for col, name in zip(cols, headline_names):
     df = market_data[name]
     snap = quote_snapshot(df)
     if snap:
         last, change, pct = snap
-        col.metric(name, fmt(last["Close"]), f"{fmt(change)} ({fmt(pct)}%)")
+        # For USD/INR, a falling rate means the rupee appreciates; reverse the colour semantics.
+        if name == "USD/INR":
+            delta_text = f"{fmt(change)} ({fmt(pct)}%)"
+            delta_color = "inverse"
+            delta_text += " · INR stronger" if change < 0 else (" · INR weaker" if change > 0 else "")
+            col.metric(name, fmt(last["Close"]), delta_text, delta_color=delta_color)
+        else:
+            col.metric(name, fmt(last["Close"]), f"{fmt(change)} ({fmt(pct)}%)")
         col.caption(f"Last source bar: {last['Date']:%d %b %Y, %H:%M IST}")
     else:
         col.metric(name, "Unavailable")
         col.caption(market_errors[name] or "No data returned")
 
-st.caption("Headline values are the latest returned daily bar, not guaranteed live quotes. For current market viewing, use the embedded TradingView widgets and check the exchange/data-status label there.")
+st.caption("Headline values are the latest returned daily bar, not guaranteed live quotes. Positive/negative changes are colour-coded; for USD/INR, a falling rate indicates rupee appreciation.")
 
 tabs = st.tabs(["Overview", "Live charts", "Technical analysis", "Sector rotation", "Global markets", "FII/DII & news", "Derivatives", "History & sources"])
 with tabs[0]:
@@ -741,11 +750,47 @@ with tabs[0]:
     st.markdown("#### Global market and news widgets")
     tv_widget("market-overview", {"colorTheme": "dark", "dateRange": "1D", "showChart": True, "locale": "en", "width": "100%", "height": 420, "isTransparent": False, "showSymbolLogo": True, "showFloatingTooltip": False, "tabs": [{"title": "Indices", "symbols": [{"s": "NSE:NIFTY"}, {"s": "NSE:BANKNIFTY"}, {"s": "TVC:VIX"}, {"s": "TVC:UKOIL"}, {"s": "NASDAQ:NDX"}, {"s": "SP:SPX"}]}]}, 430)
 with tabs[1]:
-    st.subheader("Embedded interactive charts")
-    chart_choice = st.selectbox("Choose chart", ["NIFTY 50", "BANK NIFTY", "INFY", "WIPRO", "Brent Crude", "India VIX"])
-    tv_symbols = {"NIFTY 50": "NSE:NIFTY", "BANK NIFTY": "NSE:BANKNIFTY", "INFY": "NSE:INFY", "WIPRO": "NSE:WIPRO", "Brent Crude": "TVC:UKOIL", "India VIX": "NSE:INDIAVIX"}
-    advanced_chart(tv_symbols[chart_choice], 720)
-    st.caption("TradingView supplies the chart data independently. Availability and delay vary by symbol/exchange; this app does not override those settings. Use the chart selector above to switch instruments.")
+    st.subheader("Market charts")
+    st.caption("Clean, full-width charts built from the data already loaded by this dashboard. Source is Yahoo Finance via yfinance; daily bars can be delayed or stale. For FYERS-sourced charts, use the FYERS stock charts section below.")
+    available_chart_names = [name for name in ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude", "USD/INR", "INFY", "WIPRO", "RELIANCE", "HDFCBANK"] if name in market_data and not market_data[name].empty]
+    if not available_chart_names:
+        st.warning("No chart history was returned by the source. Refresh market data or try again later.")
+    else:
+        chart_choice = st.selectbox("Choose instrument", available_chart_names, key="market_chart_choice")
+        chart_frame = market_data[chart_choice].copy().sort_values("Date")
+        chart_frame = chart_frame.dropna(subset=["Date", "Open", "High", "Low", "Close"])
+        chart_window = st.selectbox("Chart history", ["1 month", "3 months", "6 months", "1 year", "All loaded"], index=2, key="market_chart_window")
+        window_days = {"1 month": 31, "3 months": 92, "6 months": 183, "1 year": 365}
+        if chart_window != "All loaded" and not chart_frame.empty:
+            cutoff = chart_frame["Date"].max() - pd.Timedelta(days=window_days[chart_window])
+            chart_frame = chart_frame[chart_frame["Date"] >= cutoff]
+        if chart_frame.empty:
+            st.info("No valid OHLC candles are available for this instrument.")
+        else:
+            chart_fig = go.Figure()
+            chart_fig.add_trace(go.Candlestick(
+                x=chart_frame["Date"], open=chart_frame["Open"], high=chart_frame["High"],
+                low=chart_frame["Low"], close=chart_frame["Close"], name=chart_choice,
+                increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+                increasing_fillcolor="#22c55e", decreasing_fillcolor="#ef4444",
+            ))
+            if "Volume" in chart_frame and chart_frame["Volume"].notna().any():
+                chart_fig.add_trace(go.Bar(x=chart_frame["Date"], y=chart_frame["Volume"], name="Volume", yaxis="y2", marker_color="#64748b", opacity=0.28))
+            chart_fig.update_layout(
+                template="plotly_dark", height=620, autosize=True,
+                title=f"{chart_choice} · OHLC candles",
+                margin=dict(l=12, r=18, t=55, b=18),
+                xaxis=dict(title="", rangeslider=dict(visible=False), showgrid=False),
+                yaxis=dict(title="Price", domain=[0.22, 1], showgrid=True, gridcolor="rgba(148,163,184,.12)"),
+                yaxis2=dict(title="Volume", overlaying="y", side="right", showgrid=False, rangemode="tozero", domain=[0, .18]),
+                legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1),
+                hovermode="x unified",
+            )
+            st.plotly_chart(chart_fig, use_container_width=True, config={"displaylogo": False, "scrollZoom": True}, key="market_candlestick_chart")
+            latest_snap = quote_snapshot(chart_frame)
+            if latest_snap:
+                latest_bar, latest_change, latest_pct = latest_snap
+                st.caption(f"Latest returned bar: {latest_bar['Date']:%d %b %Y, %H:%M IST} · Change vs previous bar: {latest_change:,.2f} ({latest_pct:,.2f}%) · Not guaranteed live.")
 
 with tabs[2]:
     st.subheader("Technical analysis from returned OHLC data")
