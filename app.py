@@ -245,6 +245,15 @@ with st.sidebar:
     fyers_config = fyers_credentials()
     token_vault = fyers_token_vault()
     now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    # Clear expired session tokens so the refresh-token path is offered instead of a stale "connected" state.
+    if st.session_state.get("fyers_access_token"):
+        try:
+            session_expiry = datetime.fromisoformat(token_vault.get("access_expires_at", ""))
+            if now_ist >= session_expiry:
+                st.session_state.pop("fyers_access_token", None)
+        except Exception:
+            # Older session tokens without expiry metadata are not trusted indefinitely.
+            st.session_state.pop("fyers_access_token", None)
     # Restore the process-wide token into a new browser/session when it is still valid.
     if not st.session_state.get("fyers_access_token") and token_vault.get("access_token"):
         try:
