@@ -374,9 +374,9 @@ with tabs[7]:
 st.divider()
 st.caption("For research and monitoring only. Verify exchange timestamps and official sources before trading. Public widgets and public-source data may be delayed, incomplete or unavailable; this dashboard is not an execution system or investment advice.")
 
-# Expanded research modules (13–22). All calculated values come from fetched or uploaded data.
+# Expanded research modules (13–22). Calculations use public-source data; personal journal data remains user-controlled.
 extra_tabs = st.tabs([
-    "13 Regime", "14 Options CSV", "15 Risk", "16 Backtest", "17 Breadth",
+    "13 Regime", "14 Options status", "15 Risk", "16 Backtest", "17 Breadth",
     "18 Events", "19 Trade journal", "20 Data quality", "21 Cross-asset", "22 Signals"
 ])
 
@@ -716,7 +716,7 @@ with advanced_tabs[0]:
     st.markdown("[Official sources: NSE reports](https://www.nseindia.com/all-reports) · [RBI](https://www.rbi.org.in/) · [MOSPI](https://mospi.gov.in/) · [SEBI](https://www.sebi.gov.in/)")
 
 with advanced_tabs[1]:
-    st.subheader("27 · Market breadth and technical stock scanner")
+    st.subheader("27 · Automatic market breadth and technical stock scanner")
     st.write("Automatically fetches a fixed large-cap OHLCV universe by default. Optional CSV override is available, but not required.")
     breadth_file = st.file_uploader("Optional: override with your own OHLCV CSV", type=["csv"], key="breadth_universe")
     auto_breadth = st.button("↻ Fetch latest stock universe", key="auto_breadth_fetch")
