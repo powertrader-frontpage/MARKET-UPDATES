@@ -693,8 +693,15 @@ with tabs[0]:
                 else:
                     overview_regime = "Transition / mixed"
             overview_vol = overview_rc["Return %"].rolling(20).std().iloc[-1] * np.sqrt(252)
-            regime_cols = st.columns(4)
-            regime_cols[0].metric("Regime framework", overview_regime)
+            regime_cols = st.columns([1.35, 1, 1, 1.15])
+            regime_color = "#22c55e" if overview_regime == "Trending bullish" else "#ef4444" if overview_regime == "Trending bearish" else "#f59e0b"
+            regime_cols[0].markdown(
+                f'<div style="border:1px solid #343a46;border-radius:12px;padding:12px 14px;min-height:92px;">'
+                f'<div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">Market regime</div>'
+                f'<div style="font-size:clamp(16px,2.8vw,25px);line-height:1.25;font-weight:650;color:{regime_color};overflow-wrap:anywhere;">{overview_regime}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
             regime_cols[1].metric("ADX 14", fmt(overview_adx_value))
             regime_cols[2].metric("RSI 14", fmt(overview_rsi_value))
             regime_cols[3].metric("Realized vol 20d annualized", f"{overview_vol:.2%}" if pd.notna(overview_vol) else "Unavailable")
