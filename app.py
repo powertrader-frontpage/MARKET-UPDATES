@@ -103,37 +103,41 @@ AUTO_UNIVERSE = {
 
 @st.cache_data(ttl=21600, show_spinner=False)
 def get_auto_universe(period: str = "2y") -> pd.DataFrame:
-    """Fetch actual daily OHLCV for a broad, fixed large-cap universe; never create synthetic rows."""
+    """Fetch actual daily OHLCV for a fixed large-cap universe; return empty data on source failure."""
     tickers = list(AUTO_UNIVERSE)
-    raw = yf.download(tickers, period=period, interval="1d", auto_adjust=False, group_by="ticker",
-                      threads=True, progress=False, actions=False)
-    if raw is None or raw.empty:
-        return pd.DataFrame()
-    rows=[]
-    for ticker in tickers:
-        try:
-            if isinstance(raw.columns, pd.MultiIndex):
-                if ticker not in raw.columns.get_level_values(0):
+    try:
+        raw = yf.download(tickers, period=period, interval="1d", auto_adjust=False, group_by="ticker",
+                          threads=True, progress=False, actions=False)
+        if raw is None or raw.empty:
+            return pd.DataFrame()
+        rows=[]
+        for ticker in tickers:
+            try:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    if ticker not in raw.columns.get_level_values(0):
+                        continue
+                    part=raw[ticker].copy()
+                else:
+                    part=raw.copy()
+                part=part.reset_index()
+                date_col="Date" if "Date" in part.columns else "Datetime"
+                if date_col not in part.columns or "Close" not in part.columns:
                     continue
-                part=raw[ticker].copy()
-            else:
-                part=raw.copy()
-            part=part.reset_index()
-            date_col="Date" if "Date" in part.columns else "Datetime"
-            if date_col not in part.columns or "Close" not in part.columns:
+                part=part.rename(columns={date_col:"Date"})
+                part["Date"]=pd.to_datetime(part["Date"],errors="coerce")
+                part["Symbol"]=ticker.replace(".NS","")
+                part["Industry"]=AUTO_UNIVERSE[ticker]
+                for c in ["Open","High","Low","Close","Volume"]:
+                    if c in part.columns: part[c]=pd.to_numeric(part[c],errors="coerce")
+                part=part.dropna(subset=["Date","Close"])
+                if not part.empty:
+                    rows.append(part[[c for c in ["Date","Symbol","Industry","Open","High","Low","Close","Volume"] if c in part.columns]])
+            except Exception:
                 continue
-            part=part.rename(columns={date_col:"Date"})
-            part["Symbol"]=ticker.replace(".NS", "")
-            part["Industry"]=AUTO_UNIVERSE[ticker]
-            for c in ["Open","High","Low","Close","Volume"]:
-                if c in part.columns: part[c]=pd.to_numeric(part[c], errors="coerce")
-            part=part.dropna(subset=["Date","Close"])
-            rows.append(part[[c for c in ["Date","Symbol","Industry","Open","High","Low","Close","Volume"] if c in part.columns]])
-        except Exception:
-            continue
-    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+        return pd.concat(rows,ignore_index=True) if rows else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
-@st.cache_data(ttl=900, show_spinner=False)
 def get_news_rss(query: str, limit: int = 12) -> tuple[pd.DataFrame, str | None]:
     """Fetch public Google News RSS search results; headlines are attributed and never treated as verified causal explanations."""
     import xml.etree.ElementTree as ET
@@ -687,7 +691,7 @@ with research_tabs[0]:
         except Exception as exc:
             st.error(f"Could not calculate industry analytics: {type(exc).__name__}: {exc}")
     else:
-        st.info("Press **Fetch latest industry data** to load genuine daily history automatically, or upload your own CSV.")
+        st.info("Automatic history was unavailable from Yahoo Finance. No industry values are substituted; retry later or optionally upload your own genuine CSV.")
     st.caption("Automatic universe: selected large-cap NSE-listed stocks. Industry labels are broad groupings, not official index constituents. Source: Yahoo Finance via yfinance; verify freshness and coverage.")
 
 with research_tabs[1]:
@@ -894,7 +898,7 @@ with advanced_tabs[0]:
 
 with advanced_tabs[1]:
     st.subheader("27 · Market breadth and technical stock scanner")
-    st.write("Fetch a broad large-cap OHLCV universe automatically, or upload your own dataset. Indicators use returned source data only.")
+    st.write("Automatically fetches a fixed large-cap OHLCV universe by default. Optional CSV override is available, but not required.")
     breadth_file = st.file_uploader("Optional: override with your own OHLCV CSV", type=["csv"], key="breadth_universe")
     auto_breadth = st.button("↻ Fetch latest stock universe", key="auto_breadth_fetch")
     st.caption("Automatic history is fetched from Yahoo Finance. Public source coverage, delays and availability can vary.")
@@ -966,7 +970,7 @@ with advanced_tabs[1]:
         except Exception as exc:
             st.error(f"Could not calculate breadth/scanner: {type(exc).__name__}: {exc}")
     else:
-        st.info("Upload your stock universe CSV to calculate breadth. No stocks are silently assumed to be constituents.")
+        st.info("Automatic stock history is unavailable from the public source. No breadth values are fabricated; retry later.")
 
 with advanced_tabs[2]:
     st.subheader("28 · Automatic derivatives lab")
