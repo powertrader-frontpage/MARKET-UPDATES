@@ -447,7 +447,6 @@ st.caption("Headline values are the latest returned daily bar, not guaranteed li
 
 # At-a-glance regime panel is intentionally placed above the navigation tabs.
 st.subheader("Market regime & trend strength")
-st.subheader("Market regime & trend strength")
 overview_regime_name = st.selectbox("Regime instrument", list(INDEXES.keys()), index=0, key="overview_regime_symbol")
 overview_regime_df = market_data[overview_regime_name]
 if overview_regime_df.empty or len(overview_regime_df) < 30:
