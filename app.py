@@ -619,6 +619,45 @@ else:
         except Exception as exc:
             weekly_ema_error = f"Weekly data unavailable ({exc.__class__.__name__})"
         weekly_ema_gap_pct = ((weekly_nifty_close / weekly_ema200) - 1) * 100 if pd.notna(weekly_nifty_close) and pd.notna(weekly_ema200) and weekly_ema200 != 0 else np.nan
+
+        # NIFTY 50 PCR uses actual aggregate put/call open interest from FYERS; no guessed fallback.
+        nifty_pcr = np.nan
+        nifty_pcr_status = "Connect FYERS for live option-chain PCR"
+        nifty_pcr_source_time = "Unavailable"
+        if st.session_state.get("fyers_access_token") and fyers_credentials():
+            try:
+                pcr_app_id = fyers_credentials()[0]
+                pcr_token = st.session_state["fyers_access_token"]
+                pcr_chain, pcr_error = fyers_option_chain(pcr_app_id, pcr_token, "NSE:NIFTY50-INDEX", strikecount=10)
+                if not pcr_error:
+                    pcr_rows = pcr_chain.get("optionsChain") or pcr_chain.get("options_chain") or []
+                    pcr_calls = [row for row in pcr_rows if str(row.get("option_type", "")).upper() == "CE"]
+                    pcr_puts = [row for row in pcr_rows if str(row.get("option_type", "")).upper() == "PE"]
+                    pcr_call_oi = pcr_chain.get("callOi")
+                    pcr_put_oi = pcr_chain.get("putOi")
+                    if pcr_call_oi is None:
+                        pcr_call_oi = sum(float(row.get("oi") or 0) for row in pcr_calls)
+                    if pcr_put_oi is None:
+                        pcr_put_oi = sum(float(row.get("oi") or 0) for row in pcr_puts)
+                    if float(pcr_call_oi or 0) > 0:
+                        nifty_pcr = float(pcr_put_oi or 0) / float(pcr_call_oi)
+                        nifty_pcr_status = "Bounce-back chances are high" if nifty_pcr < 0.6 else "Coming-down chances are high" if nifty_pcr > 1.4 else "Neutral PCR range"
+                        nifty_pcr_source_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y %H:%M IST")
+                    else:
+                        nifty_pcr_status = "PCR unavailable: call OI is zero or missing"
+                else:
+                    nifty_pcr_status = "FYERS option-chain unavailable"
+            except Exception:
+                nifty_pcr_status = "FYERS option-chain unavailable"
+        if pd.notna(nifty_pcr) and nifty_pcr < 0.6:
+            nifty_pcr_color = "#22c55e"
+        elif pd.notna(nifty_pcr) and nifty_pcr > 1.4:
+            nifty_pcr_color = "#ef4444"
+        elif pd.notna(nifty_pcr):
+            nifty_pcr_color = "#f59e0b"
+        else:
+            nifty_pcr_color = "#94a3b8"
+
         if pd.notna(weekly_ema_gap_pct) and weekly_ema_gap_pct >= 13:
             weekly_ema_color = "#ef4444"
             weekly_ema_status = "Extended · elevated pullback risk"
@@ -634,7 +673,7 @@ else:
         else:
             weekly_ema_color = "#94a3b8"
             weekly_ema_status = "Insufficient weekly history"
-        regime_cols = st.columns([1.2, 0.9, 0.9, 1.25])
+        regime_cols = st.columns([1.1, 0.8, 0.8, 1.15, 1.15])
         regime_color = "#22c55e" if overview_regime == "Trending bullish" else "#ef4444" if overview_regime == "Trending bearish" else "#f59e0b"
         regime_cols[0].markdown(
             f'<div style="border:1px solid #343a46;border-radius:12px;padding:12px 14px;min-height:92px;">'
@@ -652,7 +691,9 @@ else:
         weekly_gap_text = f"{weekly_ema_gap_pct:+.2f}%" if pd.notna(weekly_ema_gap_pct) else "—"
         weekly_subtext = weekly_ema_status if pd.notna(weekly_ema_gap_pct) else weekly_ema_error or weekly_ema_status
         regime_cols[3].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {weekly_ema_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY · Weekly EMA 200 gap</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{weekly_ema_color};">{weekly_gap_text}</div><div style="font-size:12px;color:#aeb6c2;">Close {weekly_close_text} · EMA {weekly_ema_text}</div><div style="font-size:12px;color:{weekly_ema_color};margin-top:4px;">{weekly_subtext}</div></div>', unsafe_allow_html=True)
-        st.caption(f"Calculated from {overview_regime_name} historical OHLC data · last source bar: {overview_last['Date']:%d %b %Y, %H:%M IST} · weekly NIFTY source bar: {weekly_nifty_timestamp} · weekly EMA 200 uses 200 weekly closes; Yahoo Finance data may be delayed. The red/green bands are distance alerts, not certain price forecasts.")
+        nifty_pcr_text = f"{nifty_pcr:.2f}" if pd.notna(nifty_pcr) else "—"
+        regime_cols[4].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {nifty_pcr_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY 50 · PCR (OI)</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{nifty_pcr_color};">{nifty_pcr_text}</div><div style="font-size:12px;color:{nifty_pcr_color};margin-top:4px;">{nifty_pcr_status}</div><div style="font-size:11px;color:#aeb6c2;margin-top:4px;">Source: FYERS · {nifty_pcr_source_time}</div></div>', unsafe_allow_html=True)
+        st.caption(f"Calculated from {overview_regime_name} historical OHLC data · last source bar: {overview_last['Date']:%d %b %Y, %H:%M IST} · weekly NIFTY source bar: {weekly_nifty_timestamp} · weekly EMA 200 uses 200 weekly closes; Yahoo Finance data may be delayed. PCR is aggregate put OI divided by call OI from the returned FYERS option chain and requires a valid FYERS session. These are heuristic signals, not certain forecasts.")
         st.markdown("#### Price trend")
         trend_fig = go.Figure()
         trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["Close"], name="Close", mode="lines", line=dict(color="#60a5fa", width=2)))
