@@ -188,6 +188,31 @@ def fyers_live_quotes(app_id: str, access_token: str, symbols: list[str]):
     except Exception as exc:
         return [], f"FYERS quote request failed: {exc.__class__.__name__}"
 
+
+def fyers_option_chain(app_id: str, access_token: str, symbol: str, strikecount: int = 10, expiry_timestamp: str = ""):
+    """Fetch an authentic FYERS option-chain snapshot; never substitute sample data."""
+    try:
+        params = {"symbol": symbol, "strikecount": str(strikecount), "greeks": "1"}
+        if expiry_timestamp:
+            params["timestamp"] = str(expiry_timestamp)
+        response = requests.get(
+            "https://api-t1.fyers.in/data/options-chain-v3",
+            params=params,
+            headers={"Authorization": f"{app_id}:{access_token}"},
+            timeout=20,
+        )
+        payload = response.json()
+        if not response.ok:
+            return {}, str(payload.get("message") or payload.get("messageCode") or f"HTTP {response.status_code}")
+        if payload.get("s") == "error":
+            return {}, str(payload.get("message") or payload.get("messageCode") or "FYERS rejected the option-chain request.")
+        data = payload.get("data", payload)
+        if not isinstance(data, dict) or not data.get("optionsChain"):
+            return {}, str(payload.get("message") or "FYERS returned no option-chain rows for this symbol/expiry.")
+        return data, None
+    except Exception as exc:
+        return {}, f"FYERS option-chain request failed: {exc.__class__.__name__}"
+
 with st.sidebar:
     st.divider()
     st.subheader("FYERS live data")
@@ -774,11 +799,89 @@ with extra_tabs[0]:
 
 with extra_tabs[1]:
     st.subheader("14 · Options analytics")
-    st.write("PCR, max pain, open interest and implied volatility require a genuine option-chain snapshot.")
-    st.selectbox("Underlying",["NIFTY","BANKNIFTY","FINNIFTY"],key="auto_opt_underlying")
-    st.warning("No authorized free machine-readable NSE option-chain API is configured. Scripted scraping is not used, and no option values are fabricated.")
-    st.markdown("[Open official NSE option chain](https://www.nseindia.com/option-chain) · [NSE derivatives reports](https://www.nseindia.com/all-reports-derivatives)")
-    st.caption("Price history and technical modules continue to work automatically. Derivatives analytics require an explicitly permitted source; no broker API is used.")
+    st.write("Option-chain data is fetched from the authenticated FYERS Market Data API. Values are shown only when FYERS returns them.")
+    option_underlying_labels = {
+        "NIFTY": "NSE:NIFTY50-INDEX",
+        "BANKNIFTY": "NSE:NIFTYBANK-INDEX",
+        "FINNIFTY": "NSE:FINNIFTY-INDEX",
+    }
+    option_underlying = st.selectbox("Underlying", list(option_underlying_labels.keys()), key="auto_opt_underlying")
+    if not st.session_state.get("fyers_access_token") or not fyers_credentials():
+        st.warning("Connect FYERS in the sidebar to load the live option chain, PCR, open interest, max pain and Greeks. No values are estimated when disconnected.")
+    else:
+        app_id = fyers_credentials()[0]
+        access_token = st.session_state["fyers_access_token"]
+        with st.spinner("Fetching available expiries from FYERS…"):
+            base_chain, base_error = fyers_option_chain(app_id, access_token, option_underlying_labels[option_underlying], strikecount=10)
+        if base_error:
+            st.error(f"FYERS option-chain data unavailable: {base_error}")
+            st.caption("Check that your FYERS API app has market-data access and that your session token is still valid.")
+        else:
+            expiry_rows = base_chain.get("expiryData") or []
+            expiry_labels = {f'{row.get("date", "Unknown expiry")} · {row.get("expiry", "")}': str(row.get("expiry", "")) for row in expiry_rows if row.get("expiry") is not None}
+            if expiry_labels:
+                selected_expiry_label = st.selectbox("Expiry", list(expiry_labels.keys()), key="fyers_option_expiry")
+                selected_expiry = expiry_labels[selected_expiry_label]
+                with st.spinner("Loading selected FYERS option chain…"):
+                    chain_data, chain_error = fyers_option_chain(app_id, access_token, option_underlying_labels[option_underlying], strikecount=10, expiry_timestamp=selected_expiry)
+            else:
+                chain_data, chain_error = base_chain, None
+                st.info("FYERS did not provide a separate expiry list; displaying the returned chain.")
+            if chain_error:
+                st.error(f"Could not load selected expiry: {chain_error}")
+            else:
+                chain_rows = chain_data.get("optionsChain") or []
+                call_rows = [row for row in chain_rows if str(row.get("option_type", "")).upper() == "CE"]
+                put_rows = [row for row in chain_rows if str(row.get("option_type", "")).upper() == "PE"]
+                spot_row = next((row for row in chain_rows if row.get("option_type", "") == "" or float(row.get("strike_price", 0) or 0) < 0), {})
+                calls_by_strike = {float(row["strike_price"]): row for row in call_rows if row.get("strike_price") is not None}
+                puts_by_strike = {float(row["strike_price"]): row for row in put_rows if row.get("strike_price") is not None}
+                strikes = sorted(set(calls_by_strike) | set(puts_by_strike))
+                call_oi = chain_data.get("callOi")
+                put_oi = chain_data.get("putOi")
+                if call_oi is None:
+                    call_oi = sum(float(row.get("oi") or 0) for row in call_rows)
+                if put_oi is None:
+                    put_oi = sum(float(row.get("oi") or 0) for row in put_rows)
+                pcr = float(put_oi) / float(call_oi) if call_oi and float(call_oi) != 0 else np.nan
+                spot = spot_row.get("ltp", spot_row.get("fp"))
+                a, b, c, d = st.columns(4)
+                a.metric("Underlying LTP", fmt(spot))
+                b.metric("Put/Call OI ratio", fmt(pcr), help="Aggregate put open interest divided by aggregate call open interest for the returned chain.")
+                c.metric("Call open interest", fmt(call_oi, 0))
+                d.metric("Put open interest", fmt(put_oi, 0))
+                # Max pain: settlement price that minimizes combined intrinsic payout using returned strike-level OI.
+                pain_rows = []
+                for settlement in strikes:
+                    call_payout = sum(float(row.get("oi") or 0) * max(settlement - strike, 0) for strike, row in calls_by_strike.items())
+                    put_payout = sum(float(row.get("oi") or 0) * max(strike - settlement, 0) for strike, row in puts_by_strike.items())
+                    pain_rows.append({"Settlement candidate": settlement, "Combined payout": call_payout + put_payout})
+                max_pain = min(pain_rows, key=lambda row: row["Combined payout"])["Settlement candidate"] if pain_rows else np.nan
+                nearest_atm = min(strikes, key=lambda strike: abs(strike - float(spot))) if strikes and spot is not None else None
+                atm_call = calls_by_strike.get(nearest_atm, {})
+                atm_put = puts_by_strike.get(nearest_atm, {})
+                straddle = float(atm_call.get("ltp") or 0) + float(atm_put.get("ltp") or 0) if nearest_atm is not None and (atm_call or atm_put) else np.nan
+                e, f = st.columns(2)
+                e.metric("Max pain (returned strikes)", fmt(max_pain))
+                f.metric("ATM straddle premium", fmt(straddle), help="Call plus put LTP at the nearest returned strike to the underlying LTP.")
+                table_rows = []
+                for strike in strikes:
+                    ce, pe = calls_by_strike.get(strike, {}), puts_by_strike.get(strike, {})
+                    ce_g, pe_g = ce.get("greeks") or {}, pe.get("greeks") or {}
+                    table_rows.append({
+                        "Strike": strike,
+                        "CE LTP": ce.get("ltp"), "CE Chg %": ce.get("ltpchp"), "CE OI": ce.get("oi"), "CE OI chg": ce.get("oich"), "CE IV": ce_g.get("iv"), "CE Delta": ce_g.get("delta"),
+                        "PE LTP": pe.get("ltp"), "PE Chg %": pe.get("ltpchp"), "PE OI": pe.get("oi"), "PE OI chg": pe.get("oich"), "PE IV": pe_g.get("iv"), "PE Delta": pe_g.get("delta"),
+                    })
+                chain_frame = pd.DataFrame(table_rows)
+                if nearest_atm is not None:
+                    chain_frame["ATM"] = chain_frame["Strike"].eq(nearest_atm).map({True: "ATM", False: ""})
+                    ordered = ["ATM", "Strike"] + [col for col in chain_frame.columns if col not in {"ATM", "Strike"}]
+                    chain_frame = chain_frame[ordered]
+                st.dataframe(chain_frame, use_container_width=True, hide_index=True)
+                st.download_button("Download FYERS option chain CSV", chain_frame.to_csv(index=False).encode("utf-8"), f"{option_underlying.lower()}_fyers_option_chain.csv", "text/csv")
+                st.caption(f"Source: FYERS Option Chain API · underlying {option_underlying_labels[option_underlying]} · returned strikes: {len(strikes)} · retrieved {datetime.now(ZoneInfo('Asia/Kolkata')):%d %b %Y %H:%M:%S IST}. Max pain is calculated only across the returned strikes, not the entire market chain.")
+    st.markdown("[FYERS Option Chain API documentation](https://fyers.in/api-docs/v3/api/market-data/option-chain) · [Official NSE option chain](https://www.nseindia.com/option-chain)")
 
 with extra_tabs[2]:
     st.subheader("15 · Risk and position-sizing calculator")
@@ -1149,9 +1252,9 @@ with advanced_tabs[1]:
 with advanced_tabs[2]:
     st.subheader("28 · Derivatives lab")
     st.write("This module does not scrape NSE or fabricate derivatives data.")
-    st.warning("No authorized free machine-readable NSE derivatives API is configured. Option-chain PCR, max pain, IV, futures OI and participant positioning are therefore unavailable automatically.")
+    st.info("Options analytics now use the authenticated FYERS Option Chain API when connected. Futures-chain OI and participant-level FII/DII positioning are separate data sets and may remain unavailable.")
     st.markdown("[Official NSE option chain](https://www.nseindia.com/option-chain) · [NSE derivatives reports](https://www.nseindia.com/all-reports-derivatives)")
-    st.caption("Market prices and technical indicators continue to load automatically. Derivatives data requires an explicitly permitted source; no broker API is used.")
+    st.caption("Read-only FYERS market-data access is used for option-chain analysis; this module does not place orders. FII/DII participant positioning is not inferred from option-chain data.")
 
 with advanced_tabs[3]:
     st.subheader("29 · Automatic stock deep-dive")
