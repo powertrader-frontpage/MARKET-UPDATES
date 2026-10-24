@@ -4,6 +4,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import json
 import html
+import queue
+import threading
 
 import numpy as np
 import pandas as pd
@@ -296,7 +298,6 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
             chart_symbol = symbol_labels[selected_label]
             with st.spinner(f"Fetching FYERS candles for {chart_symbol}..."):
                 candles, candle_error = fyers_history(fyers_credentials()[0], st.session_state["fyers_access_token"], chart_symbol, chart_resolution, chart_days)
-                live_rows, quote_error = fyers_live_quotes(fyers_credentials()[0], st.session_state["fyers_access_token"], [chart_symbol])
             if candle_error:
                 st.warning(f"Chart data unavailable: {candle_error}")
             else:
@@ -306,11 +307,133 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                 if candles.empty:
                     st.warning("FYERS returned no valid OHLC candles for this selection.")
                 else:
-                    current_ltp = (live_rows[0].get("v") or {}).get("lp") if live_rows else None
-                    fig = go.Figure(data=[go.Candlestick(x=candles["Date"], open=candles["Open"], high=candles["High"], low=candles["Low"], close=candles["Close"], name=chart_symbol)])
+                    st.session_state["fyers_chart_data"] = candles.to_json(date_format="iso", orient="split")
+                    st.session_state["fyers_chart_symbol_loaded"] = chart_symbol
+                    st.session_state["fyers_chart_resolution_loaded"] = chart_resolution
+                    st.session_state["fyers_chart_loaded_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
+                    st.session_state.pop("fyers_chart_error", None)
+
+        # Start a single FYERS Data Socket for the currently selected chart symbol.
+        st.markdown("**Live market stream**")
+        live_symbol = symbol_labels[selected_label]
+        stream_symbol = st.session_state.get("fyers_stream_symbol")
+        stream_active = bool(st.session_state.get("fyers_stream_active"))
+        live_col1, live_col2 = st.columns(2)
+        with live_col1:
+            if not stream_active and st.button("▶ Start live updates", key="fyers_start_stream"):
+                try:
+                    import queue
+                    import threading
+                    from fyers_apiv3.FyersWebsocket import data_ws
+
+                    tick_queue = queue.Queue(maxsize=2000)
+                    app_id = fyers_credentials()[0]
+                    access_token = st.session_state["fyers_access_token"]
+                    def _push_tick(message):
+                        if isinstance(message, dict) and message.get("symbol") and message.get("ltp") is not None:
+                            try:
+                                tick_queue.put_nowait(dict(message, received_at=datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()))
+                            except Exception:
+                                pass
+                    def _socket_error(message):
+                        try:
+                            tick_queue.put_nowait({"_error": str(message), "received_at": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()})
+                        except Exception:
+                            pass
+                    def _on_connect():
+                        socket_ref = st.session_state.get("fyers_socket_ref")
+                        if socket_ref:
+                            socket_ref.subscribe(symbols=[live_symbol], data_type="SymbolUpdate")
+                            socket_ref.keep_running()
+                    socket_ref = data_ws.FyersDataSocket(
+                        access_token=f"{app_id}:{access_token}",
+                        log_path="",
+                        litemode=False,
+                        write_to_file=False,
+                        reconnect=True,
+                        reconnect_retry=10,
+                        on_connect=_on_connect,
+                        on_close=_socket_error,
+                        on_error=_socket_error,
+                        on_message=_push_tick,
+                    )
+                    st.session_state["fyers_tick_queue"] = tick_queue
+                    st.session_state["fyers_socket_ref"] = socket_ref
+                    st.session_state["fyers_stream_symbol"] = live_symbol
+                    st.session_state["fyers_stream_active"] = True
+                    thread = threading.Thread(target=socket_ref.connect, daemon=True)
+                    st.session_state["fyers_socket_thread"] = thread
+                    thread.start()
+                    st.success(f"Started FYERS live stream for {live_symbol}.")
+                except Exception as exc:
+                    st.session_state["fyers_stream_active"] = False
+                    st.error(f"Could not start FYERS live stream ({exc.__class__.__name__}). Check app deployment and FYERS session.")
+        with live_col2:
+            if stream_active and st.button("■ Stop live updates", key="fyers_stop_stream"):
+                try:
+                    socket_ref = st.session_state.get("fyers_socket_ref")
+                    if socket_ref:
+                        socket_ref.close_connection()
+                except Exception:
+                    pass
+                st.session_state["fyers_stream_active"] = False
+                st.session_state.pop("fyers_socket_ref", None)
+                st.session_state.pop("fyers_socket_thread", None)
+                st.session_state.pop("fyers_tick_queue", None)
+                st.session_state.pop("fyers_live_tick", None)
+                st.rerun()
+
+        @st.fragment(run_every=2)
+        def _fyers_live_chart_fragment():
+            import queue as _queue
+            tick_queue = st.session_state.get("fyers_tick_queue")
+            if tick_queue is not None:
+                while True:
+                    try:
+                        tick = tick_queue.get_nowait()
+                    except _queue.Empty:
+                        break
+                    if tick.get("_error"):
+                        st.session_state["fyers_stream_error"] = tick["_error"]
+                    elif tick.get("symbol") == st.session_state.get("fyers_stream_symbol"):
+                        st.session_state["fyers_live_tick"] = tick
+                        st.session_state["fyers_stream_error"] = None
+
+            tick = st.session_state.get("fyers_live_tick")
+            if tick and tick.get("symbol") == st.session_state.get("fyers_stream_symbol"):
+                tick_time = tick.get("exch_feed_time") or tick.get("last_traded_time")
+                try:
+                    tick_time_text = datetime.fromtimestamp(float(tick_time), ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") if tick_time else tick.get("received_at", "time unavailable")
+                except Exception:
+                    tick_time_text = tick.get("received_at", "time unavailable")
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    st.metric("FYERS live LTP", f"{float(tick['ltp']):,.2f}", f"{float(tick.get('chp', 0)):+.2f}%" if tick.get("chp") is not None else None)
+                with m2:
+                    st.metric("Day high", f"{float(tick['high_price']):,.2f}" if tick.get("high_price") is not None else "—")
+                with m3:
+                    st.metric("Day low", f"{float(tick['low_price']):,.2f}" if tick.get("low_price") is not None else "—")
+                st.caption(f"WebSocket feed time: {tick_time_text} · Last received by app: {tick.get('received_at', 'unknown')}")
+            elif st.session_state.get("fyers_stream_error"):
+                st.warning("FYERS stream message: " + str(st.session_state["fyers_stream_error"])[:300])
+            elif st.session_state.get("fyers_stream_active"):
+                st.info("Connecting to FYERS Data Socket; waiting for the first market update.")
+            else:
+                st.caption("Live stream is stopped. Start it during market hours to receive updates.")
+
+            chart_json = st.session_state.get("fyers_chart_data")
+            if chart_json:
+                chart_symbol_loaded = st.session_state.get("fyers_chart_symbol_loaded", live_symbol)
+                candles = pd.read_json(chart_json, orient="split")
+                candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
+                candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
+                if not candles.empty:
+                    tick = st.session_state.get("fyers_live_tick")
+                    current_ltp = tick.get("ltp") if tick and tick.get("symbol") == chart_symbol_loaded else None
                     candles["EMA 9"] = candles["Close"].ewm(span=9, adjust=False).mean()
                     candles["EMA 21"] = candles["Close"].ewm(span=21, adjust=False).mean()
                     candles["SMA 50"] = candles["Close"].rolling(50, min_periods=1).mean()
+                    fig = go.Figure(data=[go.Candlestick(x=candles["Date"], open=candles["Open"], high=candles["High"], low=candles["Low"], close=candles["Close"], name=chart_symbol_loaded)])
                     if show_ema9:
                         fig.add_trace(go.Scatter(x=candles["Date"], y=candles["EMA 9"], name="EMA 9", mode="lines", line=dict(width=1.4)))
                     if show_ema21:
@@ -323,25 +446,12 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         fig.add_trace(go.Scatter(x=candles["Date"], y=bb_mid + 2 * bb_std, name="BB upper", line=dict(width=1, dash="dot")))
                         fig.add_trace(go.Scatter(x=candles["Date"], y=bb_mid - 2 * bb_std, name="BB lower", line=dict(width=1, dash="dot"), fill="tonexty", fillcolor="rgba(100,120,150,0.08)"))
                     if current_ltp is not None:
-                        fig.add_hline(y=float(current_ltp), line_dash="dot", annotation_text=f"Latest FYERS quote: {float(current_ltp):,.2f}")
-                    fig.update_layout(
-                        title=f"{chart_symbol} · FYERS candles",
-                        xaxis_title="Time (IST)", yaxis_title="Price",
-                        xaxis_rangeslider_visible=False, height=650,
-                        hovermode="x unified",
-                        margin=dict(l=20, r=20, t=60, b=20),
-                    )
-                    fig.update_xaxes(
-                        type="date",
-                        tickformat="%d %b %H:%M" if chart_resolution != "1D" else "%d %b %Y",
-                        showspikes=True,
-                        spikemode="across",
-                        spikesnap="cursor",
-                    )
+                        fig.add_hline(y=float(current_ltp), line_dash="dot", annotation_text=f"Live FYERS LTP: {float(current_ltp):,.2f}")
+                    fig.update_layout(title=f"{chart_symbol_loaded} · FYERS candles", xaxis_title="Time (IST)", yaxis_title="Price", xaxis_rangeslider_visible=False, height=650, hovermode="x unified", margin=dict(l=20, r=20, t=60, b=20))
+                    fig.update_xaxes(type="date", tickformat="%d %b %H:%M" if st.session_state.get("fyers_chart_resolution_loaded") != "1D" else "%d %b %Y", showspikes=True, spikemode="across", spikesnap="cursor")
                     fig.update_yaxes(fixedrange=False)
-                    st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False, "modeBarButtonsToAdd": ["drawline", "drawopenpath", "drawclosedpath", "drawcircle", "drawrect", "eraseshape"]})
-                    latest_candle_time = candles["Date"].max().strftime("%Y-%m-%d %H:%M:%S %Z")
-                    st.caption(f"Source: FYERS Historical Data · candles: {len(candles):,} · latest returned candle: {latest_candle_time} · chart fetched: {datetime.now(ZoneInfo('Asia/Kolkata')).strftime('%Y-%m-%d %H:%M:%S IST')}")
+                    st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False, "modeBarButtonsToAdd": ["drawline", "drawopenpath", "drawclosedpath", "drawcircle", "drawrect", "eraseshape"]}, key="fyers_live_chart_plot")
+                    st.caption(f"Historical candles: FYERS · fetched: {st.session_state.get('fyers_chart_loaded_at', 'unknown')} · live quote overlay refreshes every 2 seconds while connected.")
                     if show_rsi:
                         delta = candles["Close"].diff()
                         gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
@@ -353,13 +463,13 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         rsi_fig.add_hline(y=70, line_dash="dash")
                         rsi_fig.add_hline(y=30, line_dash="dash")
                         rsi_fig.update_layout(title="Relative Strength Index (14)", height=240, margin=dict(l=20, r=20, t=45, b=20), yaxis=dict(range=[0, 100]), xaxis_title="Time (IST)")
-                        st.plotly_chart(rsi_fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False})
-                    if current_ltp is not None:
-                        st.metric("Latest FYERS quote", f"{float(current_ltp):,.2f}")
-                    elif quote_error:
-                        st.info(f"Candles loaded, but latest quote unavailable: {quote_error}")
-                    st.info("Click Load / refresh FYERS chart to fetch newer candles and quotes. Continuous live updates require a persistent FYERS WebSocket service; this chart refreshes on request.")
+                        st.plotly_chart(rsi_fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_rsi_plot")
 
+        _fyers_live_chart_fragment()
+
+        if st.session_state.get("fyers_stream_active") and st.session_state.get("fyers_stream_symbol") != live_symbol:
+            st.warning("The active stream is subscribed to a different symbol. Stop it, then start again for the selected chart symbol.")
+        st.info("FYERS WebSocket updates the live quote overlay and redraws the displayed chart every 2 seconds. Historical candles remain the last fetched candle set; the latest price line is live. Stream is read-only and does not place orders.")
 if refresh:
     st.cache_data.clear()
 
