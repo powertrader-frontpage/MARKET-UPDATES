@@ -576,7 +576,7 @@ with research_tabs[0]:
     st.write("Automatically fetches a broad large-cap stock universe from Yahoo Finance, with optional CSV override. Public data may be delayed or unavailable.")
     industry_file = st.file_uploader("Optional: override with your own stock history CSV", type=["csv"], key="industry_history_csv")
     auto_industry = st.button("↻ Fetch latest industry data", key="auto_industry_fetch")
-    if industry_file is not None or auto_industry:
+    if True:  # Auto-fetch by default; cached for six hours. CSV remains an optional override.
         try:
             ind = pd.read_csv(industry_file) if industry_file is not None else get_auto_universe(period="2y")
             ind.columns = [str(c).strip() for c in ind.columns]
@@ -769,7 +769,7 @@ with advanced_tabs[1]:
     breadth_file = st.file_uploader("Optional: override with your own OHLCV CSV", type=["csv"], key="breadth_universe")
     auto_breadth = st.button("↻ Fetch latest stock universe", key="auto_breadth_fetch")
     st.caption("Automatic history is fetched from Yahoo Finance. Public source coverage, delays and availability can vary.")
-    if breadth_file is not None or auto_breadth:
+    if True:  # Auto-fetch by default; cached for six hours. CSV remains an optional override.
         try:
             univ = pd.read_csv(breadth_file) if breadth_file is not None else get_auto_universe(period="2y")
             univ.columns = [str(c).strip() for c in univ.columns]
