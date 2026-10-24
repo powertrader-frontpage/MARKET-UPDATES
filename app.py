@@ -14,6 +14,10 @@ import streamlit as st
 import streamlit.components.v1 as components
 import yfinance as yf
 
+import hashlib
+import secrets
+from urllib.parse import urlencode
+
 st.set_page_config(page_title="Market Intelligence Terminal", page_icon="📈", layout="wide")
 st.markdown("""
 <style>
@@ -59,6 +63,137 @@ with st.sidebar:
     st.markdown("- [RBI](https://www.rbi.org.in/)")
     st.markdown("- [TradingView widgets](https://www.tradingview.com/widget/)")
     st.markdown("- [Yahoo Finance data coverage/delays](https://help.yahoo.com/kb/SLN2310.html)")
+
+
+# FYERS read-only market-data connection. Credentials must live in Streamlit Cloud Secrets.
+def fyers_credentials():
+    try:
+        app_id = str(st.secrets["FYERS_APP_ID"]).strip()
+        app_secret = str(st.secrets["FYERS_APP_SECRET"]).strip()
+        redirect_uri = str(st.secrets["FYERS_REDIRECT_URI"]).strip()
+        if app_id and app_secret and redirect_uri:
+            return app_id, app_secret, redirect_uri
+    except Exception:
+        pass
+    return None
+
+def fyers_login_url(app_id: str, redirect_uri: str, state: str) -> str:
+    params = {
+        "client_id": app_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "state": state,
+    }
+    return "https://api-t1.fyers.in/api/v3/generate-authcode?" + urlencode(params)
+
+def fyers_exchange_auth_code(app_id: str, app_secret: str, auth_code: str):
+    app_hash = hashlib.sha256(f"{app_id}:{app_secret}".encode("utf-8")).hexdigest()
+    try:
+        response = requests.post(
+            "https://api-t1.fyers.in/api/v3/validate-authcode",
+            json={"grant_type": "authorization_code", "appIdHash": app_hash, "code": auth_code},
+            timeout=20,
+        )
+        payload = response.json()
+        if response.ok and payload.get("s") == "ok" and payload.get("access_token"):
+            return payload["access_token"], None
+        return None, str(payload.get("message", "FYERS did not return an access token."))
+    except Exception as exc:
+        return None, f"FYERS authentication request failed: {exc.__class__.__name__}"
+
+def fyers_live_quotes(app_id: str, access_token: str, symbols: list[str]):
+    try:
+        response = requests.get(
+            "https://api-t1.fyers.in/data/quotes",
+            params={"symbols": ",".join(symbols)},
+            headers={"Authorization": f"{app_id}:{access_token}"},
+            timeout=15,
+        )
+        payload = response.json()
+        if response.ok and payload.get("s") == "ok":
+            return payload.get("d", []), None
+        return [], str(payload.get("message", "FYERS quote request failed."))
+    except Exception as exc:
+        return [], f"FYERS quote request failed: {exc.__class__.__name__}"
+
+with st.sidebar:
+    st.divider()
+    st.subheader("FYERS live data")
+    fyers_config = fyers_credentials()
+    if not fyers_config:
+        st.warning("Add FYERS_APP_ID, FYERS_APP_SECRET and FYERS_REDIRECT_URI in Streamlit Cloud Secrets to enable the connection.")
+    else:
+        fyers_app_id, fyers_app_secret, fyers_redirect_uri = fyers_config
+        if "fyers_state" not in st.session_state:
+            st.session_state["fyers_state"] = secrets.token_urlsafe(24)
+        if st.session_state.get("fyers_access_token"):
+            st.success("FYERS session connected for this app session.")
+            if st.button("Disconnect FYERS session", use_container_width=True):
+                st.session_state.pop("fyers_access_token", None)
+                st.session_state.pop("fyers_connected_at", None)
+                st.rerun()
+        else:
+            st.link_button(
+                "Connect FYERS account",
+                fyers_login_url(fyers_app_id, fyers_redirect_uri, st.session_state["fyers_state"]),
+                use_container_width=True,
+            )
+            st.caption("Read-only market data. You may need to authorize again when the daily access token expires.")
+
+# Handle the redirect from FYERS after user authorization.
+if "auth_code" in st.query_params:
+    fyers_config = fyers_credentials()
+    returned_state = st.query_params.get("state", "")
+    auth_code = st.query_params.get("auth_code", "")
+    if not fyers_config:
+        st.error("FYERS credentials are not configured in Streamlit Secrets.")
+    elif not returned_state or returned_state != st.session_state.get("fyers_state"):
+        st.error("FYERS login state could not be verified in this session. Please click Connect FYERS account and try again.")
+    elif auth_code:
+        with st.spinner("Completing FYERS authorization..."):
+            token, token_error = fyers_exchange_auth_code(fyers_config[0], fyers_config[1], auth_code)
+        if token:
+            st.session_state["fyers_access_token"] = token
+            st.session_state["fyers_connected_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
+            st.session_state.pop("fyers_state", None)
+            st.query_params.clear()
+            st.success("FYERS connected. Access token is held in this Streamlit session only.")
+            st.rerun()
+        else:
+            st.error(f"FYERS authorization was not completed: {token_error}")
+            st.query_params.clear()
+    else:
+        st.error("FYERS returned without an authorization code. Please retry the connection.")
+        st.query_params.clear()
+
+if "fyers_access_token" in st.session_state and fyers_credentials():
+    fyers_app_id = fyers_credentials()[0]
+    st.subheader("FYERS live market snapshot")
+    st.caption("Source: FYERS Quotes API · values are shown only when returned by FYERS; this is a quote snapshot, not a continuous WebSocket stream.")
+    fyers_symbols = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:INFY-EQ"]
+    if st.button("Fetch FYERS live quotes", key="fyers_fetch_quotes"):
+        quote_rows, quote_error = fyers_live_quotes(fyers_app_id, st.session_state["fyers_access_token"], fyers_symbols)
+        if quote_error:
+            st.warning(f"FYERS quote data unavailable: {quote_error}")
+        elif not quote_rows:
+            st.info("FYERS returned no quote rows for the selected symbols.")
+        else:
+            normalized = []
+            for item in quote_rows:
+                values = item.get("v") or {}
+                normalized.append({
+                    "Symbol": item.get("n", values.get("symbol", "Unknown")),
+                    "Last price": values.get("lp"),
+                    "Change": values.get("ch"),
+                    "Change %": values.get("chp"),
+                    "Open": values.get("open_price"),
+                    "High": values.get("high_price"),
+                    "Low": values.get("low_price"),
+                    "Previous close": values.get("prev_close_price"),
+                    "Volume": values.get("volume"),
+                })
+            st.dataframe(pd.DataFrame(normalized), use_container_width=True, hide_index=True)
+            st.caption("Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
 
 if refresh:
     st.cache_data.clear()
