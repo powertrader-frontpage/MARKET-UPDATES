@@ -621,7 +621,7 @@ def tv_widget(kind: str, config: dict, height: int = 500):
     script = f'''<div class="tradingview-widget-container" style="height:{height}px;width:100%"><div class="tradingview-widget-container__widget" style="height:calc(100% - 28px);width:100%"></div><div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/" rel="noopener nofollow" target="_blank"><span>TradingView</span></a></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-{kind}.js" async>{config_json}</script></div>'''
     components.html(script, height=height + 10, scrolling=False)
 
-def advanced_chart(symbol: str, height: int = 550):
+def advanced_chart(symbol: str, height: int = 720):
     tv_widget("advanced-chart", {"autosize": True, "symbol": symbol, "interval": "D", "timezone": "Asia/Kolkata", "theme": "dark", "style": "1", "locale": "en", "allow_symbol_change": True, "calendar": False, "support_host": "https://www.tradingview.com"}, height)
 
 def quote_snapshot(df: pd.DataFrame):
@@ -696,8 +696,9 @@ with tabs[0]:
                     overview_regime = "Range / weak trend"
                 else:
                     overview_regime = "Transition / mixed"
-            overview_vol = overview_rc["Return %"].rolling(20).std().iloc[-1] * np.sqrt(252)
-            regime_cols = st.columns([1.35, 1, 1, 1.15])
+            # Return % is in percentage points; convert to decimal before annualizing.
+            overview_vol = overview_rc["Return %"].rolling(20).std().iloc[-1] / 100 * np.sqrt(252)
+            regime_cols = st.columns([1.35, 1, 1])
             regime_color = "#22c55e" if overview_regime == "Trending bullish" else "#ef4444" if overview_regime == "Trending bearish" else "#f59e0b"
             regime_cols[0].markdown(
                 f'<div style="border:1px solid #343a46;border-radius:12px;padding:12px 14px;min-height:92px;">'
@@ -708,7 +709,6 @@ with tabs[0]:
             )
             regime_cols[1].metric("ADX 14", fmt(overview_adx_value))
             regime_cols[2].metric("RSI 14", fmt(overview_rsi_value))
-            regime_cols[3].metric("Realized vol 20d annualized", f"{overview_vol:.2%}" if pd.notna(overview_vol) else "Unavailable")
             st.caption(f"Calculated from {overview_regime_name} historical OHLC data · last source bar: {overview_last['Date']:%d %b %Y, %H:%M IST} · not a live signal.")
             st.markdown("#### Price trend")
             trend_fig = go.Figure()
@@ -744,15 +744,8 @@ with tabs[1]:
     st.subheader("Embedded interactive charts")
     chart_choice = st.selectbox("Choose chart", ["NIFTY 50", "BANK NIFTY", "INFY", "WIPRO", "Brent Crude", "India VIX"])
     tv_symbols = {"NIFTY 50": "NSE:NIFTY", "BANK NIFTY": "NSE:BANKNIFTY", "INFY": "NSE:INFY", "WIPRO": "NSE:WIPRO", "Brent Crude": "TVC:UKOIL", "India VIX": "NSE:INDIAVIX"}
-    advanced_chart(tv_symbols[chart_choice], 600)
-    st.caption("TradingView supplies the chart data independently. Availability and delay vary by symbol/exchange; this app does not override those settings.")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**NIFTY 50**")
-        advanced_chart("NSE:NIFTY", 440)
-    with c2:
-        st.markdown("**BANK NIFTY**")
-        advanced_chart("NSE:BANKNIFTY", 440)
+    advanced_chart(tv_symbols[chart_choice], 720)
+    st.caption("TradingView supplies the chart data independently. Availability and delay vary by symbol/exchange; this app does not override those settings. Use the chart selector above to switch instruments.")
 
 with tabs[2]:
     st.subheader("Technical analysis from returned OHLC data")
