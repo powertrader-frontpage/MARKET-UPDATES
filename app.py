@@ -788,7 +788,7 @@ with tabs[2]:
         rsi_fig.add_hrect(y0=0, y1=30, fillcolor="rgba(239,68,68,.16)", line_width=0)
         rsi_fig.add_hrect(y0=70, y1=100, fillcolor="rgba(34,197,94,.16)", line_width=0)
         rsi_fig.add_hrect(y0=30, y1=70, fillcolor="rgba(245,158,11,.06)", line_width=0)
-        rsi_fig.add_trace(go.Scatter(x=calc["Date"], y=calc["RSI 14"], name="RSI 14", line={"color":"#60a5fa","width":2.5"}))
+        rsi_fig.add_trace(go.Scatter(x=calc["Date"], y=calc["RSI 14"], name="RSI 14", line={"color":"#60a5fa","width":2.5}))
         rsi_fig.add_hline(y=70, line_dash="dash", line_color="#22c55e", annotation_text="Overbought > 70")
         rsi_fig.add_hline(y=30, line_dash="dash", line_color="#ef4444", annotation_text="Oversold < 30")
         rsi_fig.update_layout(template="plotly_dark", height=280, yaxis={"range": [0,100]}, margin={"l":10,"r":10,"t":25,"b":10}, title="RSI 14 · green > 70, red < 30")
