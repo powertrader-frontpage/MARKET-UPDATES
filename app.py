@@ -364,7 +364,6 @@ else:
 tabs = st.tabs(["Overview", "Live charts", "Technical analysis", "Sector rotation", "Global markets", "FII/DII & news", "Derivatives", "History & sources"])
 with tabs[0]:
     st.subheader("Market snapshot and historical source data")
-    st.subheader("Market snapshot")
     rows = []
     for name, df in market_data.items():
         snap = quote_snapshot(df)
