@@ -110,6 +110,18 @@ def fyers_login_url(app_id: str, redirect_uri: str, state: str) -> str:
     }
     return "https://api-t1.fyers.in/api/v3/generate-authcode?" + urlencode(params)
 
+@st.cache_resource
+def fyers_token_vault():
+    """Process-wide in-memory token cache shared by Streamlit sessions."""
+    return {}
+
+def fyers_access_expiry_iso():
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    cutoff = now.replace(hour=6, minute=30, second=0, microsecond=0)
+    if now >= cutoff:
+        cutoff = cutoff + pd.Timedelta(days=1)
+    return cutoff.isoformat()
+
 def fyers_exchange_auth_code(app_id: str, app_secret: str, auth_code: str):
     app_hash = hashlib.sha256(f"{app_id}:{app_secret}".encode("utf-8")).hexdigest()
     try:
@@ -120,10 +132,25 @@ def fyers_exchange_auth_code(app_id: str, app_secret: str, auth_code: str):
         )
         payload = response.json()
         if response.ok and payload.get("s") == "ok" and payload.get("access_token"):
-            return payload["access_token"], None
-        return None, str(payload.get("message", "FYERS did not return an access token."))
+            return payload["access_token"], payload.get("refresh_token"), None
+        return None, None, str(payload.get("message", "FYERS did not return an access token."))
     except Exception as exc:
-        return None, f"FYERS authentication request failed: {exc.__class__.__name__}"
+        return None, None, f"FYERS authentication request failed: {exc.__class__.__name__}"
+
+def fyers_refresh_access_token(app_id: str, app_secret: str, refresh_token: str, pin: str):
+    app_hash = hashlib.sha256(f"{app_id}:{app_secret}".encode("utf-8")).hexdigest()
+    try:
+        response = requests.post(
+            "https://api-t1.fyers.in/api/v3/validate-refresh-token",
+            json={"grant_type": "refresh_token", "appIdHash": app_hash, "refresh_token": refresh_token, "pin": pin},
+            timeout=20,
+        )
+        payload = response.json()
+        if response.ok and payload.get("s") == "ok" and payload.get("access_token"):
+            return payload["access_token"], None
+        return None, str(payload.get("message") or payload.get("messageCode") or "FYERS could not refresh the access token.")
+    except Exception as exc:
+        return None, f"FYERS token refresh failed: {exc.__class__.__name__}"
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -216,23 +243,52 @@ with st.sidebar:
     st.divider()
     st.subheader("FYERS live data")
     fyers_config = fyers_credentials()
+    token_vault = fyers_token_vault()
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    # Restore the process-wide token into a new browser/session when it is still valid.
+    if not st.session_state.get("fyers_access_token") and token_vault.get("access_token"):
+        try:
+            token_expiry = datetime.fromisoformat(token_vault.get("access_expires_at", ""))
+            if now_ist < token_expiry:
+                st.session_state["fyers_access_token"] = token_vault["access_token"]
+                st.session_state["fyers_connected_at"] = token_vault.get("connected_at", now_ist.isoformat())
+        except Exception:
+            pass
     if not fyers_config:
         st.warning("Add FYERS_APP_ID, FYERS_APP_SECRET and FYERS_REDIRECT_URI in Streamlit Cloud Secrets to enable the connection.")
     else:
         fyers_app_id, fyers_app_secret, fyers_redirect_uri = fyers_config
-        if st.session_state.get("fyers_access_token"):
-            st.success("FYERS session connected for this app session.")
+        active_token = st.session_state.get("fyers_access_token")
+        if active_token:
+            st.success("FYERS connected · shared across app sessions until daily token expiry.")
             if st.button("Disconnect FYERS session", use_container_width=True):
                 st.session_state.pop("fyers_access_token", None)
                 st.session_state.pop("fyers_connected_at", None)
+                token_vault.clear()
                 st.rerun()
+        elif token_vault.get("refresh_token"):
+            st.info("Your access token has expired. Refresh it here without repeating the full FYERS login, if the refresh token is still valid.")
+            fyers_pin = st.text_input("FYERS PIN (used only for refresh)", type="password", key="fyers_refresh_pin")
+            if st.button("Refresh FYERS session", use_container_width=True, disabled=not fyers_pin):
+                with st.spinner("Refreshing FYERS access token…"):
+                    refreshed_token, refresh_error = fyers_refresh_access_token(fyers_app_id, fyers_app_secret, token_vault["refresh_token"], fyers_pin)
+                if refreshed_token:
+                    token_vault["access_token"] = refreshed_token
+                    token_vault["access_expires_at"] = fyers_access_expiry_iso()
+                    st.session_state["fyers_access_token"] = refreshed_token
+                    st.session_state["fyers_connected_at"] = now_ist.isoformat()
+                    st.session_state.pop("fyers_refresh_pin", None)
+                    st.success("FYERS session refreshed.")
+                    st.rerun()
+                else:
+                    st.error(f"Token refresh failed: {refresh_error}. The refresh token may have expired; reconnect FYERS if needed.")
         else:
             st.link_button(
                 "Connect FYERS account",
                 fyers_login_url(fyers_app_id, fyers_redirect_uri, fyers_make_state(fyers_app_secret)),
                 use_container_width=True,
             )
-            st.caption("Read-only market data. You may need to authorize again when the daily access token expires.")
+            st.caption("The token is shared across app sessions in memory. FYERS access tokens expire daily at 6:30 AM; a server restart or expired refresh token may require reconnecting.")
 
 # Handle the redirect from FYERS after user authorization.
 if "auth_code" in st.query_params:
@@ -245,12 +301,18 @@ if "auth_code" in st.query_params:
         st.error("FYERS login state could not be verified or has expired. Please click Connect FYERS account and try again.")
     elif auth_code:
         with st.spinner("Completing FYERS authorization..."):
-            token, token_error = fyers_exchange_auth_code(fyers_config[0], fyers_config[1], auth_code)
+            token, refresh_token, token_error = fyers_exchange_auth_code(fyers_config[0], fyers_config[1], auth_code)
         if token:
+            connected_at = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
+            token_vault = fyers_token_vault()
+            token_vault["access_token"] = token
+            token_vault["refresh_token"] = refresh_token
+            token_vault["access_expires_at"] = fyers_access_expiry_iso()
+            token_vault["connected_at"] = connected_at
             st.session_state["fyers_access_token"] = token
-            st.session_state["fyers_connected_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
+            st.session_state["fyers_connected_at"] = connected_at
             st.query_params.clear()
-            st.success("FYERS connected. Access token is held in this Streamlit session only.")
+            st.success("FYERS connected. Token is shared across app sessions in memory; refresh token is cached only for this server process.")
             st.rerun()
         else:
             st.error(f"FYERS authorization was not completed: {token_error}")
