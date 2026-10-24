@@ -60,3 +60,26 @@ Indicators are calculated from returned daily bars. SMA/EMA values are blank unt
 - Transparent setup scanner: simple daily EMA/RSI rules on configured dashboard instruments only, not a full-market scanner.
 
 All additional modules explicitly show unavailable states when source data is missing. They do not create synthetic prices, option-chain values, FII/DII values or event announcements. Some CSV-based modules require the user to supply genuine data.
+
+
+## V3 additions inspired by reference dashboard examples
+
+- **Industry intelligence:** Upload daily `Date, Symbol, Industry, Close` history to calculate equal-weighted 1M/3M industry returns and the share of available constituents above 50/200-day moving averages.
+- **Delivery & money-flow proxies:** Upload `Symbol, Date, Close, Volume, DeliveryPct` data (optional `Industry`, `TradedValue`) to inspect delivery and volume changes. These are activity proxies and do not prove institutional buying.
+- **Daily market briefing:** Produces a source-labelled summary from the market history already fetched by the app; it does not fabricate news or causal explanations.
+
+Example CSV rows in the app are schema examples only, not market data. These modules remain blank/unavailable until genuine inputs are provided. Export important results because hosted session storage is not guaranteed to persist.
+
+
+## V4 feature completion update
+
+Added:
+- Macro dashboard and uploadable verified geopolitical event/macro observations.
+- Multi-stock breadth and technical scanner (SMA20/50/200, EMA20, RSI14) using uploaded OHLC data.
+- Option-chain analysis calculating PCR (OI), estimated max pain and OI by strike when required columns are provided.
+- Futures basis and OI snapshot analysis from uploaded data.
+- Stock deep-dive candlestick chart and indicators.
+- Transparent SMA crossover backtest with configurable transaction-cost assumption and buy-and-hold comparison.
+- Source-quality audit showing returned rows, latest source candle, data age and OHLC completeness.
+
+Important: no broker API is required, but these modules cannot manufacture unavailable datasets. Derivatives, delivery, FII/DII and verified event history require genuine source files or separate public-source integrations. The backtest is a simple research baseline and omits slippage, taxes, survivorship bias and corporate-action pitfalls unless input data accounts for them.

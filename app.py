@@ -19,7 +19,7 @@ st.markdown("""
 <style>
 .block-container{padding-top:1rem;padding-bottom:2rem}
 [data-testid="stMetric"]{background:rgba(100,120,145,.08);border:1px solid rgba(120,140,160,.25);padding:12px;border-radius:12px}
-.small-note{font-size:.85rem;opacity:.8}
+.small-note{font-size:.85rem;opacity:.8}\n[data-testid='stDataFrame']{max-width:100%}\n@media(max-width:700px){.block-container{padding-left:.7rem;padding-right:.7rem}[data-testid='stMetricValue']{font-size:1.35rem}h1{font-size:1.7rem}h2{font-size:1.35rem}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -519,3 +519,459 @@ with extra_tabs[9]:
     if signal_rows: st.dataframe(pd.DataFrame(signal_rows),use_container_width=True,hide_index=True)
     else: st.info("No source history available for the scanner.")
     st.caption("Signals are mechanical rule checks on latest returned daily bars, not recommendations. No automated alerts or trade execution are enabled.")
+
+
+# Additional research modules inspired by the user's reference dashboard.
+research_tabs = st.tabs(["23 Industry intelligence", "24 Delivery & money-flow proxies", "25 Daily briefing"])
+
+with research_tabs[0]:
+    st.subheader("23 · Industry intelligence and rotation")
+    st.write("Upload genuine daily stock history with columns Date, Symbol, Industry, Close. Optional columns: Volume and MarketCap. Industry rankings use only uploaded rows.")
+    industry_file = st.file_uploader("Industry stock history CSV", type=["csv"], key="industry_history_csv")
+    if industry_file is not None:
+        try:
+            ind = pd.read_csv(industry_file)
+            ind.columns = [str(c).strip() for c in ind.columns]
+            required = {"Date", "Symbol", "Industry", "Close"}
+            if not required.issubset(ind.columns):
+                st.error("Required columns: Date, Symbol, Industry, Close.")
+            else:
+                ind["Date"] = pd.to_datetime(ind["Date"], errors="coerce")
+                ind["Close"] = pd.to_numeric(ind["Close"], errors="coerce")
+                ind = ind.dropna(subset=["Date", "Symbol", "Industry", "Close"])
+                ind = ind.sort_values(["Symbol", "Date"]).drop_duplicates(["Symbol", "Date"], keep="last")
+                ind["Return 1M %"] = ind.groupby("Symbol")["Close"].transform(lambda x: (x / x.shift(21) - 1) * 100)
+                ind["Return 3M %"] = ind.groupby("Symbol")["Close"].transform(lambda x: (x / x.shift(63) - 1) * 100)
+                ind["SMA50"] = ind.groupby("Symbol")["Close"].transform(lambda x: x.rolling(50, min_periods=50).mean())
+                ind["SMA200"] = ind.groupby("Symbol")["Close"].transform(lambda x: x.rolling(200, min_periods=200).mean())
+                latest_date = ind["Date"].max()
+                latest = ind[ind["Date"] == latest_date].copy()
+                agg = latest.groupby("Industry").agg(
+                    Stocks=("Symbol", "nunique"),
+                    Mean_1M=("Return 1M %", "mean"),
+                    Mean_3M=("Return 3M %", "mean"),
+                    Median_1M=("Return 1M %", "median"),
+                    Valid_1M=("Return 1M %", "count"),
+                    Valid_3M=("Return 3M %", "count"),
+                ).reset_index()
+                breadth = latest.assign(
+                    Above50=latest["Close"] > latest["SMA50"],
+                    Above200=latest["Close"] > latest["SMA200"],
+                ).groupby("Industry").agg(
+                    Above_50DMA_pct=("Above50", lambda x: x.dropna().mean() * 100 if x.notna().any() else np.nan),
+                    Above_200DMA_pct=("Above200", lambda x: x.dropna().mean() * 100 if x.notna().any() else np.nan),
+                ).reset_index()
+                agg = agg.merge(breadth, on="Industry", how="left").sort_values("Mean_1M", ascending=False)
+                st.caption(f"Latest uploaded date: {latest_date:%Y-%m-%d}. Returns are equal-weighted across available stocks, not market-cap weighted.")
+                display = agg.rename(columns={"Mean_1M":"Average 1M return %","Mean_3M":"Average 3M return %","Median_1M":"Median 1M return %","Valid_1M":"Stocks with 1M history","Valid_3M":"Stocks with 3M history"})
+                st.dataframe(display.style.format({"Average 1M return %":"{:.2f}","Average 3M return %":"{:.2f}","Median 1M return %":"{:.2f}","Above_50DMA_pct":"{:.1f}","Above_200DMA_pct":"{:.1f}"}), use_container_width=True, hide_index=True)
+                plot_df = agg.dropna(subset=["Mean_1M"]).head(15)
+                if not plot_df.empty:
+                    fig = px.bar(plot_df.sort_values("Mean_1M"), x="Mean_1M", y="Industry", orientation="h", color="Mean_1M", template="plotly_dark", title="Top industries by equal-weighted 1-month return")
+                    fig.update_layout(height=max(360, 28 * len(plot_df)), xaxis_title="Return (%)")
+                    st.plotly_chart(fig, use_container_width=True)
+                st.download_button("Download industry rankings", agg.to_csv(index=False).encode("utf-8"), file_name="industry_intelligence.csv", mime="text/csv")
+        except Exception as exc:
+            st.error(f"Could not calculate industry analytics: {type(exc).__name__}: {exc}")
+    else:
+        st.info("Upload real constituent history to calculate rankings. No sample values are shown as market data.")
+    st.markdown("**Suggested input schema**")
+    st.code("Date,Symbol,Industry,Close,Volume,MarketCap\n2026-01-02,ABC,Pharma,123.45,100000,2500000000", language="csv")
+    st.caption("The row above is a schema example only, not real market data.")
+
+with research_tabs[1]:
+    st.subheader("24 · Delivery activity and money-flow proxies")
+    st.write("Upload genuine daily data with Symbol, Date, Close, Volume and DeliveryPct. Optional: Industry, TradedValue. Delivery is an activity proxy; it does not prove institutional buying.")
+    flow_file = st.file_uploader("Delivery / turnover CSV", type=["csv"], key="delivery_flow_csv")
+    if flow_file is not None:
+        try:
+            flow = pd.read_csv(flow_file)
+            flow.columns = [str(c).strip() for c in flow.columns]
+            required = {"Symbol", "Date", "Close", "Volume", "DeliveryPct"}
+            if not required.issubset(flow.columns):
+                st.error("Required columns: Symbol, Date, Close, Volume, DeliveryPct.")
+            else:
+                flow["Date"] = pd.to_datetime(flow["Date"], errors="coerce")
+                for col in ["Close", "Volume", "DeliveryPct", "TradedValue"]:
+                    if col in flow: flow[col] = pd.to_numeric(flow[col], errors="coerce")
+                flow = flow.dropna(subset=["Symbol", "Date", "Close", "Volume", "DeliveryPct"]).sort_values(["Symbol", "Date"]).drop_duplicates(["Symbol", "Date"], keep="last")
+                flow["AvgVol20"] = flow.groupby("Symbol")["Volume"].transform(lambda x: x.rolling(20, min_periods=10).mean())
+                flow["AvgDelivery20"] = flow.groupby("Symbol")["DeliveryPct"].transform(lambda x: x.rolling(20, min_periods=10).mean())
+                flow["Delivery change vs 20d pp"] = flow["DeliveryPct"] - flow["AvgDelivery20"]
+                flow["Volume vs 20d avg"] = flow["Volume"] / flow["AvgVol20"].replace(0, np.nan)
+                latest_date = flow["Date"].max()
+                last_flow = flow[flow["Date"] == latest_date].copy()
+                previous = flow.groupby("Symbol").tail(2).groupby("Symbol")["Close"].apply(lambda s: (s.iloc[-1]/s.iloc[-2]-1)*100 if len(s)>1 and s.iloc[-2] else np.nan)
+                last_flow["Price change %"] = last_flow["Symbol"].map(previous)
+                if "TradedValue" in last_flow:
+                    sort_col = "TradedValue"
+                else:
+                    last_flow["TradedValue proxy"] = last_flow["Close"] * last_flow["Volume"]
+                    sort_col = "TradedValue proxy"
+                last_flow["Activity flag"] = np.select([
+                    (last_flow["Price change %"] > 0) & (last_flow["Delivery change vs 20d pp"] > 0) & (last_flow["Volume vs 20d avg"] > 1),
+                    (last_flow["Price change %"] < 0) & (last_flow["Delivery change vs 20d pp"] > 0) & (last_flow["Volume vs 20d avg"] > 1)],
+                    ["Price up + delivery/volume elevated","Price down + delivery/volume elevated"], default="Mixed / insufficient confirmation")
+                show_cols = [c for c in ["Date","Symbol","Industry","Close","Price change %","Volume","Volume vs 20d avg","DeliveryPct","AvgDelivery20","Delivery change vs 20d pp",sort_col,"Activity flag"] if c in last_flow.columns]
+                st.caption(f"Latest uploaded date: {latest_date:%Y-%m-%d}. Rankings derive only from uploaded rows.")
+                st.dataframe(last_flow.sort_values(sort_col, ascending=False)[show_cols], use_container_width=True, hide_index=True)
+                st.download_button("Download activity analysis", last_flow[show_cols].to_csv(index=False).encode("utf-8"), file_name="delivery_activity_analysis.csv", mime="text/csv")
+        except Exception as exc:
+            st.error(f"Could not calculate delivery activity: {type(exc).__name__}: {exc}")
+    else:
+        st.info("No delivery or money-flow values are calculated until you upload a genuine dataset.")
+    st.markdown("**Suggested input schema**")
+    st.code("Date,Symbol,Industry,Close,Volume,DeliveryPct,TradedValue\n2026-01-02,ABC,Pharma,123.45,100000,42.5,12345000", language="csv")
+    st.caption("The row above is a schema example only, not real market data.")
+
+with research_tabs[2]:
+    st.subheader("25 · Daily market briefing")
+    st.write("Generated from data already retrieved by the dashboard. It does not invent news headlines or claim to know why a market moved.")
+    nifty_df = market_data.get("NIFTY 50", pd.DataFrame())
+    if not nifty_df.empty:
+        ni = indicators(nifty_df)
+        nl = ni.iloc[-1]
+        prev_close = float(ni.iloc[-2]["Close"]) if len(ni) > 1 else np.nan
+        ret = (float(nl["Close"]) / prev_close - 1) * 100 if pd.notna(prev_close) and prev_close else np.nan
+        a,b,c,d = st.columns(4)
+        a.metric("NIFTY 50 latest returned close", fmt(nl["Close"]), f"{fmt(ret)}% vs previous bar" if pd.notna(ret) else None)
+        b.metric("RSI 14", fmt(nl.get("RSI 14")))
+        c.metric("EMA 20", fmt(nl.get("EMA 20")))
+        d.metric("EMA 50", fmt(nl.get("EMA 50")))
+        close, e20, e50 = nl["Close"], nl.get("EMA 20", np.nan), nl.get("EMA 50", np.nan)
+        regime_text = ("bullish EMA alignment" if close > e20 > e50 else "bearish EMA alignment" if close < e20 < e50 else "mixed EMA alignment") if pd.notna(e20) and pd.notna(e50) else "insufficient moving-average history"
+        st.markdown(f"**Technical regime:** {regime_text}. This is a rule-based description, not a forecast.")
+        brief_rows=[]
+        for nm,df in market_data.items():
+            snap=quote_snapshot(df)
+            if snap:
+                last,change,pct=snap
+                brief_rows.append({"Instrument":nm,"Latest returned close":last["Close"],"Change vs previous bar":change,"Change %":pct,"Source candle (IST)":last["Date"].strftime("%Y-%m-%d %H:%M IST"),"Frequency":"Daily","Source":"Yahoo Finance via yfinance"})
+        st.dataframe(pd.DataFrame(brief_rows),use_container_width=True,hide_index=True)
+        st.markdown("#### Known limitations")
+        st.write("- This is a daily-bar summary, not a live intraday signal.")
+        st.write("- Market moves are not attributed to geopolitical or economic news without verified event sources.")
+        st.write("- FII/DII flows, derivatives positioning and delivery activity are unavailable unless separately sourced or uploaded.")
+        st.download_button("Download daily briefing data",pd.DataFrame(brief_rows).to_csv(index=False).encode("utf-8"),file_name="daily_market_briefing_data.csv",mime="text/csv")
+    else:
+        st.warning("No market history returned. A briefing cannot be generated until a real source returns data.")
+
+
+# Additional modules completing the major workflows shown in the reference screenshots.
+advanced_tabs = st.tabs([
+    "26 Macro & event log",
+    "27 Breadth & stock scanner",
+    "28 Derivatives lab",
+    "29 Stock deep-dive",
+    "30 Strategy backtest",
+    "31 Data quality"
+])
+
+with advanced_tabs[0]:
+    st.subheader("26 · Macro & geopolitical event log")
+    st.write("Macro market series below come from the dashboard's returned source bars. Geopolitical events are not automatically invented: upload a verified event log with source links to analyse event windows.")
+    macro_rows = []
+    for name in ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude"]:
+        df = market_data.get(name, pd.DataFrame())
+        if not df.empty:
+            snap = quote_snapshot(df)
+            if snap:
+                last, change, pct = snap
+                macro_rows.append({"Instrument": name, "Latest returned close": last["Close"], "Change vs previous bar": change, "Change %": pct, "Source candle": last["Date"].strftime("%Y-%m-%d %H:%M IST"), "Frequency": "Daily"})
+        else:
+            macro_rows.append({"Instrument": name, "Latest returned close": np.nan, "Change vs previous bar": np.nan, "Change %": np.nan, "Source candle": "Unavailable", "Frequency": "Daily"})
+    st.dataframe(pd.DataFrame(macro_rows), use_container_width=True, hide_index=True)
+    st.markdown("#### Verified event timeline input")
+    event_file = st.file_uploader("Upload event timeline CSV", type=["csv"], key="verified_event_log")
+    st.caption("Required columns: Date, Event, SourceURL. Optional: Category, Notes. Event data is displayed as supplied; source links should be checked by the user.")
+    if event_file is not None:
+        try:
+            ev = pd.read_csv(event_file)
+            ev.columns = [str(c).strip() for c in ev.columns]
+            req = {"Date", "Event", "SourceURL"}
+            if not req.issubset(ev.columns):
+                st.error("Required columns: Date, Event, SourceURL.")
+            else:
+                ev["Date"] = pd.to_datetime(ev["Date"], errors="coerce")
+                ev = ev.dropna(subset=["Date", "Event"]).sort_values("Date", ascending=False)
+                st.dataframe(ev, use_container_width=True, hide_index=True)
+                st.download_button("Download event log", ev.to_csv(index=False).encode("utf-8"), "verified_event_log.csv", "text/csv")
+        except Exception as exc:
+            st.error(f"Could not read event log: {type(exc).__name__}: {exc}")
+    else:
+        st.info("No event timeline uploaded. No geopolitical headlines or historical event impacts are fabricated.")
+    st.markdown("#### Macro data limitations")
+    st.write("USD/INR, RBI repo rate and index valuation are not inferred from NIFTY prices. Add verified sources or upload dated observations before showing those values.")
+    macro_file = st.file_uploader("Optional verified macro observations CSV", type=["csv"], key="macro_observations")
+    if macro_file is not None:
+        try:
+            md = pd.read_csv(macro_file)
+            md.columns = [str(c).strip() for c in md.columns]
+            if not {"Date", "Indicator", "Value", "SourceURL"}.issubset(md.columns):
+                st.error("Required columns: Date, Indicator, Value, SourceURL.")
+            else:
+                md["Date"] = pd.to_datetime(md["Date"], errors="coerce")
+                md["Value"] = pd.to_numeric(md["Value"], errors="coerce")
+                st.dataframe(md.sort_values("Date", ascending=False), use_container_width=True, hide_index=True)
+        except Exception as exc:
+            st.error(f"Could not read macro observations: {type(exc).__name__}: {exc}")
+
+with advanced_tabs[1]:
+    st.subheader("27 · Market breadth and technical stock scanner")
+    st.write("Upload multi-stock daily OHLCV history. Indicators are calculated from the uploaded real observations; symbols with insufficient history are marked as insufficient rather than classified.")
+    breadth_file = st.file_uploader("Stock universe OHLCV CSV", type=["csv"], key="breadth_universe")
+    st.caption("Required: Date, Symbol, Close. Optional: Open, High, Low, Volume, Industry. Use consistent adjusted/unadjusted price conventions.")
+    if breadth_file is not None:
+        try:
+            univ = pd.read_csv(breadth_file)
+            univ.columns = [str(c).strip() for c in univ.columns]
+            if not {"Date", "Symbol", "Close"}.issubset(univ.columns):
+                st.error("Required columns: Date, Symbol, Close.")
+            else:
+                univ["Date"] = pd.to_datetime(univ["Date"], errors="coerce")
+                for c in ["Close", "Open", "High", "Low", "Volume"]:
+                    if c in univ: univ[c] = pd.to_numeric(univ[c], errors="coerce")
+                univ = univ.dropna(subset=["Date", "Symbol", "Close"]).sort_values(["Symbol", "Date"]).drop_duplicates(["Symbol", "Date"], keep="last")
+                results = []
+                for sym, sdf in univ.groupby("Symbol"):
+                    sdf = sdf.copy()
+                    close = sdf["Close"]
+                    sdf["SMA20"] = close.rolling(20, min_periods=20).mean()
+                    sdf["SMA50"] = close.rolling(50, min_periods=50).mean()
+                    sdf["SMA200"] = close.rolling(200, min_periods=200).mean()
+                    sdf["EMA20"] = close.ewm(span=20, adjust=False, min_periods=20).mean()
+                    delta = close.diff()
+                    gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False, min_periods=14).mean()
+                    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False, min_periods=14).mean()
+                    rs = gain / loss.replace(0, np.nan)
+                    sdf["RSI14"] = 100 - 100/(1+rs)
+                    sdf.loc[(loss == 0) & gain.notna(), "RSI14"] = 100
+                    last = sdf.iloc[-1]
+                    prior = sdf.iloc[-2] if len(sdf) > 1 else None
+                    results.append({
+                        "Symbol": sym, "Industry": last.get("Industry", ""),
+                        "Date": last["Date"], "Close": last["Close"],
+                        "1D %": ((last["Close"]/prior["Close"]-1)*100 if prior is not None and prior["Close"] else np.nan),
+                        "SMA20": last["SMA20"], "SMA50": last["SMA50"], "SMA200": last["SMA200"],
+                        "RSI14": last["RSI14"],
+                        "Above SMA20": bool(last["Close"] > last["SMA20"]) if pd.notna(last["SMA20"]) else None,
+                        "Above SMA50": bool(last["Close"] > last["SMA50"]) if pd.notna(last["SMA50"]) else None,
+                        "Above SMA200": bool(last["Close"] > last["SMA200"]) if pd.notna(last["SMA200"]) else None,
+                        "EMA trend": ("Bullish" if last["Close"] > last["EMA20"] else "Bearish") if pd.notna(last["EMA20"]) else "Insufficient history",
+                    })
+                scan = pd.DataFrame(results)
+                valid200 = scan["Above SMA200"].dropna()
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Symbols uploaded", f"{scan['Symbol'].nunique():,}")
+                m2.metric("Above 50DMA", f"{100*scan['Above SMA50'].dropna().mean():.1f}%" if scan["Above SMA50"].notna().any() else "Unavailable")
+                m3.metric("Above 200DMA", f"{100*valid200.mean():.1f}%" if len(valid200) else "Insufficient history")
+                m4.metric("Breadth sample", f"{len(valid200):,} with 200DMA" )
+                st.markdown("#### Filters")
+                f1, f2, f3 = st.columns(3)
+                trend_filter = f1.selectbox("Trend", ["All", "Bullish", "Bearish", "Insufficient history"], key="scanner_trend")
+                rsi_filter = f2.selectbox("RSI 14", ["All", "Below 30", "30–50", "50–70", "Above 70"], key="scanner_rsi")
+                dma_filter = f3.selectbox("200DMA", ["All", "Above", "Below", "Insufficient history"], key="scanner_dma")
+                filtered = scan.copy()
+                if trend_filter != "All": filtered = filtered[filtered["EMA trend"] == trend_filter]
+                if rsi_filter == "Below 30": filtered = filtered[filtered["RSI14"] < 30]
+                elif rsi_filter == "30–50": filtered = filtered[filtered["RSI14"].between(30, 50, inclusive="left")]
+                elif rsi_filter == "50–70": filtered = filtered[filtered["RSI14"].between(50, 70, inclusive="left")]
+                elif rsi_filter == "Above 70": filtered = filtered[filtered["RSI14"] >= 70]
+                if dma_filter == "Above": filtered = filtered[filtered["Above SMA200"] == True]
+                elif dma_filter == "Below": filtered = filtered[filtered["Above SMA200"] == False]
+                elif dma_filter == "Insufficient history": filtered = filtered[filtered["Above SMA200"].isna()]
+                st.dataframe(filtered.sort_values("1D %", ascending=False), use_container_width=True, hide_index=True)
+                if "Industry" in scan and scan["Industry"].astype(str).str.len().gt(0).any():
+                    ind_breadth = scan.dropna(subset=["Above SMA200"]).groupby("Industry").agg(Stocks=("Symbol","nunique"), Above200Pct=("Above SMA200",lambda x:100*x.mean())).reset_index().sort_values("Above200Pct",ascending=False)
+                    st.markdown("#### Industry breadth")
+                    st.dataframe(ind_breadth.style.format({"Above200Pct":"{:.1f}%"}), use_container_width=True, hide_index=True)
+                st.download_button("Download scanner results", filtered.to_csv(index=False).encode("utf-8"), "technical_scanner_results.csv", "text/csv")
+        except Exception as exc:
+            st.error(f"Could not calculate breadth/scanner: {type(exc).__name__}: {exc}")
+    else:
+        st.info("Upload your stock universe CSV to calculate breadth. No stocks are silently assumed to be constituents.")
+
+with advanced_tabs[2]:
+    st.subheader("28 · Derivatives lab")
+    st.write("Analyse a dated option-chain CSV or futures snapshot. The module will calculate PCR and max pain only if the necessary strike-level open interest data is supplied.")
+    opt_file = st.file_uploader("Option-chain CSV", type=["csv"], key="derivatives_chain")
+    st.caption("Required columns: Expiry, Strike, OptionType (CE/PE), OI. Optional: LTP, Volume, IV, Spot, Underlying. PCR = total PE OI / total CE OI. Max pain is estimated from supplied OI and strikes only.")
+    if opt_file is not None:
+        try:
+            opt = pd.read_csv(opt_file)
+            opt.columns = [str(c).strip() for c in opt.columns]
+            req = {"Expiry", "Strike", "OptionType", "OI"}
+            if not req.issubset(opt.columns):
+                st.error("Required columns: Expiry, Strike, OptionType, OI.")
+            else:
+                opt["Strike"] = pd.to_numeric(opt["Strike"], errors="coerce")
+                opt["OI"] = pd.to_numeric(opt["OI"], errors="coerce")
+                opt["OptionType"] = opt["OptionType"].astype(str).str.upper().str.strip()
+                for c in ["LTP", "Volume", "IV", "Spot"]:
+                    if c in opt: opt[c] = pd.to_numeric(opt[c], errors="coerce")
+                opt = opt.dropna(subset=["Strike","OI"])
+                opt = opt[opt["OptionType"].isin(["CE","PE"])]
+                expiry_choice = st.selectbox("Expiry", sorted(opt["Expiry"].astype(str).unique()), key="opt_expiry")
+                chain = opt[opt["Expiry"].astype(str) == expiry_choice].copy()
+                ce_oi = chain.loc[chain["OptionType"]=="CE","OI"].sum()
+                pe_oi = chain.loc[chain["OptionType"]=="PE","OI"].sum()
+                pcr = pe_oi/ce_oi if ce_oi else np.nan
+                strikes = sorted(chain["Strike"].unique())
+                pain_rows = []
+                for settle in strikes:
+                    ce_payout = (((settle-chain.loc[chain["OptionType"]=="CE","Strike"]).clip(lower=0)) * chain.loc[chain["OptionType"]=="CE","OI"]).sum()
+                    pe_payout = (((chain.loc[chain["OptionType"]=="PE","Strike"]-settle).clip(lower=0)) * chain.loc[chain["OptionType"]=="PE","OI"]).sum()
+                    pain_rows.append({"Settlement candidate": settle, "Estimated aggregate intrinsic payout": ce_payout+pe_payout})
+                pain_df = pd.DataFrame(pain_rows)
+                max_pain = pain_df.loc[pain_df["Estimated aggregate intrinsic payout"].idxmin(),"Settlement candidate"] if not pain_df.empty else np.nan
+                a,b,c,d = st.columns(4)
+                a.metric("Call OI", f"{ce_oi:,.0f}")
+                b.metric("Put OI", f"{pe_oi:,.0f}")
+                c.metric("PCR (OI)", fmt(pcr,3))
+                d.metric("Estimated max pain", fmt(max_pain))
+                if "IV" in chain and chain["IV"].notna().any(): st.metric("Mean supplied IV", fmt(chain["IV"].mean()), help="Average of supplied IV field; confirm whether the source uses percent or decimal.")
+                st.dataframe(chain.sort_values(["Strike","OptionType"]), use_container_width=True, hide_index=True)
+                fig = px.bar(chain, x="Strike", y="OI", color="OptionType", barmode="group", template="plotly_dark", title="Open interest by strike")
+                st.plotly_chart(fig, use_container_width=True)
+                st.download_button("Download option-chain analysis", chain.to_csv(index=False).encode("utf-8"), "option_chain_analysis.csv", "text/csv")
+        except Exception as exc:
+            st.error(f"Could not analyse option chain: {type(exc).__name__}: {exc}")
+    else:
+        st.info("No option-chain file supplied. PCR, max pain and OI levels are unavailable until genuine chain data is provided.")
+    fut_file = st.file_uploader("Optional futures snapshot CSV", type=["csv"], key="futures_snapshot")
+    st.caption("Futures snapshot required columns: Date, Symbol, Spot, Futures, OI. Optional PreviousOI. Basis = Futures − Spot.")
+    if fut_file is not None:
+        try:
+            fut = pd.read_csv(fut_file)
+            fut.columns = [str(c).strip() for c in fut.columns]
+            if not {"Date","Symbol","Spot","Futures","OI"}.issubset(fut.columns):
+                st.error("Required columns: Date, Symbol, Spot, Futures, OI.")
+            else:
+                for c in ["Spot","Futures","OI","PreviousOI"]:
+                    if c in fut: fut[c] = pd.to_numeric(fut[c], errors="coerce")
+                fut["Basis"] = fut["Futures"]-fut["Spot"]
+                fut["Basis %"] = fut["Basis"]/fut["Spot"]*100
+                if "PreviousOI" in fut:
+                    fut["OI change %"] = (fut["OI"]/fut["PreviousOI"].replace(0,np.nan)-1)*100
+                st.dataframe(fut, use_container_width=True, hide_index=True)
+        except Exception as exc:
+            st.error(f"Could not read futures snapshot: {type(exc).__name__}: {exc}")
+
+with advanced_tabs[3]:
+    st.subheader("29 · Stock deep-dive")
+    st.write("Choose a symbol from a real uploaded OHLCV file to view a historical candlestick chart, moving averages, RSI, ATR and session-level data.")
+    deep_file = st.file_uploader("Stock OHLCV history CSV", type=["csv"], key="stock_deep_dive")
+    st.caption("Required: Date, Symbol, Open, High, Low, Close. Optional: Volume.")
+    if deep_file is not None:
+        try:
+            deep = pd.read_csv(deep_file)
+            deep.columns = [str(c).strip() for c in deep.columns]
+            req = {"Date","Symbol","Open","High","Low","Close"}
+            if not req.issubset(deep.columns):
+                st.error("Required columns: Date, Symbol, Open, High, Low, Close.")
+            else:
+                deep["Date"] = pd.to_datetime(deep["Date"], errors="coerce")
+                for c in ["Open","High","Low","Close","Volume"]:
+                    if c in deep: deep[c] = pd.to_numeric(deep[c], errors="coerce")
+                deep = deep.dropna(subset=["Date","Symbol","Open","High","Low","Close"]).sort_values(["Symbol","Date"])
+                symbol = st.selectbox("Stock", sorted(deep["Symbol"].astype(str).unique()), key="deep_symbol")
+                sdf = deep[deep["Symbol"].astype(str)==symbol].copy()
+                calc = indicators(sdf)
+                fig = go.Figure(go.Candlestick(x=calc["Date"],open=calc["Open"],high=calc["High"],low=calc["Low"],close=calc["Close"],name=symbol))
+                for col in ["SMA 20","SMA 50","SMA 200","EMA 20","EMA 50"]:
+                    if col in calc and calc[col].notna().any(): fig.add_trace(go.Scatter(x=calc["Date"],y=calc[col],name=col,mode="lines"))
+                fig.update_layout(template="plotly_dark",height=560,xaxis_rangeslider_visible=False,title=f"{symbol} · historical candles")
+                st.plotly_chart(fig,use_container_width=True)
+                last = calc.iloc[-1]
+                a,b,c,d = st.columns(4)
+                a.metric("Latest close",fmt(last["Close"]))
+                b.metric("RSI 14",fmt(last.get("RSI 14")))
+                c.metric("ATR 14",fmt(last.get("ATR 14")))
+                d.metric("Latest source date",last["Date"].strftime("%Y-%m-%d"))
+                st.dataframe(calc.tail(30),use_container_width=True,hide_index=True)
+        except Exception as exc:
+            st.error(f"Could not render stock deep-dive: {type(exc).__name__}: {exc}")
+    else:
+        st.info("Upload real OHLCV history to activate this deep-dive. The main dashboard's public tickers are not silently treated as a full stock universe.")
+
+with advanced_tabs[4]:
+    st.subheader("30 · Strategy backtest")
+    st.write("A transparent long-only SMA crossover research backtest using uploaded daily close data. This is not a recommendation and does not model slippage, taxes, corporate actions or intraday execution.")
+    bt_file = st.file_uploader("Backtest close-price CSV", type=["csv"], key="strategy_backtest")
+    if bt_file is not None:
+        try:
+            bt = pd.read_csv(bt_file)
+            bt.columns = [str(c).strip() for c in bt.columns]
+            if not {"Date","Close"}.issubset(bt.columns):
+                st.error("Required columns: Date, Close. One instrument per upload.")
+            else:
+                bt["Date"] = pd.to_datetime(bt["Date"],errors="coerce")
+                bt["Close"] = pd.to_numeric(bt["Close"],errors="coerce")
+                bt = bt.dropna(subset=["Date","Close"]).sort_values("Date").drop_duplicates("Date")
+                fast = st.slider("Fast SMA",2,100,20,key="bt_fast")
+                slow = st.slider("Slow SMA",5,250,50,key="bt_slow")
+                cost_bps = st.number_input("Estimated transaction cost per position change (basis points)",min_value=0.0,max_value=200.0,value=5.0,step=1.0,key="bt_cost")
+                if fast >= slow:
+                    st.warning("Fast SMA must be shorter than slow SMA.")
+                elif len(bt) <= slow:
+                    st.warning(f"Need more than {slow} daily observations for this configuration; current rows: {len(bt)}.")
+                else:
+                    bt["SMA_fast"] = bt["Close"].rolling(fast,min_periods=fast).mean()
+                    bt["SMA_slow"] = bt["Close"].rolling(slow,min_periods=slow).mean()
+                    bt["Signal"] = (bt["SMA_fast"] > bt["SMA_slow"]).astype(int)
+                    bt["Position"] = bt["Signal"].shift(1).fillna(0)
+                    bt["Market return"] = bt["Close"].pct_change().fillna(0)
+                    bt["Turnover"] = bt["Position"].diff().abs().fillna(bt["Position"].abs())
+                    bt["Strategy return"] = bt["Position"]*bt["Market return"] - bt["Turnover"]*(cost_bps/10000)
+                    bt["Equity curve"] = (1+bt["Strategy return"]).cumprod()
+                    bt["Buy & hold"] = (1+bt["Market return"]).cumprod()
+                    bt["Drawdown"] = bt["Equity curve"]/bt["Equity curve"].cummax()-1
+                    total = (bt["Equity curve"].iloc[-1]-1)*100
+                    bh = (bt["Buy & hold"].iloc[-1]-1)*100
+                    dd = bt["Drawdown"].min()*100
+                    daily = bt["Strategy return"]
+                    vol = daily.std()
+                    sharpe = (daily.mean()/vol*np.sqrt(252)) if pd.notna(vol) and vol>0 else np.nan
+                    a,b,c,d = st.columns(4)
+                    a.metric("Strategy return",f"{total:.2f}%")
+                    b.metric("Buy & hold",f"{bh:.2f}%")
+                    c.metric("Max drawdown",f"{dd:.2f}%")
+                    d.metric("Annualised Sharpe (rough)",fmt(sharpe,2))
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=bt["Date"],y=bt["Equity curve"],name="SMA strategy"))
+                    fig.add_trace(go.Scatter(x=bt["Date"],y=bt["Buy & hold"],name="Buy & hold"))
+                    fig.update_layout(template="plotly_dark",height=420,title="Growth of ₹1 (before taxes; transaction cost assumption applied)")
+                    st.plotly_chart(fig,use_container_width=True)
+                    st.dataframe(bt.tail(30),use_container_width=True,hide_index=True)
+                    st.download_button("Download backtest results",bt.to_csv(index=False).encode("utf-8"),"sma_backtest_results.csv","text/csv")
+        except Exception as exc:
+            st.error(f"Could not run backtest: {type(exc).__name__}: {exc}")
+    else:
+        st.info("Upload a real historical close series to run a reproducible backtest.")
+
+with advanced_tabs[5]:
+    st.subheader("31 · Data quality and source audit")
+    st.write("Audit source coverage, timestamps, missing rows and indicator readiness for the public market series currently loaded.")
+    quality_rows = []
+    for name, ticker in INDEXES.items():
+        df = market_data.get(name, pd.DataFrame())
+        err = market_errors.get(name)
+        if df.empty:
+            quality_rows.append({"Instrument":name,"Ticker":ticker,"Rows":0,"Latest source candle":"Unavailable","Age (days)":np.nan,"Duplicate timestamps":0,"OHLC complete %":np.nan,"Status":err or "No data"})
+        else:
+            date_max = df["Date"].max()
+            age = (pd.Timestamp.now(tz="Asia/Kolkata") - date_max).total_seconds()/86400 if date_max.tzinfo else (pd.Timestamp.now(tz="Asia/Kolkata").tz_localize(None)-date_max).total_seconds()/86400
+            cols = [c for c in ["Open","High","Low","Close"] if c in df.columns]
+            complete = df[cols].notna().all(axis=1).mean()*100 if cols else np.nan
+            dupes = int(df["Date"].duplicated().sum())
+            status = "OK (daily source bar)" if age < 4 else "Potentially stale — verify source" 
+            if complete < 99.9: status += "; incomplete OHLC"
+            quality_rows.append({"Instrument":name,"Ticker":ticker,"Rows":len(df),"Latest source candle":date_max.strftime("%Y-%m-%d %H:%M %Z"),"Age (days)":age,"Duplicate timestamps":dupes,"OHLC complete %":complete,"Status":status})
+    qdf = pd.DataFrame(quality_rows)
+    st.dataframe(qdf.style.format({"Age (days)":"{:.2f}","OHLC complete %":"{:.1f}"}),use_container_width=True,hide_index=True)
+    st.download_button("Download source audit",qdf.to_csv(index=False).encode("utf-8"),"market_data_quality_audit.csv","text/csv")
+    st.markdown("#### What this dashboard does not claim")
+    st.write("- Yahoo Finance data is best-effort, not guaranteed live exchange data.")
+    st.write("- TradingView embedded charts are a separate provider and may have exchange-specific delays.")
+    st.write("- Public daily price history does not provide real option-chain OI, implied volatility, max pain, FII/DII flows or verified geopolitical causes.")
+    st.write("- Calculations are only as sound as the dates, adjustments, universe membership and source rows supplied.")
