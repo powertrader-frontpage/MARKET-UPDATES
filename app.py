@@ -588,16 +588,17 @@ try:
     gift_response.raise_for_status()
     gift_html = gift_response.text
     gift_text = html.unescape(re.sub(r"<[^>]+>", " ", gift_html))
-    gift_text = re.sub(r"\\s+", " ", gift_text)
+    gift_text = re.sub(r"\s+", " ", gift_text)
     gift_anchor = gift_text.upper().find("DERIVED:CFD")
-    gift_search_text = gift_text[gift_anchor:gift_anchor + 1800] if gift_anchor >= 0 else gift_text[:12000]
-    gift_match = re.search(r"([+-]?\\d[\\d,]*\\.\\d{1,2})\\s*\\(\\s*([+-]?\\d+\\.\\d+)\\s*%\\s*\\)", gift_search_text)
+    gift_search_text = gift_text[gift_anchor:gift_anchor + 4000] if gift_anchor >= 0 else gift_text[:20000]
+    # Quote layouts can change; first try the common "change (percent%)" pattern.
+    gift_match = re.search(r"([+-]?\d[\d,]*\.\d{1,2})\s*\(\s*([+-]?\d+\.\d+)\s*%\s*\)", gift_search_text)
     if gift_match:
         gift_change_points = float(gift_match.group(1).replace(",", ""))
         gift_change_pct = float(gift_match.group(2))
         gift_score = 1 if gift_change_pct > 0 else -1 if gift_change_pct < 0 else 0
         sentiment_parts.append((gift_score, 0.40))
-        gift_asof_match = re.search(r"As on\\s+(.{0,70}?)(?:Markets Closed|Day Range|Open\\s*\\|)", gift_search_text, flags=re.IGNORECASE)
+        gift_asof_match = re.search(r"As on\s+(.{0,70}?)(?:Markets Closed|Day Range|Open\s*\|)", gift_search_text, flags=re.IGNORECASE)
         gift_asof = re.sub(r"\\s+", " ", gift_asof_match.group(1)).strip() if gift_asof_match else "time not parsed"
         sentiment_details.append({"Factor": "GIFT Nifty · Moneycontrol indicative quote", "Latest change": f"{gift_change_pct:+.2f}% ({gift_change_points:+,.2f} pts)", "Signal": "Positive" if gift_score > 0 else "Negative" if gift_score < 0 else "Flat", "Source bar": gift_asof})
     else:
