@@ -86,6 +86,53 @@ def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, 
     except Exception as exc:
         return pd.DataFrame(), f"Fetch failed: {type(exc).__name__}: {str(exc)[:240]}"
 
+# Public-data universe used to make stock research less manual. Industry labels are static classifications,
+# while prices are fetched live from Yahoo Finance and must be verified against source timestamps.
+AUTO_UNIVERSE = {
+    "RELIANCE.NS": "Energy", "TCS.NS": "IT", "INFY.NS": "IT", "HCLTECH.NS": "IT",
+    "WIPRO.NS": "IT", "TECHM.NS": "IT", "HDFCBANK.NS": "Financials", "ICICIBANK.NS": "Financials",
+    "SBIN.NS": "Financials", "KOTAKBANK.NS": "Financials", "AXISBANK.NS": "Financials",
+    "BAJFINANCE.NS": "Financials", "BAJAJFINSV.NS": "Financials", "BHARTIARTL.NS": "Telecom",
+    "ITC.NS": "FMCG", "HINDUNILVR.NS": "FMCG", "NESTLEIND.NS": "FMCG", "TATAMOTORS.NS": "Auto",
+    "M&M.NS": "Auto", "MARUTI.NS": "Auto", "SUNPHARMA.NS": "Pharma", "DRREDDY.NS": "Pharma",
+    "CIPLA.NS": "Pharma", "LT.NS": "Industrials", "ULTRACEMCO.NS": "Cement", "TATASTEEL.NS": "Metals",
+    "JSWSTEEL.NS": "Metals", "NTPC.NS": "Utilities", "POWERGRID.NS": "Utilities", "ONGC.NS": "Energy",
+    "COALINDIA.NS": "Energy", "ASIANPAINT.NS": "Consumer", "TITAN.NS": "Consumer", "ADANIPORTS.NS": "Infrastructure",
+    "TRENT.NS": "Retail", "BEL.NS": "Industrials", "INDUSINDBK.NS": "Financials",
+}
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_auto_universe(period: str = "2y") -> pd.DataFrame:
+    """Fetch actual daily OHLCV for a broad, fixed large-cap universe; never create synthetic rows."""
+    tickers = list(AUTO_UNIVERSE)
+    raw = yf.download(tickers, period=period, interval="1d", auto_adjust=False, group_by="ticker",
+                      threads=True, progress=False, actions=False)
+    if raw is None or raw.empty:
+        return pd.DataFrame()
+    rows=[]
+    for ticker in tickers:
+        try:
+            if isinstance(raw.columns, pd.MultiIndex):
+                if ticker not in raw.columns.get_level_values(0):
+                    continue
+                part=raw[ticker].copy()
+            else:
+                part=raw.copy()
+            part=part.reset_index()
+            date_col="Date" if "Date" in part.columns else "Datetime"
+            if date_col not in part.columns or "Close" not in part.columns:
+                continue
+            part=part.rename(columns={date_col:"Date"})
+            part["Symbol"]=ticker.replace(".NS", "")
+            part["Industry"]=AUTO_UNIVERSE[ticker]
+            for c in ["Open","High","Low","Close","Volume"]:
+                if c in part.columns: part[c]=pd.to_numeric(part[c], errors="coerce")
+            part=part.dropna(subset=["Date","Close"])
+            rows.append(part[[c for c in ["Date","Symbol","Industry","Open","High","Low","Close","Volume"] if c in part.columns]])
+        except Exception:
+            continue
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+
 def indicators(data: pd.DataFrame) -> pd.DataFrame:
     out = data.copy()
     close = out["Close"]
@@ -526,11 +573,12 @@ research_tabs = st.tabs(["23 Industry intelligence", "24 Delivery & money-flow p
 
 with research_tabs[0]:
     st.subheader("23 · Industry intelligence and rotation")
-    st.write("Upload genuine daily stock history with columns Date, Symbol, Industry, Close. Optional columns: Volume and MarketCap. Industry rankings use only uploaded rows.")
-    industry_file = st.file_uploader("Industry stock history CSV", type=["csv"], key="industry_history_csv")
-    if industry_file is not None:
+    st.write("Automatically fetches a broad large-cap stock universe from Yahoo Finance, with optional CSV override. Public data may be delayed or unavailable.")
+    industry_file = st.file_uploader("Optional: override with your own stock history CSV", type=["csv"], key="industry_history_csv")
+    auto_industry = st.button("↻ Fetch latest industry data", key="auto_industry_fetch")
+    if industry_file is not None or auto_industry:
         try:
-            ind = pd.read_csv(industry_file)
+            ind = pd.read_csv(industry_file) if industry_file is not None else get_auto_universe(period="2y")
             ind.columns = [str(c).strip() for c in ind.columns]
             required = {"Date", "Symbol", "Industry", "Close"}
             if not required.issubset(ind.columns):
@@ -574,14 +622,13 @@ with research_tabs[0]:
         except Exception as exc:
             st.error(f"Could not calculate industry analytics: {type(exc).__name__}: {exc}")
     else:
-        st.info("Upload real constituent history to calculate rankings. No sample values are shown as market data.")
-    st.markdown("**Suggested input schema**")
-    st.code("Date,Symbol,Industry,Close,Volume,MarketCap\n2026-01-02,ABC,Pharma,123.45,100000,2500000000", language="csv")
-    st.caption("The row above is a schema example only, not real market data.")
+        st.info("Press **Fetch latest industry data** to load genuine daily history automatically, or upload your own CSV.")
+    st.caption("Automatic universe: selected large-cap NSE-listed stocks. Industry labels are broad groupings, not official index constituents. Source: Yahoo Finance via yfinance; verify freshness and coverage.")
 
 with research_tabs[1]:
     st.subheader("24 · Delivery activity and money-flow proxies")
-    st.write("Upload genuine daily data with Symbol, Date, Close, Volume and DeliveryPct. Optional: Industry, TradedValue. Delivery is an activity proxy; it does not prove institutional buying.")
+    st.write("Delivery percentage is not reliably available through the same free price-history feed. This section therefore remains optional: upload genuine NSE delivery data when you have it. No delivery values are guessed.")
+    st.markdown("[Open official NSE All Reports](https://www.nseindia.com/all-reports) · Look for security-wise delivery / deliverable quantity reports.")
     flow_file = st.file_uploader("Delivery / turnover CSV", type=["csv"], key="delivery_flow_csv")
     if flow_file is not None:
         try:
@@ -718,12 +765,13 @@ with advanced_tabs[0]:
 
 with advanced_tabs[1]:
     st.subheader("27 · Market breadth and technical stock scanner")
-    st.write("Upload multi-stock daily OHLCV history. Indicators are calculated from the uploaded real observations; symbols with insufficient history are marked as insufficient rather than classified.")
-    breadth_file = st.file_uploader("Stock universe OHLCV CSV", type=["csv"], key="breadth_universe")
-    st.caption("Required: Date, Symbol, Close. Optional: Open, High, Low, Volume, Industry. Use consistent adjusted/unadjusted price conventions.")
-    if breadth_file is not None:
+    st.write("Fetch a broad large-cap OHLCV universe automatically, or upload your own dataset. Indicators use returned source data only.")
+    breadth_file = st.file_uploader("Optional: override with your own OHLCV CSV", type=["csv"], key="breadth_universe")
+    auto_breadth = st.button("↻ Fetch latest stock universe", key="auto_breadth_fetch")
+    st.caption("Automatic history is fetched from Yahoo Finance. Public source coverage, delays and availability can vary.")
+    if breadth_file is not None or auto_breadth:
         try:
-            univ = pd.read_csv(breadth_file)
+            univ = pd.read_csv(breadth_file) if breadth_file is not None else get_auto_universe(period="2y")
             univ.columns = [str(c).strip() for c in univ.columns]
             if not {"Date", "Symbol", "Close"}.issubset(univ.columns):
                 st.error("Required columns: Date, Symbol, Close.")

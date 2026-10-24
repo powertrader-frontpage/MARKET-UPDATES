@@ -83,3 +83,10 @@ Added:
 - Source-quality audit showing returned rows, latest source candle, data age and OHLC completeness.
 
 Important: no broker API is required, but these modules cannot manufacture unavailable datasets. Derivatives, delivery, FII/DII and verified event history require genuine source files or separate public-source integrations. The backtest is a simple research baseline and omits slippage, taxes, survivorship bias and corporate-action pitfalls unless input data accounts for them.
+
+
+## Reduced-manual-work update
+- Industry Intelligence and Market Breadth / Stock Scanner now include a button to fetch daily history for a broad selected large-cap NSE-listed universe from Yahoo Finance via yfinance. Data is cached for up to six hours to reduce repeated requests. You can still override with a CSV.
+- The automatic universe is a selected large-cap list, not the full NSE market or an official index constituent file; industry labels are broad classifications.
+- Delivery percentage and derivatives option-chain/futures positioning still require a reliable source or uploaded genuine snapshots. These are not fabricated because they are not reliably supplied by the same free historical price feed.
+- On Streamlit Community Cloud, cache/data availability can reset during restarts or sleep; press the fetch button when you want a new retrieval. Check the source timestamp and do not assume real-time data.
