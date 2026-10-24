@@ -580,31 +580,59 @@ def _sentiment_change(label, ticker, weight, inverse=False):
     except Exception:
         sentiment_errors.append(f"{label}: unavailable")
 
-# Prefer Moneycontrol's published GIFT Nifty page over an unverified Yahoo futures ticker.
-# Moneycontrol labels this quote as a derived/indicative CFD, so show the source and caveat.
-try:
-    gift_url = "https://www.moneycontrol.com/live-index/gift-nifty"
-    gift_response = requests.get(gift_url, headers={"User-Agent": "Mozilla/5.0 MarketIntelligenceTerminal/1.0"}, timeout=12)
-    gift_response.raise_for_status()
-    gift_html = gift_response.text
-    gift_text = html.unescape(re.sub(r"<[^>]+>", " ", gift_html))
-    gift_text = re.sub(r"\s+", " ", gift_text)
-    gift_anchor = gift_text.upper().find("DERIVED:CFD")
-    gift_search_text = gift_text[gift_anchor:gift_anchor + 4000] if gift_anchor >= 0 else gift_text[:20000]
-    # Quote layouts can change; first try the common "change (percent%)" pattern.
-    gift_match = re.search(r"([+-]?\d[\d,]*\.\d{1,2})\s*\(\s*([+-]?\d+\.\d+)\s*%\s*\)", gift_search_text)
-    if gift_match:
+# Try multiple public GIFT Nifty quote pages because individual sites may block cloud-hosted requests.
+# These public quotes can be delayed/indicative; never silently substitute a different instrument.
+gift_sources = [
+    ("Moneycontrol indicative quote", "https://www.moneycontrol.com/live-index/gift-nifty"),
+    ("NiftyTrader public snapshot", "https://www.niftytrader.in/gift-nifty-live"),
+    ("Angel One public snapshot", "https://www.angelone.in/indices/gift-nifty"),
+]
+gift_loaded = False
+gift_failures = []
+for gift_source_name, gift_url in gift_sources:
+    try:
+        gift_response = requests.get(
+            gift_url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36"},
+            timeout=8,
+        )
+        gift_response.raise_for_status()
+        gift_html = gift_response.text
+        gift_text = html.unescape(re.sub(r"<[^>]+>", " ", gift_html))
+        gift_text = re.sub(r"\\s+", " ", gift_text)
+        # Find a quote-like change/percent pair near the page's GIFT Nifty content.
+        gift_upper = gift_text.upper()
+        gift_anchor = gift_upper.find("GIFT NIFTY")
+        gift_search_text = gift_text[gift_anchor:gift_anchor + 12000] if gift_anchor >= 0 else gift_text[:12000]
+        gift_match = re.search(
+            r"([+-]?\\d[\\d,]*\\.?\\d*)\\s*\\(?\\s*([+-]?\\d+\\.\\d{1,2})\\s*%\\s*\\)?",
+            gift_search_text,
+        )
+        # Moneycontrol formats the change as "-72.50 (-0.32%)"; other sources may omit parentheses.
+        if not gift_match:
+            gift_match = re.search(
+                r"([+-]\\d[\\d,]*\\.?\\d*)\\s*\\(\\s*([+-]?\\d+\\.\\d{1,2})\\s*%\\s*\\)",
+                gift_search_text,
+            )
+        if not gift_match:
+            gift_failures.append(f"{gift_source_name}: quote pattern not found")
+            continue
         gift_change_points = float(gift_match.group(1).replace(",", ""))
         gift_change_pct = float(gift_match.group(2))
         gift_score = 1 if gift_change_pct > 0 else -1 if gift_change_pct < 0 else 0
         sentiment_parts.append((gift_score, 0.40))
-        gift_asof_match = re.search(r"As on\s+(.{0,70}?)(?:Markets Closed|Day Range|Open\s*\|)", gift_search_text, flags=re.IGNORECASE)
-        gift_asof = re.sub(r"\\s+", " ", gift_asof_match.group(1)).strip() if gift_asof_match else "time not parsed"
-        sentiment_details.append({"Factor": "GIFT Nifty · Moneycontrol indicative quote", "Latest change": f"{gift_change_pct:+.2f}% ({gift_change_points:+,.2f} pts)", "Signal": "Positive" if gift_score > 0 else "Negative" if gift_score < 0 else "Flat", "Source bar": gift_asof})
-    else:
-        sentiment_errors.append("GIFT Nifty (Moneycontrol quote pattern not found)")
-except Exception as exc:
-    sentiment_errors.append(f"GIFT Nifty (Moneycontrol unavailable: {exc.__class__.__name__})")
+        sentiment_details.append({
+            "Factor": f"GIFT Nifty · {gift_source_name}",
+            "Latest change": f"{gift_change_pct:+.2f}% ({gift_change_points:+,.2f} pts)",
+            "Signal": "Positive" if gift_score > 0 else "Negative" if gift_score < 0 else "Flat",
+            "Source bar": "Public web quote · timestamp may be delayed",
+        })
+        gift_loaded = True
+        break
+    except Exception as exc:
+        gift_failures.append(f"{gift_source_name}: {exc.__class__.__name__}")
+if not gift_loaded:
+    sentiment_errors.append("GIFT Nifty unavailable (" + "; ".join(gift_failures) + ")")
 _sentiment_change("Brent crude (inverse impact)", "BZ=F", 0.20, inverse=True)
 _sentiment_change("Infosys ADR", "INFY", 0.15, inverse=False)
 _sentiment_change("Wipro ADR", "WIT", 0.10, inverse=False)
