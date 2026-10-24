@@ -799,13 +799,74 @@ with extra_tabs[0]:
 
 with extra_tabs[1]:
     st.subheader("14 · Options analytics")
-    st.write("Option-chain data is fetched from the authenticated FYERS Market Data API. Values are shown only when FYERS returns them.")
+    st.write("Option-chain data for NIFTY-family indices and a broad list of F&O stocks is fetched from the authenticated FYERS Market Data API. Choose an underlying and expiry; availability depends on FYERS contract coverage.")
+    # FYERS accepts the underlying equity symbol for stock-option chains.
+    # Keep the list explicit so unsupported/expired contracts fail transparently rather than showing guessed data.
     option_underlying_labels = {
-        "NIFTY": "NSE:NIFTY50-INDEX",
-        "BANKNIFTY": "NSE:NIFTYBANK-INDEX",
-        "FINNIFTY": "NSE:FINNIFTY-INDEX",
+        "Index · NIFTY": "NSE:NIFTY50-INDEX",
+        "Index · BANKNIFTY": "NSE:NIFTYBANK-INDEX",
+        "Index · FINNIFTY": "NSE:FINNIFTY-INDEX",
+        "Stock · ADANIENT": "NSE:ADANIENT-EQ",
+        "Stock · ADANIPORTS": "NSE:ADANIPORTS-EQ",
+        "Stock · APOLLOHOSP": "NSE:APOLLOHOSP-EQ",
+        "Stock · ASIANPAINT": "NSE:ASIANPAINT-EQ",
+        "Stock · AXISBANK": "NSE:AXISBANK-EQ",
+        "Stock · BAJAJ-AUTO": "NSE:BAJAJ-AUTO-EQ",
+        "Stock · BAJFINANCE": "NSE:BAJFINANCE-EQ",
+        "Stock · BAJAJFINSV": "NSE:BAJAJFINSV-EQ",
+        "Stock · BEL": "NSE:BEL-EQ",
+        "Stock · BHARTIARTL": "NSE:BHARTIARTL-EQ",
+        "Stock · BOSCHLTD": "NSE:BOSCHLTD-EQ",
+        "Stock · BPCL": "NSE:BPCL-EQ",
+        "Stock · BRITANNIA": "NSE:BRITANNIA-EQ",
+        "Stock · CANBK": "NSE:CANBK-EQ",
+        "Stock · CHOLAFIN": "NSE:CHOLAFIN-EQ",
+        "Stock · CIPLA": "NSE:CIPLA-EQ",
+        "Stock · COALINDIA": "NSE:COALINDIA-EQ",
+        "Stock · DLF": "NSE:DLF-EQ",
+        "Stock · DRREDDY": "NSE:DRREDDY-EQ",
+        "Stock · EICHERMOT": "NSE:EICHERMOT-EQ",
+        "Stock · GRASIM": "NSE:GRASIM-EQ",
+        "Stock · HCLTECH": "NSE:HCLTECH-EQ",
+        "Stock · HDFCBANK": "NSE:HDFCBANK-EQ",
+        "Stock · HDFCLIFE": "NSE:HDFCLIFE-EQ",
+        "Stock · HEROMOTOCO": "NSE:HEROMOTOCO-EQ",
+        "Stock · HINDALCO": "NSE:HINDALCO-EQ",
+        "Stock · HINDUNILVR": "NSE:HINDUNILVR-EQ",
+        "Stock · ICICIBANK": "NSE:ICICIBANK-EQ",
+        "Stock · INDUSINDBK": "NSE:INDUSINDBK-EQ",
+        "Stock · INFY": "NSE:INFY-EQ",
+        "Stock · IOC": "NSE:IOC-EQ",
+        "Stock · ITC": "NSE:ITC-EQ",
+        "Stock · JINDALSTEL": "NSE:JINDALSTEL-EQ",
+        "Stock · JSWSTEEL": "NSE:JSWSTEEL-EQ",
+        "Stock · KOTAKBANK": "NSE:KOTAKBANK-EQ",
+        "Stock · LT": "NSE:LT-EQ",
+        "Stock · LTIM": "NSE:LTIM-EQ",
+        "Stock · M&M": "NSE:M&M-EQ",
+        "Stock · MARUTI": "NSE:MARUTI-EQ",
+        "Stock · NESTLEIND": "NSE:NESTLEIND-EQ",
+        "Stock · NTPC": "NSE:NTPC-EQ",
+        "Stock · ONGC": "NSE:ONGC-EQ",
+        "Stock · PERSISTENT": "NSE:PERSISTENT-EQ",
+        "Stock · PIDILITIND": "NSE:PIDILITIND-EQ",
+        "Stock · POWERGRID": "NSE:POWERGRID-EQ",
+        "Stock · RELIANCE": "NSE:RELIANCE-EQ",
+        "Stock · SBILIFE": "NSE:SBILIFE-EQ",
+        "Stock · SBIN": "NSE:SBIN-EQ",
+        "Stock · SHRIRAMFIN": "NSE:SHRIRAMFIN-EQ",
+        "Stock · SUNPHARMA": "NSE:SUNPHARMA-EQ",
+        "Stock · TATACONSUM": "NSE:TATACONSUM-EQ",
+        "Stock · TATAMOTORS": "NSE:TATAMOTORS-EQ",
+        "Stock · TATASTEEL": "NSE:TATASTEEL-EQ",
+        "Stock · TCS": "NSE:TCS-EQ",
+        "Stock · TECHM": "NSE:TECHM-EQ",
+        "Stock · TITAN": "NSE:TITAN-EQ",
+        "Stock · TRENT": "NSE:TRENT-EQ",
+        "Stock · ULTRACEMCO": "NSE:ULTRACEMCO-EQ",
+        "Stock · WIPRO": "NSE:WIPRO-EQ",
     }
-    option_underlying = st.selectbox("Underlying", list(option_underlying_labels.keys()), key="auto_opt_underlying")
+    option_underlying = st.selectbox("Underlying (index or F&O stock)", list(option_underlying_labels.keys()), key="auto_opt_underlying")
     if not st.session_state.get("fyers_access_token") or not fyers_credentials():
         st.warning("Connect FYERS in the sidebar to load the live option chain, PCR, open interest, max pain and Greeks. No values are estimated when disconnected.")
     else:
@@ -879,8 +940,8 @@ with extra_tabs[1]:
                     ordered = ["ATM", "Strike"] + [col for col in chain_frame.columns if col not in {"ATM", "Strike"}]
                     chain_frame = chain_frame[ordered]
                 st.dataframe(chain_frame, use_container_width=True, hide_index=True)
-                st.download_button("Download FYERS option chain CSV", chain_frame.to_csv(index=False).encode("utf-8"), f"{option_underlying.lower()}_fyers_option_chain.csv", "text/csv")
-                st.caption(f"Source: FYERS Option Chain API · underlying {option_underlying_labels[option_underlying]} · returned strikes: {len(strikes)} · retrieved {datetime.now(ZoneInfo('Asia/Kolkata')):%d %b %Y %H:%M:%S IST}. Max pain is calculated only across the returned strikes, not the entire market chain.")
+                st.download_button("Download FYERS option chain CSV", chain_frame.to_csv(index=False).encode("utf-8"), f"{option_underlying.split(' · ')[-1].lower()}_fyers_option_chain.csv", "text/csv")
+                st.caption(f"Source: FYERS Option Chain API · selected {option_underlying} ({option_underlying_labels[option_underlying]}) · returned strikes: {len(strikes)} · retrieved {datetime.now(ZoneInfo('Asia/Kolkata')):%d %b %Y %H:%M:%S IST}. Max pain is calculated only across the returned strikes, not the entire market chain.")
     st.markdown("[FYERS Option Chain API documentation](https://fyers.in/api-docs/v3/api/market-data/option-chain) · [Official NSE option chain](https://www.nseindia.com/option-chain)")
 
 with extra_tabs[2]:
