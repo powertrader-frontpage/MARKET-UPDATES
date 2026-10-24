@@ -649,6 +649,49 @@ st.caption("Headline values are the latest returned daily bar, not guaranteed li
 
 tabs = st.tabs(["Overview", "Live charts", "Technical analysis", "Sector rotation", "Global markets", "FII/DII & news", "Derivatives", "History & sources"])
 with tabs[0]:
+    st.subheader("Market regime & trend strength")
+    overview_regime_name = st.selectbox("Regime instrument", list(INDEXES.keys()), index=0, key="overview_regime_symbol")
+    overview_regime_df = market_data[overview_regime_name]
+    if overview_regime_df.empty or len(overview_regime_df) < 30:
+        st.warning("Insufficient returned OHLC history to assess regime. No regime label generated.")
+    else:
+        overview_rc = indicators(overview_regime_df).copy()
+        if {"High", "Low", "Close"}.issubset(overview_rc.columns):
+            overview_prevc = overview_rc["Close"].shift(1)
+            overview_tr = pd.concat([(overview_rc["High"]-overview_rc["Low"]), (overview_rc["High"]-overview_prevc).abs(), (overview_rc["Low"]-overview_prevc).abs()], axis=1).max(axis=1)
+            overview_up = overview_rc["High"].diff()
+            overview_down = -overview_rc["Low"].diff()
+            overview_plus_dm = overview_up.where((overview_up > overview_down) & (overview_up > 0), 0.0)
+            overview_minus_dm = overview_down.where((overview_down > overview_up) & (overview_down > 0), 0.0)
+            overview_atr14 = overview_tr.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+            overview_pdi = 100 * overview_plus_dm.ewm(alpha=1/14, min_periods=14, adjust=False).mean() / overview_atr14.replace(0, np.nan)
+            overview_mdi = 100 * overview_minus_dm.ewm(alpha=1/14, min_periods=14, adjust=False).mean() / overview_atr14.replace(0, np.nan)
+            overview_dx = 100 * (overview_pdi-overview_mdi).abs() / (overview_pdi+overview_mdi).replace(0, np.nan)
+            overview_adx = overview_dx.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+            overview_last = overview_rc.iloc[-1]
+            overview_adx_value = overview_adx.iloc[-1]
+            overview_rsi_value = overview_last.get("RSI 14", np.nan)
+            overview_close = overview_last["Close"]
+            overview_ema20 = overview_last.get("EMA 20", np.nan)
+            overview_ema50 = overview_last.get("EMA 50", np.nan)
+            overview_regime = "Insufficient indicator history"
+            if pd.notna(overview_adx_value) and pd.notna(overview_ema20) and pd.notna(overview_ema50):
+                if overview_adx_value >= 25 and overview_close > overview_ema20 > overview_ema50:
+                    overview_regime = "Trending bullish"
+                elif overview_adx_value >= 25 and overview_close < overview_ema20 < overview_ema50:
+                    overview_regime = "Trending bearish"
+                elif overview_adx_value < 20:
+                    overview_regime = "Range / weak trend"
+                else:
+                    overview_regime = "Transition / mixed"
+            overview_vol = overview_rc["Return %"].rolling(20).std().iloc[-1] * np.sqrt(252)
+            regime_cols = st.columns(4)
+            regime_cols[0].metric("Regime framework", overview_regime)
+            regime_cols[1].metric("ADX 14", fmt(overview_adx_value))
+            regime_cols[2].metric("RSI 14", fmt(overview_rsi_value))
+            regime_cols[3].metric("Realized vol 20d annualized", f"{overview_vol:.2%}" if pd.notna(overview_vol) else "Unavailable")
+            st.caption(f"Calculated from {overview_regime_name} historical OHLC data · last source bar: {overview_last['Date']:%d %b %Y, %H:%M IST} · not a live signal.")
+    st.divider()
     st.subheader("Market snapshot")
     rows = []
     for name, df in market_data.items():
