@@ -434,21 +434,15 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                 if not candles.empty:
                     tick = st.session_state.get("fyers_live_tick")
                     current_ltp = tick.get("ltp") if tick and tick.get("symbol") == chart_symbol_loaded else None
-                    candles["EMA 9"] = candles["Close"].ewm(span=9, adjust=False).mean()
-                    candles["EMA 21"] = candles["Close"].ewm(span=21, adjust=False).mean()
-                    candles["SMA 50"] = candles["Close"].rolling(50, min_periods=1).mean()
                     fig = go.Figure(data=[go.Candlestick(x=candles["Date"], open=candles["Open"], high=candles["High"], low=candles["Low"], close=candles["Close"], name=chart_symbol_loaded)])
-                    if show_ema9:
-                        fig.add_trace(go.Scatter(x=candles["Date"], y=candles["EMA 9"], name="EMA 9", mode="lines", line=dict(width=1.4)))
-                    if show_ema21:
-                        fig.add_trace(go.Scatter(x=candles["Date"], y=candles["EMA 21"], name="EMA 21", mode="lines", line=dict(width=1.4)))
-                    if show_sma50:
-                        fig.add_trace(go.Scatter(x=candles["Date"], y=candles["SMA 50"], name="SMA 50", mode="lines", line=dict(width=1.4)))
-                    if show_bbands:
-                        bb_mid = candles["Close"].rolling(20, min_periods=1).mean()
-                        bb_std = candles["Close"].rolling(20, min_periods=2).std().fillna(0)
-                        fig.add_trace(go.Scatter(x=candles["Date"], y=bb_mid + 2 * bb_std, name="BB upper", line=dict(width=1, dash="dot")))
-                        fig.add_trace(go.Scatter(x=candles["Date"], y=bb_mid - 2 * bb_std, name="BB lower", line=dict(width=1, dash="dot"), fill="tonexty", fillcolor="rgba(100,120,150,0.08)"))
+                    for span, enabled in [(21, show_ema21), (50, show_ema50), (200, show_ema200)]:
+                        if enabled:
+                            ema_values = candles["Close"].ewm(span=span, adjust=False).mean()
+                            fig.add_trace(go.Scatter(x=candles["Date"], y=ema_values, name="EMA " + str(span), mode="lines", line=dict(width=1.4)))
+                    if show_volume and "Volume" in candles:
+                        volume_fig = go.Figure(go.Bar(x=candles["Date"], y=candles["Volume"], name="Volume"))
+                        volume_fig.update_layout(title="Volume", template="plotly_dark", height=220, margin=dict(l=20,r=20,t=40,b=20), xaxis_title="Time (IST)")
+                        st.plotly_chart(volume_fig, use_container_width=True, config={"displaylogo": False}, key="fyers_volume_plot")
                     if current_ltp is not None:
                         fig.add_hline(y=float(current_ltp), line_dash="dot", annotation_text=f"Live FYERS LTP: {float(current_ltp):,.2f}")
                     fig.update_layout(title=f"{chart_symbol_loaded} · FYERS candles", xaxis_title="Time (IST)", yaxis_title="Price", xaxis_rangeslider_visible=False, height=650, hovermode="x unified", margin=dict(l=20, r=20, t=60, b=20))
@@ -456,18 +450,30 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                     fig.update_yaxes(fixedrange=False)
                     st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False, "modeBarButtonsToAdd": ["drawline", "drawopenpath", "drawclosedpath", "drawcircle", "drawrect", "eraseshape"]}, key="fyers_live_chart_plot")
                     st.caption(f"Historical candles: FYERS · fetched: {st.session_state.get('fyers_chart_loaded_at', 'unknown')} · live quote overlay refreshes every 2 seconds while connected.")
+                    delta = candles["Close"].diff()
+                    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                    rs = gain / loss.replace(0, np.nan)
+                    rsi = (100 - (100 / (1 + rs))).fillna(50)
                     if show_rsi:
-                        delta = candles["Close"].diff()
-                        gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                        loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                        rs = gain / loss.replace(0, np.nan)
-                        rsi = (100 - (100 / (1 + rs))).fillna(50)
-                        rsi_fig = go.Figure()
-                        rsi_fig.add_trace(go.Scatter(x=candles["Date"], y=rsi, name="RSI 14", line=dict(width=1.5)))
+                        rsi_fig = go.Figure(go.Scatter(x=candles["Date"], y=rsi, name="RSI 14", line=dict(width=1.5)))
                         rsi_fig.add_hline(y=70, line_dash="dash")
                         rsi_fig.add_hline(y=30, line_dash="dash")
-                        rsi_fig.update_layout(title="Relative Strength Index (14)", height=240, margin=dict(l=20, r=20, t=45, b=20), yaxis=dict(range=[0, 100]), xaxis_title="Time (IST)")
+                        rsi_fig.update_layout(title="RSI (14)", template="plotly_dark", height=240, margin=dict(l=20,r=20,t=45,b=20), yaxis=dict(range=[0,100]), xaxis_title="Time (IST)")
                         st.plotly_chart(rsi_fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_rsi_plot")
+                    if show_stoch_rsi:
+                        rsi_low = rsi.rolling(14, min_periods=14).min()
+                        rsi_high = rsi.rolling(14, min_periods=14).max()
+                        stoch = ((rsi-rsi_low)/(rsi_high-rsi_low).replace(0, np.nan))*100
+                        stoch_k = stoch.rolling(3, min_periods=3).mean()
+                        stoch_d = stoch_k.rolling(3, min_periods=3).mean()
+                        sf = go.Figure()
+                        sf.add_trace(go.Scatter(x=candles["Date"], y=stoch_k, name="Stoch RSI %K"))
+                        sf.add_trace(go.Scatter(x=candles["Date"], y=stoch_d, name="Stoch RSI %D"))
+                        sf.add_hline(y=80, line_dash="dash")
+                        sf.add_hline(y=20, line_dash="dash")
+                        sf.update_layout(title="Stochastic RSI (14,14,3,3)", template="plotly_dark", height=240, margin=dict(l=20,r=20,t=45,b=20), yaxis=dict(range=[0,100]), xaxis_title="Time (IST)")
+                        st.plotly_chart(sf, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_stoch_rsi_plot")
 
         _fyers_live_chart_fragment()
 
