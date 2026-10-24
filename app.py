@@ -418,70 +418,12 @@ with extra_tabs[0]:
             st.dataframe(rc[["Date","Close","EMA 20","EMA 50","RSI 14","ADX 14","ATR 14","Realized volatility 20d %"]].tail(30), use_container_width=True, hide_index=True)
 
 with extra_tabs[1]:
-    st.subheader("14 · Automatic NSE options analytics")
-    st.write("Fetches the public NSE index option chain where the exchange endpoint permits automated access. Values are exchange-sourced snapshots and may be delayed or unavailable.")
-    opt_underlying = st.selectbox("Underlying", ["NIFTY", "BANKNIFTY", "FINNIFTY"], key="auto_opt_underlying")
-    @st.cache_data(ttl=180, show_spinner=False)
-    def get_nse_option_chain(underlying: str) -> tuple[pd.DataFrame, str | None, str | None]:
-        try:
-            session = requests.Session()
-            headers = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36","Accept":"application/json,text/plain,*/*","Referer":"https://www.nseindia.com/option-chain"}
-            session.headers.update(headers)
-            session.get("https://www.nseindia.com", timeout=8)
-            url = "https://www.nseindia.com/api/option-chain-indices"
-            response = session.get(url, params={"symbol":underlying}, timeout=12)
-            response.raise_for_status()
-            payload = response.json()
-            records = payload.get("records", {})
-            expiries = records.get("expiryDates", [])
-            raw = records.get("data", [])
-            rows = []
-            for item in raw:
-                expiry = item.get("expiryDate")
-                strike = item.get("strikePrice")
-                for typ in ("CE","PE"):
-                    opt = item.get(typ)
-                    if not opt: continue
-                    rows.append({"Expiry":expiry,"Strike":strike,"OptionType":typ,"OI":opt.get("openInterest"),"LTP":opt.get("lastPrice"),"Volume":opt.get("totalTradedVolume"),"IV":opt.get("impliedVolatility"),"Spot":opt.get("underlyingValue"),"Underlying":underlying,"Source timestamp":opt.get("lastUpdateTime")})
-            frame = pd.DataFrame(rows)
-            if frame.empty: return pd.DataFrame(), None, "NSE returned an empty option chain."
-            for col in ["Strike","OI","LTP","Volume","IV","Spot"]: frame[col]=pd.to_numeric(frame[col],errors="coerce")
-            return frame, (expiries[0] if expiries else None), None
-        except Exception as exc:
-            return pd.DataFrame(), None, f"NSE option-chain fetch failed: {type(exc).__name__}: {str(exc)[:180]}"
-    with st.spinner("Fetching public NSE option-chain snapshot…"):
-        opt, default_expiry, opt_error = get_nse_option_chain(opt_underlying)
-    if opt_error:
-        st.warning(opt_error)
-        st.markdown("[Open official NSE option chain](https://www.nseindia.com/option-chain)")
-    elif not opt.empty:
-        expiries = sorted(opt["Expiry"].dropna().astype(str).unique(), key=lambda x: pd.to_datetime(x, errors="coerce"))
-        default_idx = expiries.index(default_expiry) if default_expiry in expiries else 0
-        expiry_choice = st.selectbox("Expiry", expiries, index=default_idx, key="auto_opt_expiry")
-        chain = opt[opt["Expiry"].astype(str)==expiry_choice].copy()
-        ce_oi = chain.loc[chain["OptionType"]=="CE","OI"].sum(min_count=1)
-        pe_oi = chain.loc[chain["OptionType"]=="PE","OI"].sum(min_count=1)
-        pcr = pe_oi/ce_oi if pd.notna(ce_oi) and ce_oi else np.nan
-        strikes = sorted(chain["Strike"].dropna().unique())
-        pain_rows=[]
-        for settle in strikes:
-            calls=chain[chain["OptionType"]=="CE"]
-            puts=chain[chain["OptionType"]=="PE"]
-            call_payout=((settle-calls["Strike"]).clip(lower=0)*calls["OI"].fillna(0)).sum()
-            put_payout=((puts["Strike"]-settle).clip(lower=0)*puts["OI"].fillna(0)).sum()
-            pain_rows.append({"Settlement candidate":settle,"Estimated aggregate intrinsic payout":call_payout+put_payout})
-        pain_df=pd.DataFrame(pain_rows)
-        max_pain=pain_df.loc[pain_df["Estimated aggregate intrinsic payout"].idxmin(),"Settlement candidate"] if not pain_df.empty else np.nan
-        a,b,c,d=st.columns(4)
-        a.metric("Spot (source)",fmt(chain["Spot"].dropna().iloc[0]) if chain["Spot"].notna().any() else "Unavailable")
-        b.metric("Call OI",fmt(ce_oi,0)); c.metric("Put/Call OI PCR",fmt(pcr,3)); d.metric("Estimated max pain",fmt(max_pain,0))
-        st.caption(f"Underlying: {opt_underlying} · Expiry: {expiry_choice} · Snapshot timestamp supplied by NSE: {chain['Source timestamp'].dropna().iloc[0] if chain['Source timestamp'].notna().any() else 'not supplied'}")
-        st.dataframe(chain.sort_values(["Strike","OptionType"]),use_container_width=True,hide_index=True)
-        fig=px.bar(chain,x="Strike",y="OI",color="OptionType",barmode="group",template="plotly_dark",title="NSE open interest by strike")
-        st.plotly_chart(fig,use_container_width=True)
-        st.download_button("Download NSE option-chain snapshot",chain.to_csv(index=False).encode("utf-8"),"nse_option_chain.csv","text/csv")
-        st.caption("PCR and max pain are calculated from the returned snapshot only. Max pain is an OI-based estimate, not a forecast. If NSE blocks automated access, no substitute values are displayed.")
-    st.markdown("[Official NSE option chain](https://www.nseindia.com/option-chain) · [NSE derivatives reports](https://www.nseindia.com/all-reports-derivatives)")
+    st.subheader("14 · Options analytics")
+    st.write("PCR, max pain, open interest and implied volatility require a genuine option-chain snapshot.")
+    st.selectbox("Underlying",["NIFTY","BANKNIFTY","FINNIFTY"],key="auto_opt_underlying")
+    st.warning("No authorized free machine-readable NSE option-chain API is configured. Scripted scraping is not used, and no option values are fabricated.")
+    st.markdown("[Open official NSE option chain](https://www.nseindia.com/option-chain) · [NSE derivatives reports](https://www.nseindia.com/all-reports-derivatives)")
+    st.caption("Price history and technical modules continue to work automatically. Derivatives analytics require an explicitly permitted source; no broker API is used.")
 
 with extra_tabs[2]:
     st.subheader("15 · Risk and position-sizing calculator")
@@ -696,134 +638,11 @@ with research_tabs[0]:
 
 with research_tabs[1]:
     st.subheader("24 · Delivery activity and money-flow proxies")
-    st.write("Automatically retrieves NSE's official Full Bhavcopy and Security Deliverable data when the public archive is accessible. This is end-of-day data, not live intraday flow.")
-    st.markdown("[Official NSE All Reports](https://www.nseindia.com/all-reports) · [NSE archive](https://nsearchives.nseindia.com/products/content/)")
-    flow_file = st.file_uploader("Optional: override with a genuine delivery / turnover CSV", type=["csv"], key="delivery_flow_csv")
-    st.button("↻ Fetch official NSE delivery history", key="auto_delivery_fetch", on_click=st.cache_data.clear)
-    st.caption("NSE source: sec_bhavdata_full daily CSV. Delivery percentage comes from DELIV_PER; traded value is TURNOVER_LACS × 100,000. EQ series only. Report dates are validated; no sample values are used.")
-    @st.cache_data(ttl=21600, show_spinner=False)
-    def get_nse_delivery_history(max_sessions: int = 20) -> tuple[pd.DataFrame, str | None]:
-        import io
-        import time as _time
-        from datetime import timedelta
-        session = requests.Session()
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            "Accept": "text/csv,text/plain,*/*",
-            "Referer": "https://www.nseindia.com/all-reports",
-        })
-        today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-        parts, errors, valid_sessions = [], [], 0
-        for offset in range(46):
-            day = today - timedelta(days=offset)
-            if day.weekday() >= 5:
-                continue
-            url = f"https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{day:%d%m%Y}.csv"
-            try:
-                response = session.get(url, timeout=8)
-                if response.status_code != 200 or not response.text.strip():
-                    errors.append(f"{day:%Y-%m-%d}: HTTP {response.status_code}")
-                    continue
-                if response.text.lstrip().lower().startswith(("<!doctype html", "<html")):
-                    errors.append(f"{day:%Y-%m-%d}: returned HTML instead of CSV")
-                    continue
-                frame = pd.read_csv(io.StringIO(response.text), skipinitialspace=True, dtype=str)
-                frame.columns = [str(c).strip().upper() for c in frame.columns]
-                required = {"SYMBOL", "SERIES", "DATE1", "CLOSE_PRICE", "TTL_TRD_QNTY", "TURNOVER_LACS", "DELIV_PER"}
-                if not required.issubset(frame.columns):
-                    errors.append(f"{day:%Y-%m-%d}: NSE columns not recognised")
-                    continue
-                parsed_dates = pd.to_datetime(frame["DATE1"].astype(str).str.strip(), errors="coerce", dayfirst=True)
-                actual_dates = parsed_dates.dropna().dt.date.unique()
-                if len(actual_dates) != 1 or actual_dates[0] != day:
-                    errors.append(f"{day:%Y-%m-%d}: report date mismatch")
-                    continue
-                frame["SERIES"] = frame["SERIES"].astype(str).str.strip().str.upper()
-                frame = frame[frame["SERIES"] == "EQ"].copy()
-                if frame.empty:
-                    errors.append(f"{day:%Y-%m-%d}: no EQ rows")
-                    continue
-                frame["Date"] = pd.to_datetime(frame["DATE1"].astype(str).str.strip(), errors="coerce", dayfirst=True)
-                frame["Symbol"] = frame["SYMBOL"].astype(str).str.strip().str.upper()
-                industry_map = {k.replace(".NS", ""): v for k, v in AUTO_UNIVERSE.items()}
-                frame["Industry"] = frame["Symbol"].map(industry_map).fillna("")
-                frame["Close"] = pd.to_numeric(frame["CLOSE_PRICE"].astype(str).str.strip(), errors="coerce")
-                frame["Volume"] = pd.to_numeric(frame["TTL_TRD_QNTY"].astype(str).str.strip(), errors="coerce")
-                frame["DeliveryPct"] = pd.to_numeric(frame["DELIV_PER"].astype(str).str.strip(), errors="coerce")
-                frame["TradedValue"] = pd.to_numeric(frame["TURNOVER_LACS"].astype(str).str.strip(), errors="coerce") * 100000
-                clean = frame[["Date","Symbol","Industry","Close","Volume","DeliveryPct","TradedValue"]].dropna(subset=["Date","Symbol","Close","Volume","DeliveryPct"])
-                if clean.empty:
-                    errors.append(f"{day:%Y-%m-%d}: no usable delivery rows")
-                    continue
-                parts.append(clean)
-                valid_sessions += 1
-                if valid_sessions >= max_sessions:
-                    break
-                _time.sleep(0.25)
-            except Exception as exc:
-                errors.append(f"{day:%Y-%m-%d}: {type(exc).__name__}: {str(exc)[:90]}")
-        if not parts:
-            detail = "; ".join(errors[-3:]) if errors else "No trading-day reports found in the lookback window."
-            return pd.DataFrame(), f"NSE archive unavailable or no verified reports returned. {detail}"
-        result = pd.concat(parts, ignore_index=True).drop_duplicates(["Symbol","Date"], keep="last").sort_values(["Symbol","Date"])
-        return result.reset_index(drop=True), None
-
-    try:
-        flow_error = None
-        if flow_file is not None:
-            flow = pd.read_csv(flow_file)
-            flow.columns = [str(c).strip() for c in flow.columns]
-            source_label = "User-uploaded CSV (as supplied)"
-            required = {"Symbol", "Date", "Close", "Volume", "DeliveryPct"}
-            if not required.issubset(flow.columns):
-                st.error("Required upload columns: Symbol, Date, Close, Volume, DeliveryPct.")
-                flow = pd.DataFrame()
-        else:
-            with st.spinner("Retrieving and validating recent official NSE delivery reports…"):
-                flow, flow_error = get_nse_delivery_history()
-            source_label = "NSE official Full Bhavcopy and Security Deliverable data"
-            if flow_error:
-                st.warning(flow_error)
-        if not flow.empty:
-            flow.columns = [str(c).strip() for c in flow.columns]
-            flow["Date"] = pd.to_datetime(flow["Date"], errors="coerce", dayfirst=True)
-            for col in ["Close", "Volume", "DeliveryPct", "TradedValue"]:
-                if col in flow:
-                    flow[col] = pd.to_numeric(flow[col], errors="coerce")
-            flow = flow.dropna(subset=["Symbol","Date","Close","Volume","DeliveryPct"]).sort_values(["Symbol","Date"]).drop_duplicates(["Symbol","Date"], keep="last")
-            flow["AvgVol20"] = flow.groupby("Symbol")["Volume"].transform(lambda x: x.rolling(20, min_periods=10).mean())
-            flow["AvgDelivery20"] = flow.groupby("Symbol")["DeliveryPct"].transform(lambda x: x.rolling(20, min_periods=10).mean())
-            flow["Delivery change vs 20d pp"] = flow["DeliveryPct"] - flow["AvgDelivery20"]
-            flow["Volume vs 20d avg"] = flow["Volume"] / flow["AvgVol20"].replace(0, np.nan)
-            latest_date = flow["Date"].max()
-            last_flow = flow[flow["Date"] == latest_date].copy()
-            previous = flow.groupby("Symbol").tail(2).groupby("Symbol")["Close"].apply(lambda s: (s.iloc[-1]/s.iloc[-2]-1)*100 if len(s)>1 and s.iloc[-2] else np.nan)
-            last_flow["Price change %"] = last_flow["Symbol"].map(previous)
-            if "TradedValue" not in last_flow or last_flow["TradedValue"].isna().all():
-                last_flow["TradedValue"] = last_flow["Close"] * last_flow["Volume"]
-                value_label = "Close × volume proxy (not exchange turnover)"
-            else:
-                value_label = "NSE reported traded value (₹)"
-            last_flow["Activity flag"] = np.select([
-                (last_flow["Price change %"] > 0) & (last_flow["Delivery change vs 20d pp"] > 0) & (last_flow["Volume vs 20d avg"] > 1),
-                (last_flow["Price change %"] < 0) & (last_flow["Delivery change vs 20d pp"] > 0) & (last_flow["Volume vs 20d avg"] > 1)],
-                ["Price up + delivery/volume elevated","Price down + delivery/volume elevated"], default="Mixed / insufficient confirmation")
-            show_cols = [c for c in ["Date","Symbol","Industry","Close","Price change %","Volume","Volume vs 20d avg","DeliveryPct","AvgDelivery20","Delivery change vs 20d pp","TradedValue","Activity flag"] if c in last_flow.columns]
-            st.caption(f"Source: {source_label} · Latest verified date: {latest_date:%Y-%m-%d} · {flow['Date'].nunique()} sessions loaded · Traded value: {value_label}. Unknown industry labels are left blank.")
-            if flow["Date"].nunique() < 10:
-                st.info("Fewer than 10 verified sessions are available. 20-session averages remain blank until enough genuine history is retrieved.")
-            st.dataframe(last_flow.sort_values("TradedValue", ascending=False)[show_cols], use_container_width=True, hide_index=True)
-            st.download_button("Download activity analysis", last_flow[show_cols].to_csv(index=False).encode("utf-8"), file_name="delivery_activity_analysis.csv", mime="text/csv")
-            with st.expander("Source coverage and data notes"):
-                st.write("Official source: NSE Full Bhavcopy and Security Deliverable data (sec_bhavdata_full). DeliveryPct is the source's DELIV_PER field. TradedValue converts TURNOVER_LACS from lakhs to rupees. Only EQ series are included.")
-                st.write("The archive may block automated requests or omit unpublished/holiday dates. Data is end-of-day, not live. Every accepted report is checked against its requested date; missing values are never estimated.")
-                st.write(f"Loaded {flow['Symbol'].nunique()} symbols across {flow['Date'].nunique()} sessions.")
-        elif flow_file is not None:
-            st.info("No analysis shown because the uploaded file did not contain the required columns.")
-        elif not flow_error:
-            st.info("No verified NSE delivery rows were returned. No values have been fabricated.")
-    except Exception as exc:
-        st.error(f"Could not calculate delivery activity: {type(exc).__name__}: {exc}")
+    st.write("The dashboard does not scrape NSE reports. NSE publishes downloadable delivery reports, but no authorized free machine-readable API is configured here.")
+    st.warning("Automatic delivery percentage and exchange turnover are unavailable until a permitted data feed is connected. The app will not invent delivery data or ask you to upload files.")
+    st.markdown("[Open official NSE All Reports](https://www.nseindia.com/all-reports) · Look for “Full Bhavcopy and Security Deliverable data” or “Security-wise Delivery Positions”.")
+    st.markdown("**What remains automatic:** price history, market breadth, industry performance, technical indicators, stock deep-dive, strategy backtests, and public news headlines.")
+    st.caption("Delivery percentage, participant money flow, and institutional delivery signals require genuine source fields. Price × volume is not presented as exchange turnover or delivery activity.")
 
 with research_tabs[2]:
     st.subheader("25 · Daily market briefing")
@@ -973,37 +792,11 @@ with advanced_tabs[1]:
         st.info("Automatic stock history is unavailable from the public source. No breadth values are fabricated; retry later.")
 
 with advanced_tabs[2]:
-    st.subheader("28 · Automatic derivatives lab")
-    st.write("Option-chain analysis is sourced automatically from the public NSE endpoint when available. This module does not require a CSV upload.")
-    under=st.selectbox("Index option chain",["NIFTY","BANKNIFTY","FINNIFTY"],key="deriv_lab_under")
-    with st.spinner("Fetching NSE option-chain snapshot…"):
-        chain_all,default_exp,chain_error=get_nse_option_chain(under)
-    if chain_error:
-        st.warning(chain_error)
-        st.markdown("[Open official NSE option chain](https://www.nseindia.com/option-chain)")
-    elif not chain_all.empty:
-        expiry_list=sorted(chain_all["Expiry"].dropna().astype(str).unique(),key=lambda x:pd.to_datetime(x,errors="coerce"))
-        expiry=st.selectbox("Expiry",expiry_list,index=expiry_list.index(default_exp) if default_exp in expiry_list else 0,key="deriv_lab_expiry")
-        chain=chain_all[chain_all["Expiry"].astype(str)==expiry].copy()
-        ce=chain.loc[chain["OptionType"]=="CE","OI"].sum(min_count=1)
-        pe=chain.loc[chain["OptionType"]=="PE","OI"].sum(min_count=1)
-        pcr=pe/ce if pd.notna(ce) and ce else np.nan
-        strikes=sorted(chain["Strike"].dropna().unique())
-        payouts=[]
-        for settlement in strikes:
-            calls=chain[chain["OptionType"]=="CE"]; puts=chain[chain["OptionType"]=="PE"]
-            payout=((settlement-calls["Strike"]).clip(lower=0)*calls["OI"].fillna(0)).sum()+((puts["Strike"]-settlement).clip(lower=0)*puts["OI"].fillna(0)).sum()
-            payouts.append((settlement,payout))
-        maxpain=min(payouts,key=lambda x:x[1])[0] if payouts else np.nan
-        a,b,c,d=st.columns(4)
-        a.metric("Spot",fmt(chain["Spot"].dropna().iloc[0]) if chain["Spot"].notna().any() else "Unavailable")
-        b.metric("PCR (OI)",fmt(pcr,3)); c.metric("Estimated max pain",fmt(maxpain,0)); d.metric("Strikes returned",f"{len(strikes):,}")
-        st.caption(f"NSE public option-chain snapshot · {under} · expiry {expiry} · timestamp: {chain['Source timestamp'].dropna().iloc[0] if chain['Source timestamp'].notna().any() else 'not supplied'}")
-        st.dataframe(chain.sort_values(["Strike","OptionType"]),use_container_width=True,hide_index=True)
-        st.download_button("Download derivatives snapshot",chain.to_csv(index=False).encode("utf-8"),"derivatives_snapshot.csv","text/csv")
-    st.markdown("#### Futures positioning and basis")
-    st.info("Exchange futures open interest, participant-wise positions and reliable live futures basis are not provided by the option-chain endpoint. These fields are intentionally left unavailable rather than estimated from spot prices.")
-    st.markdown("[NSE derivatives reports](https://www.nseindia.com/all-reports-derivatives) · [NSE option chain](https://www.nseindia.com/option-chain)")
+    st.subheader("28 · Derivatives lab")
+    st.write("This module does not scrape NSE or fabricate derivatives data.")
+    st.warning("No authorized free machine-readable NSE derivatives API is configured. Option-chain PCR, max pain, IV, futures OI and participant positioning are therefore unavailable automatically.")
+    st.markdown("[Official NSE option chain](https://www.nseindia.com/option-chain) · [NSE derivatives reports](https://www.nseindia.com/all-reports-derivatives)")
+    st.caption("Market prices and technical indicators continue to load automatically. Derivatives data requires an explicitly permitted source; no broker API is used.")
 
 with advanced_tabs[3]:
     st.subheader("29 · Automatic stock deep-dive")
