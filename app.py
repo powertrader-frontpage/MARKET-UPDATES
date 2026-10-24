@@ -488,7 +488,7 @@ with extra_tabs[4]:
                 x,y,z=st.columns(3)
                 for col,ma,label in [(x,"SMA20","Above 20-day SMA"),(y,"SMA50","Above 50-day SMA"),(z,"SMA200","Above 200-day SMA")]:
                     valid=last.dropna(subset=[ma]); col.metric(label, f"{(valid['Close']>valid[ma]).mean()*100:.1f}%" if not valid.empty else "Unavailable", f"{len(valid)} symbols")
-                st.caption(f"Uploaded dataset latest date: {latest_date:%Y-%m-%d}; this is not automatically live.")
+                st.caption(f"Data latest date: {latest_date:%Y-%m-%d}; daily history is not automatically live.")
         except Exception as exc: st.error(f"Could not calculate breadth: {exc}")
     else: st.info("Breadth metrics are not shown until a constituent dataset is uploaded. No constituent values are guessed.")
 
@@ -610,7 +610,7 @@ with research_tabs[0]:
                     Above_200DMA_pct=("Above200", lambda x: x.dropna().mean() * 100 if x.notna().any() else np.nan),
                 ).reset_index()
                 agg = agg.merge(breadth, on="Industry", how="left").sort_values("Mean_1M", ascending=False)
-                st.caption(f"Latest uploaded date: {latest_date:%Y-%m-%d}. Returns are equal-weighted across available stocks, not market-cap weighted.")
+                st.caption(f"Latest data date: {latest_date:%Y-%m-%d}. Returns are equal-weighted across available stocks, not market-cap weighted.")
                 display = agg.rename(columns={"Mean_1M":"Average 1M return %","Mean_3M":"Average 3M return %","Median_1M":"Median 1M return %","Valid_1M":"Stocks with 1M history","Valid_3M":"Stocks with 3M history"})
                 st.dataframe(display.style.format({"Average 1M return %":"{:.2f}","Average 3M return %":"{:.2f}","Median 1M return %":"{:.2f}","Above_50DMA_pct":"{:.1f}","Above_200DMA_pct":"{:.1f}"}), use_container_width=True, hide_index=True)
                 plot_df = agg.dropna(subset=["Mean_1M"]).head(15)
