@@ -591,7 +591,50 @@ else:
                 overview_regime = "Transition / mixed"
         # Return % is in percentage points; convert to decimal before annualizing.
         overview_vol = overview_rc["Return %"].rolling(20).std().iloc[-1] / 100 * np.sqrt(252)
-        regime_cols = st.columns([1.35, 1, 1])
+        # Weekly EMA 200 distance is always measured for NIFTY 50, regardless of the selected regime instrument.
+        weekly_ema200 = np.nan
+        weekly_nifty_close = np.nan
+        weekly_nifty_timestamp = "Unavailable"
+        weekly_ema_error = None
+        try:
+            weekly_nifty = yf.download("^NSEI", period="10y", interval="1wk", auto_adjust=False, progress=False, threads=False)
+            if not weekly_nifty.empty:
+                if isinstance(weekly_nifty.columns, pd.MultiIndex):
+                    weekly_nifty.columns = weekly_nifty.columns.get_level_values(0)
+                weekly_nifty = weekly_nifty.rename_axis("Date").reset_index()
+                weekly_nifty.columns = [str(c).strip().title() for c in weekly_nifty.columns]
+                if "Close" in weekly_nifty.columns:
+                    weekly_nifty["Close"] = pd.to_numeric(weekly_nifty["Close"], errors="coerce")
+                    weekly_nifty = weekly_nifty.dropna(subset=["Close"]).sort_values("Date")
+                    if len(weekly_nifty) >= 200:
+                        weekly_nifty_close = float(weekly_nifty["Close"].iloc[-1])
+                        weekly_ema200 = float(weekly_nifty["Close"].ewm(span=200, adjust=False, min_periods=200).mean().iloc[-1])
+                        weekly_nifty_timestamp = pd.to_datetime(weekly_nifty["Date"].iloc[-1]).strftime("%d %b %Y")
+                    else:
+                        weekly_ema_error = "Fewer than 200 weekly closes returned"
+                else:
+                    weekly_ema_error = "Weekly Close column unavailable"
+            else:
+                weekly_ema_error = "Yahoo Finance returned no weekly NIFTY data"
+        except Exception as exc:
+            weekly_ema_error = f"Weekly data unavailable ({exc.__class__.__name__})"
+        weekly_ema_gap_pct = ((weekly_nifty_close / weekly_ema200) - 1) * 100 if pd.notna(weekly_nifty_close) and pd.notna(weekly_ema200) and weekly_ema200 != 0 else np.nan
+        if pd.notna(weekly_ema_gap_pct) and weekly_ema_gap_pct >= 13:
+            weekly_ema_color = "#ef4444"
+            weekly_ema_status = "Extended · elevated pullback risk"
+        elif pd.notna(weekly_ema_gap_pct) and weekly_ema_gap_pct <= 3:
+            weekly_ema_color = "#22c55e"
+            weekly_ema_status = "Near weekly EMA 200"
+        elif pd.notna(weekly_ema_gap_pct) and weekly_ema_gap_pct < 0:
+            weekly_ema_color = "#22c55e"
+            weekly_ema_status = "Below weekly EMA 200"
+        elif pd.notna(weekly_ema_gap_pct):
+            weekly_ema_color = "#f59e0b"
+            weekly_ema_status = "Moderately above weekly EMA 200"
+        else:
+            weekly_ema_color = "#94a3b8"
+            weekly_ema_status = "Insufficient weekly history"
+        regime_cols = st.columns([1.2, 0.9, 0.9, 1.25])
         regime_color = "#22c55e" if overview_regime == "Trending bullish" else "#ef4444" if overview_regime == "Trending bearish" else "#f59e0b"
         regime_cols[0].markdown(
             f'<div style="border:1px solid #343a46;border-radius:12px;padding:12px 14px;min-height:92px;">'
@@ -604,7 +647,12 @@ else:
         rsi_color = "#ef4444" if pd.notna(overview_rsi_value) and overview_rsi_value < 30 else "#22c55e" if pd.notna(overview_rsi_value) and overview_rsi_value > 70 else "#f59e0b" if pd.notna(overview_rsi_value) and (overview_rsi_value >= 60 or overview_rsi_value <= 40) else "#94a3b8"
         regime_cols[1].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {adx_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">ADX 14 · trend strength</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{adx_color};">{fmt(overview_adx_value)}</div><div style="font-size:12px;color:#aeb6c2;">{ "Strong trend" if pd.notna(overview_adx_value) and overview_adx_value >= 25 else "Trend building" if pd.notna(overview_adx_value) and overview_adx_value >= 20 else "Weak trend" }</div></div>', unsafe_allow_html=True)
         regime_cols[2].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {rsi_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">RSI 14 · momentum</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{rsi_color};">{fmt(overview_rsi_value)}</div><div style="font-size:12px;color:#aeb6c2;">{ "Oversold" if pd.notna(overview_rsi_value) and overview_rsi_value < 30 else "Overbought" if pd.notna(overview_rsi_value) and overview_rsi_value > 70 else "Bullish momentum" if pd.notna(overview_rsi_value) and overview_rsi_value >= 60 else "Bearish momentum" if pd.notna(overview_rsi_value) and overview_rsi_value <= 40 else "Neutral" }</div></div>', unsafe_allow_html=True)
-        st.caption(f"Calculated from {overview_regime_name} historical OHLC data · last source bar: {overview_last['Date']:%d %b %Y, %H:%M IST} · not a live signal.")
+        weekly_close_text = f"{weekly_nifty_close:,.2f}" if pd.notna(weekly_nifty_close) else "—"
+        weekly_ema_text = f"{weekly_ema200:,.2f}" if pd.notna(weekly_ema200) else "—"
+        weekly_gap_text = f"{weekly_ema_gap_pct:+.2f}%" if pd.notna(weekly_ema_gap_pct) else "—"
+        weekly_subtext = weekly_ema_status if pd.notna(weekly_ema_gap_pct) else weekly_ema_error or weekly_ema_status
+        regime_cols[3].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {weekly_ema_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY · Weekly EMA 200 gap</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{weekly_ema_color};">{weekly_gap_text}</div><div style="font-size:12px;color:#aeb6c2;">Close {weekly_close_text} · EMA {weekly_ema_text}</div><div style="font-size:12px;color:{weekly_ema_color};margin-top:4px;">{weekly_subtext}</div></div>', unsafe_allow_html=True)
+        st.caption(f"Calculated from {overview_regime_name} historical OHLC data · last source bar: {overview_last['Date']:%d %b %Y, %H:%M IST} · weekly NIFTY source bar: {weekly_nifty_timestamp} · weekly EMA 200 uses 200 weekly closes; Yahoo Finance data may be delayed. The red/green bands are distance alerts, not certain price forecasts.")
         st.markdown("#### Price trend")
         trend_fig = go.Figure()
         trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["Close"], name="Close", mode="lines", line=dict(color="#60a5fa", width=2)))
