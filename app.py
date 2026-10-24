@@ -757,42 +757,7 @@ extra_tabs = st.tabs([
     "18 Events", "19 Trade journal", "20 Data quality", "21 Cross-asset", "22 Signals"
 ])
 
-with extra_tabs[0]:
-    st.subheader("13 · Market regime & trend strength")
-    regime_name = st.selectbox("Instrument", list(INDEXES.keys()), key="regime_symbol")
-    rdf = market_data[regime_name]
-    if rdf.empty or len(rdf) < 30:
-        st.warning("Insufficient returned OHLC history to assess regime. No regime label generated.")
-    else:
-        rc = indicators(rdf).copy()
-        if {"High", "Low", "Close"}.issubset(rc.columns):
-            prevc = rc["Close"].shift(1)
-            tr = pd.concat([(rc["High"]-rc["Low"]), (rc["High"]-prevc).abs(), (rc["Low"]-prevc).abs()], axis=1).max(axis=1)
-            up = rc["High"].diff(); down = -rc["Low"].diff()
-            plus_dm = up.where((up > down) & (up > 0), 0.0)
-            minus_dm = down.where((down > up) & (down > 0), 0.0)
-            atr14 = tr.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-            pdi = 100 * plus_dm.ewm(alpha=1/14, min_periods=14, adjust=False).mean() / atr14.replace(0, np.nan)
-            mdi = 100 * minus_dm.ewm(alpha=1/14, min_periods=14, adjust=False).mean() / atr14.replace(0, np.nan)
-            dx = 100 * (pdi-mdi).abs() / (pdi+mdi).replace(0, np.nan)
-            rc["ADX 14"] = dx.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-            rc["Realized volatility 20d %"] = rc["Return %"].rolling(20).std() * np.sqrt(252)
-            last = rc.iloc[-1]
-            adx = last.get("ADX 14", np.nan); rsi = last.get("RSI 14", np.nan)
-            close = last["Close"]; ema20 = last.get("EMA 20", np.nan); ema50 = last.get("EMA 50", np.nan)
-            regime = "Insufficient indicator history"
-            if pd.notna(adx) and pd.notna(ema20) and pd.notna(ema50):
-                if adx >= 25 and close > ema20 > ema50: regime = "Trending bullish"
-                elif adx >= 25 and close < ema20 < ema50: regime = "Trending bearish"
-                elif adx < 20: regime = "Range / weak trend"
-                else: regime = "Transition / mixed"
-            a,b,c,d = st.columns(4)
-            a.metric("Regime framework", regime)
-            b.metric("ADX 14", fmt(adx))
-            c.metric("RSI 14", fmt(rsi))
-            d.metric("Realized vol 20d annualized", fmt(last.get("Realized volatility 20d %")) + "%")
-            st.caption(f"Based on {len(rc)} source bars; last source candle {last['Date']:%d %b %Y %H:%M IST}. Thresholds are heuristic, not predictions.")
-            st.caption("Detailed indicator history table hidden to keep this dashboard focused; key regime metrics and trend chart remain available.")
+# Module 13 removed: the market regime and trend-strength panel is already shown on the Overview page.
 
 with extra_tabs[1]:
     st.subheader("14 · Options analytics")
@@ -1208,10 +1173,10 @@ with extra_tabs[5]:
         headlines,news_error=get_news_rss(news_query,15)
     if news_error: st.warning(news_error)
     elif not headlines.empty:
-        st.dataframe(headlines,use_container_width=True,hide_index=True,column_config={"Source link":st.column_config.LinkColumn("Source link")})
-        st.download_button("Download event-risk headlines",headlines.to_csv(index=False).encode("utf-8"),"event_risk_headlines.csv","text/csv")
-    st.markdown("**Official release calendars and primary sources**")
-    st.markdown("- [RBI](https://www.rbi.org.in/) · [MOSPI](https://mospi.gov.in/) · [Federal Reserve](https://www.federalreserve.gov/monetarypolicy.htm) · [US BLS release schedule](https://www.bls.gov/schedule/news_release/) · [EIA](https://www.eia.gov/petroleum/supply/weekly/)")
+        # Keep the headline table readable on mobile; hide long raw Google News redirect URLs.
+        display_headlines = headlines.drop(columns=["Source link"], errors="ignore")
+        st.dataframe(display_headlines,use_container_width=True,hide_index=True)
+        st.download_button("Download event-risk headlines",display_headlines.to_csv(index=False).encode("utf-8"),"event_risk_headlines.csv","text/csv")
     gap_name=st.selectbox("Instrument for previous-bar gap check",["NIFTY 50","BANK NIFTY","INFY","WIPRO"],key="gap_symbol")
     gdf=market_data[gap_name]
     if len(gdf)>=2:
