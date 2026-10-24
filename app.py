@@ -969,70 +969,37 @@ with advanced_tabs[1]:
         st.info("Upload your stock universe CSV to calculate breadth. No stocks are silently assumed to be constituents.")
 
 with advanced_tabs[2]:
-    st.subheader("28 · Derivatives lab")
-    st.write("Analyse a dated option-chain CSV or futures snapshot. The module will calculate PCR and max pain only if the necessary strike-level open interest data is supplied.")
-    opt_file = st.file_uploader("Option-chain CSV", type=["csv"], key="derivatives_chain")
-    st.caption("Required columns: Expiry, Strike, OptionType (CE/PE), OI. Optional: LTP, Volume, IV, Spot, Underlying. PCR = total PE OI / total CE OI. Max pain is estimated from supplied OI and strikes only.")
-    if opt_file is not None:
-        try:
-            opt = pd.read_csv(opt_file)
-            opt.columns = [str(c).strip() for c in opt.columns]
-            req = {"Expiry", "Strike", "OptionType", "OI"}
-            if not req.issubset(opt.columns):
-                st.error("Required columns: Expiry, Strike, OptionType, OI.")
-            else:
-                opt["Strike"] = pd.to_numeric(opt["Strike"], errors="coerce")
-                opt["OI"] = pd.to_numeric(opt["OI"], errors="coerce")
-                opt["OptionType"] = opt["OptionType"].astype(str).str.upper().str.strip()
-                for c in ["LTP", "Volume", "IV", "Spot"]:
-                    if c in opt: opt[c] = pd.to_numeric(opt[c], errors="coerce")
-                opt = opt.dropna(subset=["Strike","OI"])
-                opt = opt[opt["OptionType"].isin(["CE","PE"])]
-                expiry_choice = st.selectbox("Expiry", sorted(opt["Expiry"].astype(str).unique()), key="opt_expiry")
-                chain = opt[opt["Expiry"].astype(str) == expiry_choice].copy()
-                ce_oi = chain.loc[chain["OptionType"]=="CE","OI"].sum()
-                pe_oi = chain.loc[chain["OptionType"]=="PE","OI"].sum()
-                pcr = pe_oi/ce_oi if ce_oi else np.nan
-                strikes = sorted(chain["Strike"].unique())
-                pain_rows = []
-                for settle in strikes:
-                    ce_payout = (((settle-chain.loc[chain["OptionType"]=="CE","Strike"]).clip(lower=0)) * chain.loc[chain["OptionType"]=="CE","OI"]).sum()
-                    pe_payout = (((chain.loc[chain["OptionType"]=="PE","Strike"]-settle).clip(lower=0)) * chain.loc[chain["OptionType"]=="PE","OI"]).sum()
-                    pain_rows.append({"Settlement candidate": settle, "Estimated aggregate intrinsic payout": ce_payout+pe_payout})
-                pain_df = pd.DataFrame(pain_rows)
-                max_pain = pain_df.loc[pain_df["Estimated aggregate intrinsic payout"].idxmin(),"Settlement candidate"] if not pain_df.empty else np.nan
-                a,b,c,d = st.columns(4)
-                a.metric("Call OI", f"{ce_oi:,.0f}")
-                b.metric("Put OI", f"{pe_oi:,.0f}")
-                c.metric("PCR (OI)", fmt(pcr,3))
-                d.metric("Estimated max pain", fmt(max_pain))
-                if "IV" in chain and chain["IV"].notna().any(): st.metric("Mean supplied IV", fmt(chain["IV"].mean()), help="Average of supplied IV field; confirm whether the source uses percent or decimal.")
-                st.dataframe(chain.sort_values(["Strike","OptionType"]), use_container_width=True, hide_index=True)
-                fig = px.bar(chain, x="Strike", y="OI", color="OptionType", barmode="group", template="plotly_dark", title="Open interest by strike")
-                st.plotly_chart(fig, use_container_width=True)
-                st.download_button("Download option-chain analysis", chain.to_csv(index=False).encode("utf-8"), "option_chain_analysis.csv", "text/csv")
-        except Exception as exc:
-            st.error(f"Could not analyse option chain: {type(exc).__name__}: {exc}")
-    else:
-        st.info("No option-chain file supplied. PCR, max pain and OI levels are unavailable until genuine chain data is provided.")
-    fut_file = st.file_uploader("Optional futures snapshot CSV", type=["csv"], key="futures_snapshot")
-    st.caption("Futures snapshot required columns: Date, Symbol, Spot, Futures, OI. Optional PreviousOI. Basis = Futures − Spot.")
-    if fut_file is not None:
-        try:
-            fut = pd.read_csv(fut_file)
-            fut.columns = [str(c).strip() for c in fut.columns]
-            if not {"Date","Symbol","Spot","Futures","OI"}.issubset(fut.columns):
-                st.error("Required columns: Date, Symbol, Spot, Futures, OI.")
-            else:
-                for c in ["Spot","Futures","OI","PreviousOI"]:
-                    if c in fut: fut[c] = pd.to_numeric(fut[c], errors="coerce")
-                fut["Basis"] = fut["Futures"]-fut["Spot"]
-                fut["Basis %"] = fut["Basis"]/fut["Spot"]*100
-                if "PreviousOI" in fut:
-                    fut["OI change %"] = (fut["OI"]/fut["PreviousOI"].replace(0,np.nan)-1)*100
-                st.dataframe(fut, use_container_width=True, hide_index=True)
-        except Exception as exc:
-            st.error(f"Could not read futures snapshot: {type(exc).__name__}: {exc}")
+    st.subheader("28 · Automatic derivatives lab")
+    st.write("Option-chain analysis is sourced automatically from the public NSE endpoint when available. This module does not require a CSV upload.")
+    under=st.selectbox("Index option chain",["NIFTY","BANKNIFTY","FINNIFTY"],key="deriv_lab_under")
+    with st.spinner("Fetching NSE option-chain snapshot…"):
+        chain_all,default_exp,chain_error=get_nse_option_chain(under)
+    if chain_error:
+        st.warning(chain_error)
+        st.markdown("[Open official NSE option chain](https://www.nseindia.com/option-chain)")
+    elif not chain_all.empty:
+        expiry_list=sorted(chain_all["Expiry"].dropna().astype(str).unique(),key=lambda x:pd.to_datetime(x,errors="coerce"))
+        expiry=st.selectbox("Expiry",expiry_list,index=expiry_list.index(default_exp) if default_exp in expiry_list else 0,key="deriv_lab_expiry")
+        chain=chain_all[chain_all["Expiry"].astype(str)==expiry].copy()
+        ce=chain.loc[chain["OptionType"]=="CE","OI"].sum(min_count=1)
+        pe=chain.loc[chain["OptionType"]=="PE","OI"].sum(min_count=1)
+        pcr=pe/ce if pd.notna(ce) and ce else np.nan
+        strikes=sorted(chain["Strike"].dropna().unique())
+        payouts=[]
+        for settlement in strikes:
+            calls=chain[chain["OptionType"]=="CE"]; puts=chain[chain["OptionType"]=="PE"]
+            payout=((settlement-calls["Strike"]).clip(lower=0)*calls["OI"].fillna(0)).sum()+((puts["Strike"]-settlement).clip(lower=0)*puts["OI"].fillna(0)).sum()
+            payouts.append((settlement,payout))
+        maxpain=min(payouts,key=lambda x:x[1])[0] if payouts else np.nan
+        a,b,c,d=st.columns(4)
+        a.metric("Spot",fmt(chain["Spot"].dropna().iloc[0]) if chain["Spot"].notna().any() else "Unavailable")
+        b.metric("PCR (OI)",fmt(pcr,3)); c.metric("Estimated max pain",fmt(maxpain,0)); d.metric("Strikes returned",f"{len(strikes):,}")
+        st.caption(f"NSE public option-chain snapshot · {under} · expiry {expiry} · timestamp: {chain['Source timestamp'].dropna().iloc[0] if chain['Source timestamp'].notna().any() else 'not supplied'}")
+        st.dataframe(chain.sort_values(["Strike","OptionType"]),use_container_width=True,hide_index=True)
+        st.download_button("Download derivatives snapshot",chain.to_csv(index=False).encode("utf-8"),"derivatives_snapshot.csv","text/csv")
+    st.markdown("#### Futures positioning and basis")
+    st.info("Exchange futures open interest, participant-wise positions and reliable live futures basis are not provided by the option-chain endpoint. These fields are intentionally left unavailable rather than estimated from spot prices.")
+    st.markdown("[NSE derivatives reports](https://www.nseindia.com/all-reports-derivatives) · [NSE option chain](https://www.nseindia.com/option-chain)")
 
 with advanced_tabs[3]:
     st.subheader("29 · Automatic stock deep-dive")
