@@ -733,8 +733,7 @@ with sentiment_factors:
         st.dataframe(styled_sentiment, use_container_width=True, hide_index=True)
     else:
         st.warning("No usable global cue data returned. No direction is guessed.")
-if sentiment_errors:
-    # Keep unavailable-factor details in sentiment_errors, but hide this extra explanatory line.
+# Unavailable-factor details are retained in sentiment_errors but not displayed.
 # Hidden sentiment methodology note retained in code; keep the panel visually concise.
 
 # At-a-glance regime panel is intentionally placed above the navigation tabs.
