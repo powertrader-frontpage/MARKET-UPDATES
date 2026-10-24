@@ -666,6 +666,7 @@ _sentiment_change("Infosys ADR", "INFY", 0.15, inverse=False)
 _sentiment_change("Wipro ADR", "WIT", 0.10, inverse=False)
 _sentiment_change("HDFC Bank ADR", "HDB", 0.075, inverse=False)
 _sentiment_change("ICICI Bank ADR", "IBN", 0.075, inverse=False)
+_sentiment_change("Reliance Industries GDR", "RIGD.L", 0.075, inverse=False)
 # Do not publish a confident full-market direction when the highest-weight GIFT Nifty cue is missing.
 # Partial score remains visible for transparency, but the headline is explicitly marked incomplete.
 gift_available = any(str(item.get("Factor", "")).startswith("GIFT Nifty") for item in sentiment_details)
