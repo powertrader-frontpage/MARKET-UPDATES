@@ -652,7 +652,15 @@ for gift_source_name, gift_url in gift_sources:
     except Exception as exc:
         gift_failures.append(f"{gift_source_name}: {exc.__class__.__name__}")
 if not gift_loaded:
-    sentiment_errors.append("GIFT Nifty unavailable (" + "; ".join(gift_failures) + ")")
+    # Last visibly confirmed GiftCityNifty.com snapshot supplied by the user.
+    # Show it transparently as stale context only; do not add it to the current weighted score.
+    sentiment_details.append({
+        "Factor": "GIFT Nifty · GiftCityNifty.com (last confirmed snapshot; stale)",
+        "Latest change": "-0.32% (-72.50 pts)",
+        "Signal": "Negative",
+        "Source bar": "24 Oct 2026, 02:29 IST · Market closed",
+    })
+    sentiment_errors.append("GIFT Nifty live quote unavailable; showing the last confirmed 24 Oct snapshot for reference only (" + "; ".join(gift_failures) + ")")
 _sentiment_change("Brent crude (inverse impact)", "BZ=F", 0.20, inverse=True)
 _sentiment_change("Infosys ADR", "INFY", 0.15, inverse=False)
 _sentiment_change("Wipro ADR", "WIT", 0.10, inverse=False)
