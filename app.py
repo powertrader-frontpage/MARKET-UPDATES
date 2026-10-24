@@ -265,6 +265,151 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
             st.caption("Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, str | None]:
+    """Fetch best-effort market history from Yahoo Finance via yfinance; never synthesize rows."""
+    try:
+        data = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False, actions=False, raise_errors=True)
+        if data is None or data.empty:
+            return pd.DataFrame(), "Source returned no rows for this ticker/period/interval."
+        data = data.reset_index()
+        date_col = "Datetime" if "Datetime" in data.columns else "Date"
+        data = data.rename(columns={date_col: "Date"})
+        data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
+        if data["Date"].dt.tz is None:
+            data["Date"] = data["Date"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
+        else:
+            data["Date"] = data["Date"].dt.tz_convert("Asia/Kolkata")
+        for c in ["Open", "High", "Low", "Close", "Volume"]:
+            if c in data.columns:
+                data[c] = pd.to_numeric(data[c], errors="coerce")
+        data = data.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
+        return data.reset_index(drop=True), None
+    except Exception as exc:
+        return pd.DataFrame(), f"Fetch failed: {type(exc).__name__}: {str(exc)[:240]}"
+
+# Public-data universe used to make stock research less manual. Industry labels are static classifications,
+# while prices are fetched live from Yahoo Finance and must be verified against source timestamps.
+AUTO_UNIVERSE = {
+    "RELIANCE.NS": "Energy", "TCS.NS": "IT", "INFY.NS": "IT", "HCLTECH.NS": "IT",
+    "WIPRO.NS": "IT", "TECHM.NS": "IT", "HDFCBANK.NS": "Financials", "ICICIBANK.NS": "Financials",
+    "SBIN.NS": "Financials", "KOTAKBANK.NS": "Financials", "AXISBANK.NS": "Financials",
+    "BAJFINANCE.NS": "Financials", "BAJAJFINSV.NS": "Financials", "BHARTIARTL.NS": "Telecom",
+    "ITC.NS": "FMCG", "HINDUNILVR.NS": "FMCG", "NESTLEIND.NS": "FMCG", "TATAMOTORS.NS": "Auto",
+    "M&M.NS": "Auto", "MARUTI.NS": "Auto", "SUNPHARMA.NS": "Pharma", "DRREDDY.NS": "Pharma",
+    "CIPLA.NS": "Pharma", "LT.NS": "Industrials", "ULTRACEMCO.NS": "Cement", "TATASTEEL.NS": "Metals",
+    "JSWSTEEL.NS": "Metals", "NTPC.NS": "Utilities", "POWERGRID.NS": "Utilities", "ONGC.NS": "Energy",
+    "COALINDIA.NS": "Energy", "ASIANPAINT.NS": "Consumer", "TITAN.NS": "Consumer", "ADANIPORTS.NS": "Infrastructure",
+    "TRENT.NS": "Retail", "BEL.NS": "Industrials", "INDUSINDBK.NS": "Financials",
+}
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_auto_universe(period: str = "2y") -> pd.DataFrame:
+    """Fetch actual daily OHLCV for a fixed large-cap universe; return empty data on source failure."""
+    tickers = list(AUTO_UNIVERSE)
+    try:
+        raw = yf.download(tickers, period=period, interval="1d", auto_adjust=False, group_by="ticker",
+                          threads=True, progress=False, actions=False)
+        if raw is None or raw.empty:
+            return pd.DataFrame()
+        rows=[]
+        for ticker in tickers:
+            try:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    if ticker not in raw.columns.get_level_values(0):
+                        continue
+                    part=raw[ticker].copy()
+                else:
+                    part=raw.copy()
+                part=part.reset_index()
+                date_col="Date" if "Date" in part.columns else "Datetime"
+                if date_col not in part.columns or "Close" not in part.columns:
+                    continue
+                part=part.rename(columns={date_col:"Date"})
+                part["Date"]=pd.to_datetime(part["Date"],errors="coerce")
+                part["Symbol"]=ticker.replace(".NS","")
+                part["Industry"]=AUTO_UNIVERSE[ticker]
+                for c in ["Open","High","Low","Close","Volume"]:
+                    if c in part.columns: part[c]=pd.to_numeric(part[c],errors="coerce")
+                part=part.dropna(subset=["Date","Close"])
+                if not part.empty:
+                    rows.append(part[[c for c in ["Date","Symbol","Industry","Open","High","Low","Close","Volume"] if c in part.columns]])
+            except Exception:
+                continue
+        return pd.concat(rows,ignore_index=True) if rows else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+def get_news_rss(query: str, limit: int = 12) -> tuple[pd.DataFrame, str | None]:
+    """Fetch public Google News RSS search results; headlines are attributed and never treated as verified causal explanations."""
+    import xml.etree.ElementTree as ET
+    from urllib.parse import quote_plus
+    try:
+        url = "https://news.google.com/rss/search?q=" + quote_plus(query) + "&hl=en-IN&gl=IN&ceid=IN:en"
+        response = requests.get(url, headers={"User-Agent":"Mozilla/5.0 MarketIntelligenceTerminal/1.0"}, timeout=12)
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+        rows = []
+        for item in root.findall(".//item")[:limit]:
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            pub = (item.findtext("pubDate") or "").strip()
+            source = item.find("source")
+            publisher = (source.text or "").strip() if source is not None else ""
+            if title and link:
+                rows.append({"Published (RSS)":pub,"Headline":title,"Publisher":publisher,"Source link":link})
+        if not rows:
+            return pd.DataFrame(), "RSS returned no headline rows."
+        return pd.DataFrame(rows), None
+    except Exception as exc:
+        return pd.DataFrame(), f"News RSS unavailable: {type(exc).__name__}: {str(exc)[:150]}"
+
+
+def indicators(data: pd.DataFrame) -> pd.DataFrame:
+    out = data.copy()
+    close = out["Close"]
+    for n in [5, 11, 20, 50, 100, 200]:
+        out[f"SMA {n}"] = close.rolling(n, min_periods=n).mean()
+        out[f"EMA {n}"] = close.ewm(span=n, adjust=False, min_periods=n).mean()
+    delta = close.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    rs = gain / loss.replace(0, np.nan)
+    out["RSI 14"] = 100 - 100 / (1 + rs)
+    out.loc[(loss == 0) & gain.notna(), "RSI 14"] = 100
+    if {"High", "Low"}.issubset(out.columns):
+        out["Daily Range"] = out["High"] - out["Low"]
+        for n in [5, 10, 14, 20]:
+            out[f"ADR {n}"] = out["Daily Range"].rolling(n, min_periods=n).mean()
+        prev_close = close.shift(1)
+        tr = pd.concat([out["High"]-out["Low"], (out["High"]-prev_close).abs(), (out["Low"]-prev_close).abs()], axis=1).max(axis=1)
+        out["ATR 14"] = tr.rolling(14, min_periods=14).mean()
+    out["Return %"] = close.pct_change() * 100
+    return out
+
+def fmt(value, decimals=2):
+    try:
+        if pd.isna(value): return "—"
+        return f"{float(value):,.{decimals}f}"
+    except Exception:
+        return "—"
+
+def tv_widget(kind: str, config: dict, height: int = 500):
+    config_json = json.dumps(config, ensure_ascii=False).replace("</", "<\\/")
+    script = f'''<div class="tradingview-widget-container" style="height:{height}px;width:100%"><div class="tradingview-widget-container__widget" style="height:calc(100% - 28px);width:100%"></div><div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/" rel="noopener nofollow" target="_blank"><span>TradingView</span></a></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-{kind}.js" async>{config_json}</script></div>'''
+    components.html(script, height=height + 10, scrolling=False)
+
+def advanced_chart(symbol: str, height: int = 720):
+    tv_widget("advanced-chart", {"autosize": True, "symbol": symbol, "interval": "D", "timezone": "Asia/Kolkata", "theme": "dark", "style": "1", "locale": "en", "allow_symbol_change": True, "calendar": False, "support_host": "https://www.tradingview.com"}, height)
+
+def quote_snapshot(df: pd.DataFrame):
+    if df.empty: return None
+    last = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else None
+    change = float(last["Close"] - prev["Close"]) if prev is not None else np.nan
+    pct = change / float(prev["Close"]) * 100 if prev is not None and float(prev["Close"]) != 0 else np.nan
+    return last, change, pct
+
 # Pull key instruments. The sidebar interval controls intraday bars; daily history is used for indicators.
 market_data: dict[str, pd.DataFrame] = {}
 market_errors: dict[str, str | None] = {}
@@ -1312,148 +1457,3 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
         st.info("FYERS WebSocket updates the live quote overlay and redraws the displayed chart every 2 seconds. Historical candles remain the last fetched candle set; the latest price line is live. Stream is read-only and does not place orders.")
 if refresh:
     st.cache_data.clear()
-
-@st.cache_data(ttl=300, show_spinner=False)
-def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, str | None]:
-    """Fetch best-effort market history from Yahoo Finance via yfinance; never synthesize rows."""
-    try:
-        data = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False, actions=False, raise_errors=True)
-        if data is None or data.empty:
-            return pd.DataFrame(), "Source returned no rows for this ticker/period/interval."
-        data = data.reset_index()
-        date_col = "Datetime" if "Datetime" in data.columns else "Date"
-        data = data.rename(columns={date_col: "Date"})
-        data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
-        if data["Date"].dt.tz is None:
-            data["Date"] = data["Date"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
-        else:
-            data["Date"] = data["Date"].dt.tz_convert("Asia/Kolkata")
-        for c in ["Open", "High", "Low", "Close", "Volume"]:
-            if c in data.columns:
-                data[c] = pd.to_numeric(data[c], errors="coerce")
-        data = data.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
-        return data.reset_index(drop=True), None
-    except Exception as exc:
-        return pd.DataFrame(), f"Fetch failed: {type(exc).__name__}: {str(exc)[:240]}"
-
-# Public-data universe used to make stock research less manual. Industry labels are static classifications,
-# while prices are fetched live from Yahoo Finance and must be verified against source timestamps.
-AUTO_UNIVERSE = {
-    "RELIANCE.NS": "Energy", "TCS.NS": "IT", "INFY.NS": "IT", "HCLTECH.NS": "IT",
-    "WIPRO.NS": "IT", "TECHM.NS": "IT", "HDFCBANK.NS": "Financials", "ICICIBANK.NS": "Financials",
-    "SBIN.NS": "Financials", "KOTAKBANK.NS": "Financials", "AXISBANK.NS": "Financials",
-    "BAJFINANCE.NS": "Financials", "BAJAJFINSV.NS": "Financials", "BHARTIARTL.NS": "Telecom",
-    "ITC.NS": "FMCG", "HINDUNILVR.NS": "FMCG", "NESTLEIND.NS": "FMCG", "TATAMOTORS.NS": "Auto",
-    "M&M.NS": "Auto", "MARUTI.NS": "Auto", "SUNPHARMA.NS": "Pharma", "DRREDDY.NS": "Pharma",
-    "CIPLA.NS": "Pharma", "LT.NS": "Industrials", "ULTRACEMCO.NS": "Cement", "TATASTEEL.NS": "Metals",
-    "JSWSTEEL.NS": "Metals", "NTPC.NS": "Utilities", "POWERGRID.NS": "Utilities", "ONGC.NS": "Energy",
-    "COALINDIA.NS": "Energy", "ASIANPAINT.NS": "Consumer", "TITAN.NS": "Consumer", "ADANIPORTS.NS": "Infrastructure",
-    "TRENT.NS": "Retail", "BEL.NS": "Industrials", "INDUSINDBK.NS": "Financials",
-}
-
-@st.cache_data(ttl=21600, show_spinner=False)
-def get_auto_universe(period: str = "2y") -> pd.DataFrame:
-    """Fetch actual daily OHLCV for a fixed large-cap universe; return empty data on source failure."""
-    tickers = list(AUTO_UNIVERSE)
-    try:
-        raw = yf.download(tickers, period=period, interval="1d", auto_adjust=False, group_by="ticker",
-                          threads=True, progress=False, actions=False)
-        if raw is None or raw.empty:
-            return pd.DataFrame()
-        rows=[]
-        for ticker in tickers:
-            try:
-                if isinstance(raw.columns, pd.MultiIndex):
-                    if ticker not in raw.columns.get_level_values(0):
-                        continue
-                    part=raw[ticker].copy()
-                else:
-                    part=raw.copy()
-                part=part.reset_index()
-                date_col="Date" if "Date" in part.columns else "Datetime"
-                if date_col not in part.columns or "Close" not in part.columns:
-                    continue
-                part=part.rename(columns={date_col:"Date"})
-                part["Date"]=pd.to_datetime(part["Date"],errors="coerce")
-                part["Symbol"]=ticker.replace(".NS","")
-                part["Industry"]=AUTO_UNIVERSE[ticker]
-                for c in ["Open","High","Low","Close","Volume"]:
-                    if c in part.columns: part[c]=pd.to_numeric(part[c],errors="coerce")
-                part=part.dropna(subset=["Date","Close"])
-                if not part.empty:
-                    rows.append(part[[c for c in ["Date","Symbol","Industry","Open","High","Low","Close","Volume"] if c in part.columns]])
-            except Exception:
-                continue
-        return pd.concat(rows,ignore_index=True) if rows else pd.DataFrame()
-    except Exception:
-        return pd.DataFrame()
-
-def get_news_rss(query: str, limit: int = 12) -> tuple[pd.DataFrame, str | None]:
-    """Fetch public Google News RSS search results; headlines are attributed and never treated as verified causal explanations."""
-    import xml.etree.ElementTree as ET
-    from urllib.parse import quote_plus
-    try:
-        url = "https://news.google.com/rss/search?q=" + quote_plus(query) + "&hl=en-IN&gl=IN&ceid=IN:en"
-        response = requests.get(url, headers={"User-Agent":"Mozilla/5.0 MarketIntelligenceTerminal/1.0"}, timeout=12)
-        response.raise_for_status()
-        root = ET.fromstring(response.content)
-        rows = []
-        for item in root.findall(".//item")[:limit]:
-            title = (item.findtext("title") or "").strip()
-            link = (item.findtext("link") or "").strip()
-            pub = (item.findtext("pubDate") or "").strip()
-            source = item.find("source")
-            publisher = (source.text or "").strip() if source is not None else ""
-            if title and link:
-                rows.append({"Published (RSS)":pub,"Headline":title,"Publisher":publisher,"Source link":link})
-        if not rows:
-            return pd.DataFrame(), "RSS returned no headline rows."
-        return pd.DataFrame(rows), None
-    except Exception as exc:
-        return pd.DataFrame(), f"News RSS unavailable: {type(exc).__name__}: {str(exc)[:150]}"
-
-
-def indicators(data: pd.DataFrame) -> pd.DataFrame:
-    out = data.copy()
-    close = out["Close"]
-    for n in [5, 11, 20, 50, 100, 200]:
-        out[f"SMA {n}"] = close.rolling(n, min_periods=n).mean()
-        out[f"EMA {n}"] = close.ewm(span=n, adjust=False, min_periods=n).mean()
-    delta = close.diff()
-    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-    rs = gain / loss.replace(0, np.nan)
-    out["RSI 14"] = 100 - 100 / (1 + rs)
-    out.loc[(loss == 0) & gain.notna(), "RSI 14"] = 100
-    if {"High", "Low"}.issubset(out.columns):
-        out["Daily Range"] = out["High"] - out["Low"]
-        for n in [5, 10, 14, 20]:
-            out[f"ADR {n}"] = out["Daily Range"].rolling(n, min_periods=n).mean()
-        prev_close = close.shift(1)
-        tr = pd.concat([out["High"]-out["Low"], (out["High"]-prev_close).abs(), (out["Low"]-prev_close).abs()], axis=1).max(axis=1)
-        out["ATR 14"] = tr.rolling(14, min_periods=14).mean()
-    out["Return %"] = close.pct_change() * 100
-    return out
-
-def fmt(value, decimals=2):
-    try:
-        if pd.isna(value): return "—"
-        return f"{float(value):,.{decimals}f}"
-    except Exception:
-        return "—"
-
-def tv_widget(kind: str, config: dict, height: int = 500):
-    config_json = json.dumps(config, ensure_ascii=False).replace("</", "<\\/")
-    script = f'''<div class="tradingview-widget-container" style="height:{height}px;width:100%"><div class="tradingview-widget-container__widget" style="height:calc(100% - 28px);width:100%"></div><div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/" rel="noopener nofollow" target="_blank"><span>TradingView</span></a></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-{kind}.js" async>{config_json}</script></div>'''
-    components.html(script, height=height + 10, scrolling=False)
-
-def advanced_chart(symbol: str, height: int = 720):
-    tv_widget("advanced-chart", {"autosize": True, "symbol": symbol, "interval": "D", "timezone": "Asia/Kolkata", "theme": "dark", "style": "1", "locale": "en", "allow_symbol_change": True, "calendar": False, "support_host": "https://www.tradingview.com"}, height)
-
-def quote_snapshot(df: pd.DataFrame):
-    if df.empty: return None
-    last = df.iloc[-1]
-    prev = df.iloc[-2] if len(df) > 1 else None
-    change = float(last["Close"] - prev["Close"]) if prev is not None else np.nan
-    pct = change / float(prev["Close"]) * 100 if prev is not None and float(prev["Close"]) != 0 else np.nan
-    return last, change, pct
