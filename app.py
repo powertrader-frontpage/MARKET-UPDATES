@@ -27,7 +27,11 @@ st.markdown("""
 <style>
 .block-container{padding-top:1rem;padding-bottom:2rem}
 [data-testid="stMetric"]{background:rgba(100,120,145,.08);border:1px solid rgba(120,140,160,.25);padding:12px;border-radius:12px}
-.small-note{font-size:.85rem;opacity:.8}\n[data-testid='stDataFrame']{max-width:100%}\n@media(max-width:700px){.block-container{padding-left:.7rem;padding-right:.7rem}[data-testid='stMetricValue']{font-size:1.35rem}h1{font-size:1.7rem}h2{font-size:1.35rem}}
+.small-note{font-size:.85rem;opacity:.8}\n[data-testid='stDataFrame']{max-width:100%}
+[data-testid="stMetricDelta"] svg{display:inline-block}
+[data-testid="stMetricDelta"] [data-testid="stMarkdownContainer"]{font-weight:650}
+[data-testid="stMetricDelta"][data-testid*="positive"],[data-testid="stMetricDelta"] svg[fill="green"]{color:#22c55e}
+@media(max-width:700px){.block-container{padding-left:.7rem;padding-right:.7rem}[data-testid='stMetricValue']{font-size:1.35rem}h1{font-size:1.7rem}h2{font-size:1.35rem}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -706,6 +710,15 @@ with tabs[0]:
             regime_cols[2].metric("RSI 14", fmt(overview_rsi_value))
             regime_cols[3].metric("Realized vol 20d annualized", f"{overview_vol:.2%}" if pd.notna(overview_vol) else "Unavailable")
             st.caption(f"Calculated from {overview_regime_name} historical OHLC data · last source bar: {overview_last['Date']:%d %b %Y, %H:%M IST} · not a live signal.")
+            st.markdown("#### Price trend")
+            trend_fig = go.Figure()
+            trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["Close"], name="Close", mode="lines", line=dict(color="#60a5fa", width=2)))
+            if "EMA 20" in overview_rc:
+                trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 20"], name="EMA 20", mode="lines", line=dict(color="#f59e0b", width=1.5)))
+            if "EMA 50" in overview_rc:
+                trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 50"], name="EMA 50", mode="lines", line=dict(color="#a78bfa", width=1.5)))
+            trend_fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified", xaxis_title="Source candle date", yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0))
+            st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
     st.divider()
     st.subheader("Market snapshot")
     rows = []
@@ -717,6 +730,14 @@ with tabs[0]:
         else:
             rows.append({"Instrument": name, "Ticker": INDEXES[name], "Latest returned close": np.nan, "Change vs previous bar": np.nan, "Change %": np.nan, "Source bar timestamp (IST)": "Unavailable", "Source": market_errors[name] or "No data"})
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    snapshot_df = pd.DataFrame(rows)
+    if not snapshot_df.empty and "Change %" in snapshot_df:
+        snapshot_plot = snapshot_df.dropna(subset=["Change %"]).copy()
+        if not snapshot_plot.empty:
+            snapshot_plot["Direction"] = np.where(snapshot_plot["Change %"] >= 0, "Positive", "Negative")
+            snap_fig = px.bar(snapshot_plot.sort_values("Change %"), x="Change %", y="Instrument", color="Direction", color_discrete_map={"Positive":"#22c55e","Negative":"#ef4444"}, orientation="h", template="plotly_dark", title="Market snapshot · change vs previous returned bar")
+            snap_fig.update_layout(height=max(260, 36 * len(snapshot_plot)), margin=dict(l=10,r=10,t=45,b=10), showlegend=False, xaxis_title="Change (%)", yaxis_title="")
+            st.plotly_chart(snap_fig, use_container_width=True, config={"displaylogo": False}, key="overview_snapshot_change_chart")
     st.markdown("#### Global market and news widgets")
     tv_widget("market-overview", {"colorTheme": "dark", "dateRange": "1D", "showChart": True, "locale": "en", "width": "100%", "height": 420, "isTransparent": False, "showSymbolLogo": True, "showFloatingTooltip": False, "tabs": [{"title": "Indices", "symbols": [{"s": "NSE:NIFTY"}, {"s": "NSE:BANKNIFTY"}, {"s": "TVC:VIX"}, {"s": "TVC:UKOIL"}, {"s": "NASDAQ:NDX"}, {"s": "SP:SPX"}]}]}, 430)
 with tabs[1]:
@@ -829,7 +850,8 @@ with tabs[3]:
     if sector_rows:
         sec = pd.DataFrame(sector_rows).sort_values("Relative return vs NIFTY (pp)", ascending=False)
         st.dataframe(sec, use_container_width=True, hide_index=True)
-        fig = px.bar(sec, x="Sector", y="Relative return vs NIFTY (pp)", color="Relative return vs NIFTY (pp)", template="plotly_dark", title="Relative sector performance over selected lookback")
+        sec["Direction"] = np.where(sec["Relative return vs NIFTY (pp)"] >= 0, "Outperforming", "Underperforming")
+        fig = px.bar(sec.sort_values("Relative return vs NIFTY (pp)"), x="Relative return vs NIFTY (pp)", y="Sector", color="Direction", color_discrete_map={"Outperforming":"#22c55e","Underperforming":"#ef4444"}, orientation="h", template="plotly_dark", title="Sector relative performance vs NIFTY")
         fig.update_layout(height=440)
         st.plotly_chart(fig, use_container_width=True)
     else:
