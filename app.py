@@ -888,7 +888,9 @@ extra_tabs = [st.expander(label, expanded=False) for label in [
     "18 Events & gap risk", "19 Trade journal", "20 Data quality", "21 Cross-asset performance", "22 Technical signals"
 ]]
 
-# Module 13 removed: the market regime and trend-strength panel is already shown on the Overview page.
+# Preserve the removed Module 13 slot so module numbering remains aligned with extra_tabs indices.
+with extra_tabs[0]:
+    st.caption("Market regime and trend strength are displayed in the main dashboard above.")
 
 with extra_tabs[1]:
     st.subheader("14 · Options analytics")
