@@ -133,6 +133,32 @@ def get_auto_universe(period: str = "2y") -> pd.DataFrame:
             continue
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
+@st.cache_data(ttl=900, show_spinner=False)
+def get_news_rss(query: str, limit: int = 12) -> tuple[pd.DataFrame, str | None]:
+    """Fetch public Google News RSS search results; headlines are attributed and never treated as verified causal explanations."""
+    import xml.etree.ElementTree as ET
+    from urllib.parse import quote_plus
+    try:
+        url = "https://news.google.com/rss/search?q=" + quote_plus(query) + "&hl=en-IN&gl=IN&ceid=IN:en"
+        response = requests.get(url, headers={"User-Agent":"Mozilla/5.0 MarketIntelligenceTerminal/1.0"}, timeout=12)
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+        rows = []
+        for item in root.findall(".//item")[:limit]:
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            pub = (item.findtext("pubDate") or "").strip()
+            source = item.find("source")
+            publisher = (source.text or "").strip() if source is not None else ""
+            if title and link:
+                rows.append({"Published (RSS)":pub,"Headline":title,"Publisher":publisher,"Source link":link})
+        if not rows:
+            return pd.DataFrame(), "RSS returned no headline rows."
+        return pd.DataFrame(rows), None
+    except Exception as exc:
+        return pd.DataFrame(), f"News RSS unavailable: {type(exc).__name__}: {str(exc)[:150]}"
+
+
 def indicators(data: pd.DataFrame) -> pd.DataFrame:
     out = data.copy()
     close = out["Close"]
@@ -528,14 +554,18 @@ with extra_tabs[4]:
         st.download_button("Download automatic breadth data",last.to_csv(index=False).encode("utf-8"),"automatic_market_breadth.csv","text/csv")
 
 with extra_tabs[5]:
-    st.subheader("18 · Economic events and gap-risk monitor")
-    st.write("Use this editable checklist to record upcoming events from official calendars. It is user-entered, not a live calendar feed.")
-    event_template=pd.DataFrame(columns=["Date/time (IST)","Event","Source URL","Expected risk","Completed/checked"])
-    event_file=st.file_uploader("Optional event calendar CSV",type=["csv"],key="event_csv")
-    events=pd.read_csv(event_file) if event_file is not None else event_template
-    edited=st.data_editor(events,use_container_width=True,num_rows="dynamic",key="event_editor")
-    st.download_button("Download event calendar",edited.to_csv(index=False).encode(),file_name="market_event_calendar.csv",mime="text/csv")
-    st.markdown("Sources: [RBI](https://www.rbi.org.in/) · [MOSPI](https://mospi.gov.in/) · [US Federal Reserve](https://www.federalreserve.gov/monetarypolicy.htm) · [US BLS](https://www.bls.gov/schedule/news_release/) · [EIA](https://www.eia.gov/petroleum/supply/weekly/)")
+    st.subheader("18 · Automatic economic and gap-risk monitor")
+    st.write("Automatically searches public news headlines about scheduled central-bank and macroeconomic events. This is a headline monitor, not a verified release-time calendar.")
+    query=st.selectbox("News focus",["India RBI inflation GDP policy","US Federal Reserve CPI jobs economic data","Crude oil OPEC EIA inventory","India US geopolitical market risk"],key="event_news_query")
+    news_query={"India RBI inflation GDP policy":"India RBI inflation GDP monetary policy","US Federal Reserve CPI jobs economic data":"Federal Reserve CPI employment economic data","Crude oil OPEC EIA inventory":"OPEC EIA crude oil inventory","India US geopolitical market risk":"India US geopolitical market risk markets"}[query]
+    with st.spinner("Fetching public news headlines…"):
+        headlines,news_error=get_news_rss(news_query,15)
+    if news_error: st.warning(news_error)
+    elif not headlines.empty:
+        st.dataframe(headlines,use_container_width=True,hide_index=True,column_config={"Source link":st.column_config.LinkColumn("Source link")})
+        st.download_button("Download event-risk headlines",headlines.to_csv(index=False).encode("utf-8"),"event_risk_headlines.csv","text/csv")
+    st.markdown("**Official release calendars and primary sources**")
+    st.markdown("- [RBI](https://www.rbi.org.in/) · [MOSPI](https://mospi.gov.in/) · [Federal Reserve](https://www.federalreserve.gov/monetarypolicy.htm) · [US BLS release schedule](https://www.bls.gov/schedule/news_release/) · [EIA](https://www.eia.gov/petroleum/supply/weekly/)")
     gap_name=st.selectbox("Instrument for previous-bar gap check",["NIFTY 50","BANK NIFTY","INFY","WIPRO"],key="gap_symbol")
     gdf=market_data[gap_name]
     if len(gdf)>=2:
@@ -835,53 +865,32 @@ advanced_tabs = st.tabs([
 ])
 
 with advanced_tabs[0]:
-    st.subheader("26 · Macro & geopolitical event log")
-    st.write("Macro market series below come from the dashboard's returned source bars. Geopolitical events are not automatically invented: upload a verified event log with source links to analyse event windows.")
-    macro_rows = []
-    for name in ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude"]:
-        df = market_data.get(name, pd.DataFrame())
-        if not df.empty:
-            snap = quote_snapshot(df)
-            if snap:
-                last, change, pct = snap
-                macro_rows.append({"Instrument": name, "Latest returned close": last["Close"], "Change vs previous bar": change, "Change %": pct, "Source candle": last["Date"].strftime("%Y-%m-%d %H:%M IST"), "Frequency": "Daily"})
+    st.subheader("26 · Automatic macro & geopolitical event monitor")
+    st.write("Public news headlines are fetched automatically and linked to their publishers. Headlines are not proof of causation and are not used to fabricate market-impact statistics.")
+    topic=st.selectbox("Headline category",["India macro & RBI","Global macro & central banks","Geopolitics and energy","Markets and policy"],key="auto_event_topic")
+    queries={"India macro & RBI":"India RBI inflation GDP economy","Global macro & central banks":"Federal Reserve ECB Bank of Japan inflation rates economy","Geopolitics and energy":"geopolitics oil energy markets conflict","Markets and policy":"India markets policy regulation economy"}
+    with st.spinner("Fetching public headline feed…"):
+        ev,ev_error=get_news_rss(queries[topic],20)
+    if ev_error: st.warning(ev_error)
+    elif not ev.empty:
+        st.dataframe(ev,use_container_width=True,hide_index=True,column_config={"Source link":st.column_config.LinkColumn("Open source")})
+        st.download_button("Download headline log",ev.to_csv(index=False).encode("utf-8"),"macro_geopolitical_headlines.csv","text/csv")
+    st.markdown("#### Live macro market proxies")
+    macro_rows=[]
+    for name,ticker in [("NIFTY 50","^NSEI"),("BANK NIFTY","^NSEBANK"),("India VIX","^INDIAVIX"),("Brent Crude","BZ=F"),("USD/INR","INR=X"),("Gold","GC=F")]:
+        if name in market_data and not market_data[name].empty:
+            df=market_data[name]
         else:
-            macro_rows.append({"Instrument": name, "Latest returned close": np.nan, "Change vs previous bar": np.nan, "Change %": np.nan, "Source candle": "Unavailable", "Frequency": "Daily"})
-    st.dataframe(pd.DataFrame(macro_rows), use_container_width=True, hide_index=True)
-    st.markdown("#### Verified event timeline input")
-    event_file = st.file_uploader("Upload event timeline CSV", type=["csv"], key="verified_event_log")
-    st.caption("Required columns: Date, Event, SourceURL. Optional: Category, Notes. Event data is displayed as supplied; source links should be checked by the user.")
-    if event_file is not None:
-        try:
-            ev = pd.read_csv(event_file)
-            ev.columns = [str(c).strip() for c in ev.columns]
-            req = {"Date", "Event", "SourceURL"}
-            if not req.issubset(ev.columns):
-                st.error("Required columns: Date, Event, SourceURL.")
-            else:
-                ev["Date"] = pd.to_datetime(ev["Date"], errors="coerce")
-                ev = ev.dropna(subset=["Date", "Event"]).sort_values("Date", ascending=False)
-                st.dataframe(ev, use_container_width=True, hide_index=True)
-                st.download_button("Download event log", ev.to_csv(index=False).encode("utf-8"), "verified_event_log.csv", "text/csv")
-        except Exception as exc:
-            st.error(f"Could not read event log: {type(exc).__name__}: {exc}")
-    else:
-        st.info("No event timeline uploaded. No geopolitical headlines or historical event impacts are fabricated.")
-    st.markdown("#### Macro data limitations")
-    st.write("USD/INR, RBI repo rate and index valuation are not inferred from NIFTY prices. Add verified sources or upload dated observations before showing those values.")
-    macro_file = st.file_uploader("Optional verified macro observations CSV", type=["csv"], key="macro_observations")
-    if macro_file is not None:
-        try:
-            md = pd.read_csv(macro_file)
-            md.columns = [str(c).strip() for c in md.columns]
-            if not {"Date", "Indicator", "Value", "SourceURL"}.issubset(md.columns):
-                st.error("Required columns: Date, Indicator, Value, SourceURL.")
-            else:
-                md["Date"] = pd.to_datetime(md["Date"], errors="coerce")
-                md["Value"] = pd.to_numeric(md["Value"], errors="coerce")
-                st.dataframe(md.sort_values("Date", ascending=False), use_container_width=True, hide_index=True)
-        except Exception as exc:
-            st.error(f"Could not read macro observations: {type(exc).__name__}: {exc}")
+            df,_=get_history(ticker,period,"1d")
+        if not df.empty:
+            snap=quote_snapshot(df)
+            if snap:
+                last,change,pct=snap
+                macro_rows.append({"Instrument":name,"Latest returned close":last["Close"],"Change %":pct,"Source candle":last["Date"].strftime("%Y-%m-%d %H:%M IST"),"Source":"Yahoo Finance via yfinance"})
+        else: macro_rows.append({"Instrument":name,"Latest returned close":np.nan,"Change %":np.nan,"Source candle":"Unavailable","Source":"No data returned"})
+    st.dataframe(pd.DataFrame(macro_rows),use_container_width=True,hide_index=True)
+    st.caption("Macro proxies are public market history, not official economic indicators. RBI rates, inflation releases, FII/DII flows and event impact are not inferred from prices.")
+    st.markdown("[Official sources: NSE reports](https://www.nseindia.com/all-reports) · [RBI](https://www.rbi.org.in/) · [MOSPI](https://mospi.gov.in/) · [SEBI](https://www.sebi.gov.in/)")
 
 with advanced_tabs[1]:
     st.subheader("27 · Market breadth and technical stock scanner")
