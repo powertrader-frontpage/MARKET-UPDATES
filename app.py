@@ -119,6 +119,53 @@ def fyers_exchange_auth_code(app_id: str, app_secret: str, auth_code: str):
     except Exception as exc:
         return None, f"FYERS authentication request failed: {exc.__class__.__name__}"
 
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fyers_nse_equity_symbols():
+    """Load FYERS' public NSE capital-market symbol master; return verified equity symbols only."""
+    try:
+        response = requests.get("https://public.fyers.in/sym_details/NSE_CM_sym_master.json", timeout=20)
+        response.raise_for_status()
+        payload = response.json()
+        symbols = []
+        if isinstance(payload, dict):
+            for symbol, details in payload.items():
+                if not isinstance(symbol, str) or not symbol.startswith("NSE:") or not symbol.endswith("-EQ"):
+                    continue
+                name = ""
+                if isinstance(details, dict):
+                    name = str(details.get("description") or details.get("short_name") or details.get("symbol") or "")
+                symbols.append((symbol, name))
+        return sorted(set(symbols), key=lambda row: (row[1].upper(), row[0])), None
+    except Exception as exc:
+        return [], f"Symbol master unavailable ({exc.__class__.__name__})."
+
+def fyers_history(app_id: str, access_token: str, symbol: str, resolution: str, days: int):
+    date_to = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    date_from = date_to - pd.Timedelta(days=days)
+    try:
+        response = requests.get(
+            "https://api-t1.fyers.in/data/history",
+            params={"symbol": symbol, "resolution": resolution, "date_format": "1",
+                    "range_from": str(date_from), "range_to": str(date_to), "cont_flag": "1"},
+            headers={"Authorization": f"{app_id}:{access_token}"},
+            timeout=25,
+        )
+        payload = response.json()
+        if not response.ok or payload.get("s") != "ok":
+            return pd.DataFrame(), str(payload.get("message", "FYERS historical candle request failed."))
+        candles = payload.get("candles") or []
+        if not candles:
+            return pd.DataFrame(), "FYERS returned no candles for this symbol and interval."
+        frame = pd.DataFrame(candles, columns=["Epoch", "Open", "High", "Low", "Close", "Volume"][:len(candles[0])])
+        frame["Date"] = pd.to_datetime(frame["Epoch"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            if col in frame:
+                frame[col] = pd.to_numeric(frame[col], errors="coerce")
+        return frame.dropna(subset=["Date", "Close"]).sort_values("Date"), None
+    except Exception as exc:
+        return pd.DataFrame(), f"FYERS historical request failed ({exc.__class__.__name__})."
+
 def fyers_live_quotes(app_id: str, access_token: str, symbols: list[str]):
     try:
         response = requests.get(
@@ -209,6 +256,48 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                 })
             st.dataframe(pd.DataFrame(normalized), use_container_width=True, hide_index=True)
             st.caption("Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
+
+
+# FYERS chart workspace: all NSE cash-market equity symbols from FYERS Symbol Master.
+if "fyers_access_token" in st.session_state and fyers_credentials():
+    st.divider()
+    st.subheader("FYERS stock charts")
+    st.caption("Choose any symbol from FYERS' NSE capital-market symbol master. Candles are from FYERS Historical Data; the current quote is fetched separately. This is not a continuously updating WebSocket chart.")
+    symbols_list, symbols_error = fyers_nse_equity_symbols()
+    if symbols_error:
+        st.warning(symbols_error)
+    elif not symbols_list:
+        st.warning("The FYERS symbol master returned no NSE equity symbols.")
+    else:
+        symbol_labels = {f"{name or symbol} · {symbol}": symbol for symbol, name in symbols_list}
+        selected_label = st.selectbox("Search/select NSE stock", list(symbol_labels.keys()), index=0, key="fyers_chart_symbol")
+        col_res, col_period = st.columns(2)
+        with col_res:
+            chart_resolution = st.selectbox("Candle interval", ["1", "5", "15", "30", "60", "1D"], index=1, key="fyers_chart_resolution")
+        with col_period:
+            chart_days_label = st.selectbox("History window", ["5 days", "1 month", "3 months", "6 months", "1 year"], index=2, key="fyers_chart_days")
+        chart_days = {"5 days": 5, "1 month": 31, "3 months": 92, "6 months": 183, "1 year": 365}[chart_days_label]
+        if st.button("Load / refresh FYERS chart", key="fyers_load_chart"):
+            chart_symbol = symbol_labels[selected_label]
+            with st.spinner(f"Fetching FYERS candles for {chart_symbol}..."):
+                candles, candle_error = fyers_history(fyers_credentials()[0], st.session_state["fyers_access_token"], chart_symbol, chart_resolution, chart_days)
+                live_rows, quote_error = fyers_live_quotes(fyers_credentials()[0], st.session_state["fyers_access_token"], [chart_symbol])
+            if candle_error:
+                st.warning(f"Chart data unavailable: {candle_error}")
+            else:
+                fig = go.Figure(data=[go.Candlestick(x=candles["Date"], open=candles["Open"], high=candles["High"], low=candles["Low"], close=candles["Close"], name=chart_symbol)])
+                current_ltp = (live_rows[0].get("v") or {}).get("lp") if live_rows else None
+                if current_ltp is not None:
+                    fig.add_hline(y=float(current_ltp), line_dash="dot", annotation_text=f"Latest FYERS quote: {float(current_ltp):,.2f}")
+                fig.update_layout(title=f"{chart_symbol} · FYERS candles", xaxis_title="Time (IST)", yaxis_title="Price", xaxis_rangeslider_visible=False, height=600, margin=dict(l=20, r=20, t=60, b=20))
+                st.plotly_chart(fig, use_container_width=True)
+                latest_candle_time = candles["Date"].max().strftime("%Y-%m-%d %H:%M:%S %Z")
+                st.caption(f"Source: FYERS Historical Data · latest returned candle: {latest_candle_time} · chart fetched: {datetime.now(ZoneInfo('Asia/Kolkata')).strftime('%Y-%m-%d %H:%M:%S IST')}")
+                if current_ltp is not None:
+                    st.metric("Latest FYERS quote", f"{float(current_ltp):,.2f}")
+                elif quote_error:
+                    st.info(f"Candles loaded, but latest quote unavailable: {quote_error}")
+                st.info("Click Load / refresh FYERS chart to fetch newer candles and quotes. Continuous live updates require a persistent FYERS WebSocket service; this chart refreshes on request.")
 
 if refresh:
     st.cache_data.clear()
