@@ -664,7 +664,30 @@ with sentiment_card:
     st.markdown(f'<div style="border:1px solid #343a46;border-left:5px solid {sentiment_color};border-radius:12px;padding:16px;min-height:125px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">PREDICTED NIFTY DIRECTION</div><div style="font-size:clamp(19px,2.8vw,27px);font-weight:750;color:{sentiment_color};">{sentiment_label}</div><div style="font-size:12px;color:#aeb6c2;margin-top:8px;">Weighted cue score: {f"{sentiment_score:+.2f}" if pd.notna(sentiment_score) else "—"} · Updated {now_ist:%d %b %Y %H:%M IST}</div></div>', unsafe_allow_html=True)
 with sentiment_factors:
     if sentiment_details:
-        st.dataframe(pd.DataFrame(sentiment_details), use_container_width=True, hide_index=True)
+        sentiment_df = pd.DataFrame(sentiment_details)
+
+        def _sentiment_cell_style(value):
+            text_value = str(value).strip().lower()
+            if text_value == "positive":
+                return "color: #22c55e; font-weight: 700; background-color: rgba(34,197,94,0.10)"
+            if text_value == "negative":
+                return "color: #ef4444; font-weight: 700; background-color: rgba(239,68,68,0.10)"
+            if text_value == "flat":
+                return "color: #f59e0b; font-weight: 700; background-color: rgba(245,158,11,0.10)"
+            return ""
+
+        def _sentiment_change_style(row):
+            signal = str(row.get("Signal", "")).lower()
+            if signal == "positive":
+                color = "#22c55e"
+            elif signal == "negative":
+                color = "#ef4444"
+            else:
+                color = "#f59e0b"
+            return [f"color: {color}; font-weight: 600" if col == "Latest change" else "" for col in row.index]
+
+        styled_sentiment = sentiment_df.style.applymap(_sentiment_cell_style, subset=["Signal"]).apply(_sentiment_change_style, axis=1)
+        st.dataframe(styled_sentiment, use_container_width=True, hide_index=True)
     else:
         st.warning("No usable global cue data returned. No direction is guessed.")
 if sentiment_errors:
