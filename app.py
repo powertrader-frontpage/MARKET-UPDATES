@@ -533,6 +533,26 @@ st.caption(f"Dashboard refreshed/viewed: {now_ist:%d %b %Y, %H:%M:%S IST} · Yah
 
 # Headline metrics from the latest returned historical bar (not described as real-time).
 headline_names = ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude", "USD/INR"]
+# Responsive headline cards: keep full numeric values readable on narrow mobile screens.
+st.markdown("""
+<style>
+[data-testid="stMetricValue"] {
+    font-size: clamp(1.05rem, 2.2vw, 1.65rem) !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    line-height: 1.2 !important;
+}
+[data-testid="stMetricLabel"] {
+    font-size: clamp(0.72rem, 1.5vw, 0.9rem) !important;
+    white-space: normal !important;
+}
+[data-testid="stMetricDelta"] {
+    font-size: clamp(0.68rem, 1.35vw, 0.82rem) !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+}
+</style>
+""", unsafe_allow_html=True)
 cols = st.columns(5)
 for col, name in zip(cols, headline_names):
     df = market_data[name]
