@@ -719,12 +719,52 @@ with tabs[1]:
         advanced_chart("NSE:BANKNIFTY", 440)
 
 with tabs[2]:
-    st.subheader("Technical analysis from returned daily OHLC data")
-    chosen = st.selectbox("Instrument for technicals", list(INDEXES.keys()), index=0, key="tech_symbol")
-    source_df = market_data[chosen]
-    if source_df.empty:
-        st.error(f"No technicals calculated: {market_errors[chosen] or 'no source rows'}")
+    st.subheader("Technical analysis from returned OHLC data")
+    technical_symbols = {}
+    for instrument_name, ticker in INDEXES.items():
+        technical_symbols[instrument_name] = ("yahoo", instrument_name, ticker)
+    fyers_symbols_for_technicals = []
+    if st.session_state.get("fyers_access_token") and fyers_credentials():
+        fyers_symbols_for_technicals, fyers_symbols_error = fyers_nse_equity_symbols()
+        for symbol, company_name in fyers_symbols_for_technicals:
+            label = f"{company_name or symbol} · {symbol}"
+            technical_symbols[label] = ("fyers", symbol, symbol)
+    technical_choice = st.selectbox(
+        "Instrument for technicals",
+        list(technical_symbols.keys()),
+        index=0,
+        key="tech_symbol",
+        help="Connect FYERS in the sidebar to unlock the full NSE cash-equity symbol list.",
+    )
+    source_kind, source_key, source_ticker = technical_symbols[technical_choice]
+    source_df = pd.DataFrame()
+    source_error = None
+    if source_kind == "yahoo":
+        source_df = market_data[source_key]
+        source_error = market_errors.get(source_key)
+    elif not st.session_state.get("fyers_access_token"):
+        st.info("Connect your FYERS account in the sidebar to load technicals for NSE stocks.")
     else:
+        @st.cache_data(ttl=300, show_spinner=False)
+        def _cached_fyers_technicals(app_id: str, access_token: str, symbol: str):
+            return fyers_history(app_id, access_token, symbol, "1D", 365)
+        fyers_config_for_technicals = fyers_credentials()
+        with st.spinner(f"Loading daily FYERS candles for {source_ticker}..."):
+            source_df, source_error = _cached_fyers_technicals(
+                fyers_config_for_technicals[0], st.session_state["fyers_access_token"], source_ticker
+            )
+    if source_error:
+        st.warning(f"Technical data unavailable: {source_error}")
+    elif source_df.empty:
+        st.info("No technical data returned for this selection.")
+    else:
+        source_df = source_df.copy()
+        if "Date" not in source_df.columns and "Datetime" in source_df.columns:
+            source_df = source_df.rename(columns={"Datetime": "Date"})
+        source_df["Date"] = pd.to_datetime(source_df["Date"], errors="coerce")
+        source_df = source_df.dropna(subset=["Date", "Close"]).sort_values("Date")
+        if len(source_df) < 30:
+            st.warning("Fewer than 30 source candles were returned; longer-period indicators may be unavailable.")
         calc = indicators(source_df)
         last = calc.iloc[-1]
         metric_cols = st.columns(5)
@@ -734,11 +774,13 @@ with tabs[2]:
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=calc["Date"], y=calc["Close"], name="Close", line={"width": 2}))
         for ma in ["SMA 20", "SMA 50", "EMA 20", "EMA 50"]:
-            if ma in calc and calc[ma].notna().any(): fig.add_trace(go.Scatter(x=calc["Date"], y=calc[ma], name=ma, line={"width": 1.3}))
+            if ma in calc and calc[ma].notna().any():
+                fig.add_trace(go.Scatter(x=calc["Date"], y=calc[ma], name=ma, line={"width": 1.3}))
         fig.update_layout(template="plotly_dark", height=470, margin={"l": 10, "r": 10, "t": 25, "b": 10}, xaxis_title="Source candle time", yaxis_title="Price")
         st.plotly_chart(fig, use_container_width=True)
         rsi_fig = go.Figure(go.Scatter(x=calc["Date"], y=calc["RSI 14"], name="RSI 14"))
-        rsi_fig.add_hline(y=70, line_dash="dash"); rsi_fig.add_hline(y=30, line_dash="dash")
+        rsi_fig.add_hline(y=70, line_dash="dash")
+        rsi_fig.add_hline(y=30, line_dash="dash")
         rsi_fig.update_layout(template="plotly_dark", height=260, yaxis={"range": [0,100]}, margin={"l":10,"r":10,"t":20,"b":10})
         st.plotly_chart(rsi_fig, use_container_width=True)
         pivot = None
@@ -749,9 +791,12 @@ with tabs[2]:
                 p = (h+l+c)/3
                 pivot = pd.DataFrame([("Previous candle high",h),("R2",p+h-l),("R1",2*p-l),("Pivot",p),("S1",2*p-h),("S2",p-h+l),("Previous candle low",l)],columns=["Level","Value"])
         st.markdown("#### Classic pivot levels (calculated from previous returned candle)")
-        if pivot is not None: st.dataframe(pivot.style.format({"Value":"{:,.2f}"}), use_container_width=True, hide_index=True)
-        else: st.info("Pivot levels unavailable: source data lacks sufficient OHLC rows.")
-        st.caption(f"Calculations use {len(calc):,} returned daily bars. Last source candle: {last['Date']:%d %b %Y, %H:%M IST}. Indicators are only as reliable as the source data and its coverage.")
+        if pivot is not None:
+            st.dataframe(pivot.style.format({"Value":"{:,.2f}"}), use_container_width=True, hide_index=True)
+        else:
+            st.info("Pivot levels unavailable: source data lacks sufficient OHLC rows.")
+        source_label = "FYERS historical data" if source_kind == "fyers" else "Yahoo Finance / yfinance"
+        st.caption(f"Source: {source_label} · {len(calc):,} returned candles. Last source candle: {last['Date']:%d %b %Y, %H:%M IST}. Indicators depend on source coverage and are not guaranteed live signals.")
 
 with tabs[3]:
     st.subheader("Sector rotation — best-effort public index history")
