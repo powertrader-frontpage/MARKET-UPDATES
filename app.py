@@ -356,11 +356,16 @@ def get_news_rss(query: str, limit: int = 12) -> tuple[pd.DataFrame, str | None]
             pub = (item.findtext("pubDate") or "").strip()
             source = item.find("source")
             publisher = (source.text or "").strip() if source is not None else ""
+            published_at = pd.to_datetime(pub, errors="coerce", utc=True)
             if title and link:
-                rows.append({"Published (RSS)":pub,"Headline":title,"Publisher":publisher,"Source link":link})
+                rows.append({"Published (RSS)":pub,"_published_sort":published_at,"Headline":title,"Publisher":publisher,"Source link":link})
         if not rows:
             return pd.DataFrame(), "RSS returned no headline rows."
-        return pd.DataFrame(rows), None
+        frame = pd.DataFrame(rows)
+        # RSS relevance feeds can return mixed dates; sort newest first, with unparseable dates last.
+        frame = frame.sort_values("_published_sort", ascending=False, na_position="last", kind="stable")
+        frame = frame.drop(columns=["_published_sort"])
+        return frame.reset_index(drop=True), None
     except Exception as exc:
         return pd.DataFrame(), f"News RSS unavailable: {type(exc).__name__}: {str(exc)[:150]}"
 
