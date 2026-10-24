@@ -576,7 +576,10 @@ def _sentiment_change(label, ticker, weight, inverse=False):
         else:
             score = 1 if pct > 0 else -1 if pct < 0 else 0
         sentiment_parts.append((score, weight))
-        sentiment_details.append({"Factor": label, "Latest change": f"{pct:+.2f}%", "Signal": "Positive" if score > 0 else "Negative" if score < 0 else "Flat", "Source bar": last["Date"].strftime("%d %b %Y")})
+        # Signal is India-market impact, not simply whether the instrument rose or fell.
+        # Rising Brent is negative for India; falling Brent is positive. ADRs follow their price move.
+        sentiment_signal = ("Positive" if score > 0 else "Negative" if score < 0 else "Flat")
+        sentiment_details.append({"Factor": label, "Latest change": f"{pct:+.2f}%", "Signal": sentiment_signal, "Source bar": last["Date"].strftime("%d %b %Y")})
     except Exception:
         sentiment_errors.append(f"{label}: unavailable")
 
