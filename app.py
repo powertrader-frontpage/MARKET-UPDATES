@@ -388,43 +388,69 @@ with extra_tabs[0]:
             st.dataframe(rc[["Date","Close","EMA 20","EMA 50","RSI 14","ADX 14","ATR 14","Realized volatility 20d %"]].tail(30), use_container_width=True, hide_index=True)
 
 with extra_tabs[1]:
-    st.subheader("14 · Options analytics from an uploaded option-chain CSV")
-    st.write("Upload a CSV from a source you are permitted to use. Column names differ by provider, so map them below. Nothing is fetched or inferred if the file is absent.")
-    opt_file = st.file_uploader("Option-chain CSV", type=["csv"], key="opt_csv")
-    if opt_file is not None:
+    st.subheader("14 · Automatic NSE options analytics")
+    st.write("Fetches the public NSE index option chain where the exchange endpoint permits automated access. Values are exchange-sourced snapshots and may be delayed or unavailable.")
+    opt_underlying = st.selectbox("Underlying", ["NIFTY", "BANKNIFTY", "FINNIFTY"], key="auto_opt_underlying")
+    @st.cache_data(ttl=180, show_spinner=False)
+    def get_nse_option_chain(underlying: str) -> tuple[pd.DataFrame, str | None, str | None]:
         try:
-            odf = pd.read_csv(opt_file)
-            st.caption("Detected columns: " + ", ".join(map(str, odf.columns)))
-            strike_col = st.selectbox("Strike column", list(odf.columns), key="opt_strike")
-            ce_oi_col = st.selectbox("Call OI column (or choose blank if absent)", ["(not available)"] + list(odf.columns), key="opt_ceoi")
-            pe_oi_col = st.selectbox("Put OI column (or choose blank if absent)", ["(not available)"] + list(odf.columns), key="opt_peoi")
-            ce_ltp_col = st.selectbox("Call LTP column (optional)", ["(not available)"] + list(odf.columns), key="opt_celtp")
-            pe_ltp_col = st.selectbox("Put LTP column (optional)", ["(not available)"] + list(odf.columns), key="opt_peltp")
-            work = pd.DataFrame({"Strike": pd.to_numeric(odf[strike_col], errors="coerce")})
-            for label, col in [("Call OI",ce_oi_col),("Put OI",pe_oi_col),("Call LTP",ce_ltp_col),("Put LTP",pe_ltp_col)]:
-                work[label] = pd.to_numeric(odf[col], errors="coerce") if col != "(not available)" else np.nan
-            work = work.dropna(subset=["Strike"])
-            if work.empty: st.warning("No valid strike values found.")
-            else:
-                if work["Call OI"].notna().any() and work["Put OI"].notna().any():
-                    call_total=work["Call OI"].sum(min_count=1); put_total=work["Put OI"].sum(min_count=1)
-                    st.metric("PCR (uploaded OI totals)", fmt(put_total/call_total) if pd.notna(call_total) and call_total else "Unavailable")
-                    st.caption("PCR is calculated from the uploaded file only. Confirm whether OI is current or change-in-OI and note its timestamp.")
-                    st.dataframe(work.sort_values("Strike"), use_container_width=True, hide_index=True)
-                else: st.info("PCR unavailable: map both Call OI and Put OI columns.")
-                if work["Call LTP"].notna().any() and work["Put LTP"].notna().any():
-                    # Expiry max-pain proxy: payout sum at each candidate settlement strike.
-                    candidates=work["Strike"].dropna().unique()
-                    payouts=[]
-                    for settlement in candidates:
-                        call_pay=((settlement-work["Strike"]).clip(lower=0)*work["Call OI"].fillna(0)).sum()
-                        put_pay=((work["Strike"]-settlement).clip(lower=0)*work["Put OI"].fillna(0)).sum()
-                        payouts.append((settlement, call_pay+put_pay))
-                    if payouts: st.metric("Max-pain estimate (uploaded strikes/OI)", fmt(min(payouts, key=lambda x:x[1])[0]))
-                    st.caption("Max pain is a simple calculation from supplied strikes/OI, not a forecast. Missing OI can invalidate it.")
-        except Exception as exc: st.error(f"Could not read uploaded file: {type(exc).__name__}: {exc}")
-    else:
-        st.info("Options analytics are inactive until a real option-chain CSV is uploaded. Live PCR, Greeks and IV are not available in this no-API edition.")
+            session = requests.Session()
+            headers = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36","Accept":"application/json,text/plain,*/*","Referer":"https://www.nseindia.com/option-chain"}
+            session.headers.update(headers)
+            session.get("https://www.nseindia.com", timeout=8)
+            url = "https://www.nseindia.com/api/option-chain-indices"
+            response = session.get(url, params={"symbol":underlying}, timeout=12)
+            response.raise_for_status()
+            payload = response.json()
+            records = payload.get("records", {})
+            expiries = records.get("expiryDates", [])
+            raw = records.get("data", [])
+            rows = []
+            for item in raw:
+                expiry = item.get("expiryDate")
+                strike = item.get("strikePrice")
+                for typ in ("CE","PE"):
+                    opt = item.get(typ)
+                    if not opt: continue
+                    rows.append({"Expiry":expiry,"Strike":strike,"OptionType":typ,"OI":opt.get("openInterest"),"LTP":opt.get("lastPrice"),"Volume":opt.get("totalTradedVolume"),"IV":opt.get("impliedVolatility"),"Spot":opt.get("underlyingValue"),"Underlying":underlying,"Source timestamp":opt.get("lastUpdateTime")})
+            frame = pd.DataFrame(rows)
+            if frame.empty: return pd.DataFrame(), None, "NSE returned an empty option chain."
+            for col in ["Strike","OI","LTP","Volume","IV","Spot"]: frame[col]=pd.to_numeric(frame[col],errors="coerce")
+            return frame, (expiries[0] if expiries else None), None
+        except Exception as exc:
+            return pd.DataFrame(), None, f"NSE option-chain fetch failed: {type(exc).__name__}: {str(exc)[:180]}"
+    with st.spinner("Fetching public NSE option-chain snapshot…"):
+        opt, default_expiry, opt_error = get_nse_option_chain(opt_underlying)
+    if opt_error:
+        st.warning(opt_error)
+        st.markdown("[Open official NSE option chain](https://www.nseindia.com/option-chain)")
+    elif not opt.empty:
+        expiries = sorted(opt["Expiry"].dropna().astype(str).unique(), key=lambda x: pd.to_datetime(x, errors="coerce"))
+        default_idx = expiries.index(default_expiry) if default_expiry in expiries else 0
+        expiry_choice = st.selectbox("Expiry", expiries, index=default_idx, key="auto_opt_expiry")
+        chain = opt[opt["Expiry"].astype(str)==expiry_choice].copy()
+        ce_oi = chain.loc[chain["OptionType"]=="CE","OI"].sum(min_count=1)
+        pe_oi = chain.loc[chain["OptionType"]=="PE","OI"].sum(min_count=1)
+        pcr = pe_oi/ce_oi if pd.notna(ce_oi) and ce_oi else np.nan
+        strikes = sorted(chain["Strike"].dropna().unique())
+        pain_rows=[]
+        for settle in strikes:
+            calls=chain[chain["OptionType"]=="CE"]
+            puts=chain[chain["OptionType"]=="PE"]
+            call_payout=((settle-calls["Strike"]).clip(lower=0)*calls["OI"].fillna(0)).sum()
+            put_payout=((puts["Strike"]-settle).clip(lower=0)*puts["OI"].fillna(0)).sum()
+            pain_rows.append({"Settlement candidate":settle,"Estimated aggregate intrinsic payout":call_payout+put_payout})
+        pain_df=pd.DataFrame(pain_rows)
+        max_pain=pain_df.loc[pain_df["Estimated aggregate intrinsic payout"].idxmin(),"Settlement candidate"] if not pain_df.empty else np.nan
+        a,b,c,d=st.columns(4)
+        a.metric("Spot (source)",fmt(chain["Spot"].dropna().iloc[0]) if chain["Spot"].notna().any() else "Unavailable")
+        b.metric("Call OI",fmt(ce_oi,0)); c.metric("Put/Call OI PCR",fmt(pcr,3)); d.metric("Estimated max pain",fmt(max_pain,0))
+        st.caption(f"Underlying: {opt_underlying} · Expiry: {expiry_choice} · Snapshot timestamp supplied by NSE: {chain['Source timestamp'].dropna().iloc[0] if chain['Source timestamp'].notna().any() else 'not supplied'}")
+        st.dataframe(chain.sort_values(["Strike","OptionType"]),use_container_width=True,hide_index=True)
+        fig=px.bar(chain,x="Strike",y="OI",color="OptionType",barmode="group",template="plotly_dark",title="NSE open interest by strike")
+        st.plotly_chart(fig,use_container_width=True)
+        st.download_button("Download NSE option-chain snapshot",chain.to_csv(index=False).encode("utf-8"),"nse_option_chain.csv","text/csv")
+        st.caption("PCR and max pain are calculated from the returned snapshot only. Max pain is an OI-based estimate, not a forecast. If NSE blocks automated access, no substitute values are displayed.")
     st.markdown("[Official NSE option chain](https://www.nseindia.com/option-chain) · [NSE derivatives reports](https://www.nseindia.com/all-reports-derivatives)")
 
 with extra_tabs[2]:
@@ -473,24 +499,33 @@ with extra_tabs[3]:
     else: st.info("Insufficient history or invalid periods. Choose fast SMA below slow SMA and provide enough returned daily bars.")
 
 with extra_tabs[4]:
-    st.subheader("17 · Market breadth")
-    st.write("Upload a genuine constituent-price CSV to calculate breadth. Expected format: Date, Symbol, Close; optional Open, High, Low, Volume. Use daily rows per symbol.")
-    breadth_file=st.file_uploader("Constituent history CSV",type=["csv"],key="breadth_csv")
-    if breadth_file is not None:
-        try:
-            wide=pd.read_csv(breadth_file); wide.columns=[str(c).strip() for c in wide.columns]
-            needed={"Date","Symbol","Close"}
-            if not needed.issubset(wide.columns): st.error("Required columns missing: Date, Symbol, Close.")
-            else:
-                wide["Date"]=pd.to_datetime(wide["Date"],errors="coerce"); wide["Close"]=pd.to_numeric(wide["Close"],errors="coerce"); wide=wide.dropna(subset=["Date","Symbol","Close"]).sort_values("Date")
-                wide["SMA20"]=wide.groupby("Symbol")["Close"].transform(lambda x:x.rolling(20).mean()); wide["SMA50"]=wide.groupby("Symbol")["Close"].transform(lambda x:x.rolling(50).mean()); wide["SMA200"]=wide.groupby("Symbol")["Close"].transform(lambda x:x.rolling(200).mean())
-                latest_date=wide["Date"].max(); last=wide[wide["Date"]==latest_date]
-                x,y,z=st.columns(3)
-                for col,ma,label in [(x,"SMA20","Above 20-day SMA"),(y,"SMA50","Above 50-day SMA"),(z,"SMA200","Above 200-day SMA")]:
-                    valid=last.dropna(subset=[ma]); col.metric(label, f"{(valid['Close']>valid[ma]).mean()*100:.1f}%" if not valid.empty else "Unavailable", f"{len(valid)} symbols")
-                st.caption(f"Data latest date: {latest_date:%Y-%m-%d}; daily history is not automatically live.")
-        except Exception as exc: st.error(f"Could not calculate breadth: {exc}")
-    else: st.info("Breadth metrics are not shown until a constituent dataset is uploaded. No constituent values are guessed.")
+    st.subheader("17 · Automatic market breadth")
+    st.write("Uses the dashboard's automatically retrieved large-cap stock history. This is a sample universe, not the full NSE market.")
+    wide=get_auto_universe(period="2y")
+    if wide.empty:
+        st.warning("Automatic breadth unavailable: Yahoo Finance returned no usable stock history. No breadth values are fabricated.")
+    else:
+        wide["Date"]=pd.to_datetime(wide["Date"],errors="coerce")
+        wide["Close"]=pd.to_numeric(wide["Close"],errors="coerce")
+        wide=wide.dropna(subset=["Date","Symbol","Close"]).sort_values(["Symbol","Date"])
+        for n in [20,50,200]:
+            wide[f"SMA{n}"]=wide.groupby("Symbol")["Close"].transform(lambda x:x.rolling(n,min_periods=n).mean())
+        latest_date=wide["Date"].max()
+        last=wide[wide["Date"]==latest_date].copy()
+        x,y,z=st.columns(3)
+        for col,ma,label in [(x,"SMA20","Above 20-day SMA"),(y,"SMA50","Above 50-day SMA"),(z,"SMA200","Above 200-day SMA")]:
+            valid=last.dropna(subset=[ma])
+            col.metric(label,f"{(valid['Close']>valid[ma]).mean()*100:.1f}%" if not valid.empty else "Unavailable",f"{len(valid)} symbols")
+        last["Above SMA20"]=last["Close"]>last["SMA20"]
+        last["Above SMA50"]=last["Close"]>last["SMA50"]
+        last["Above SMA200"]=last["Close"]>last["SMA200"]
+        st.caption(f"Latest source date: {latest_date:%Y-%m-%d} · {last['Symbol'].nunique()} symbols returned · Yahoo Finance daily history, cached for up to 6 hours.")
+        st.dataframe(last[["Date","Symbol","Industry","Close","SMA20","SMA50","SMA200","Above SMA20","Above SMA50","Above SMA200"]].sort_values("Symbol"),use_container_width=True,hide_index=True)
+        ind=last.dropna(subset=["Above SMA200"]).groupby("Industry").agg(Symbols=("Symbol","nunique"),Above200Pct=("Above SMA200",lambda x:100*x.mean())).reset_index().sort_values("Above200Pct",ascending=False)
+        if not ind.empty:
+            st.markdown("#### Breadth by mapped industry")
+            st.dataframe(ind.style.format({"Above200Pct":"{:.1f}%"}),use_container_width=True,hide_index=True)
+        st.download_button("Download automatic breadth data",last.to_csv(index=False).encode("utf-8"),"automatic_market_breadth.csv","text/csv")
 
 with extra_tabs[5]:
     st.subheader("18 · Economic events and gap-risk monitor")
@@ -991,96 +1026,62 @@ with advanced_tabs[2]:
             st.error(f"Could not read futures snapshot: {type(exc).__name__}: {exc}")
 
 with advanced_tabs[3]:
-    st.subheader("29 · Stock deep-dive")
-    st.write("Choose a symbol from a real uploaded OHLCV file to view a historical candlestick chart, moving averages, RSI, ATR and session-level data.")
-    deep_file = st.file_uploader("Stock OHLCV history CSV", type=["csv"], key="stock_deep_dive")
-    st.caption("Required: Date, Symbol, Open, High, Low, Close. Optional: Volume.")
-    if deep_file is not None:
-        try:
-            deep = pd.read_csv(deep_file)
-            deep.columns = [str(c).strip() for c in deep.columns]
-            req = {"Date","Symbol","Open","High","Low","Close"}
-            if not req.issubset(deep.columns):
-                st.error("Required columns: Date, Symbol, Open, High, Low, Close.")
-            else:
-                deep["Date"] = pd.to_datetime(deep["Date"], errors="coerce")
-                for c in ["Open","High","Low","Close","Volume"]:
-                    if c in deep: deep[c] = pd.to_numeric(deep[c], errors="coerce")
-                deep = deep.dropna(subset=["Date","Symbol","Open","High","Low","Close"]).sort_values(["Symbol","Date"])
-                symbol = st.selectbox("Stock", sorted(deep["Symbol"].astype(str).unique()), key="deep_symbol")
-                sdf = deep[deep["Symbol"].astype(str)==symbol].copy()
-                calc = indicators(sdf)
-                fig = go.Figure(go.Candlestick(x=calc["Date"],open=calc["Open"],high=calc["High"],low=calc["Low"],close=calc["Close"],name=symbol))
-                for col in ["SMA 20","SMA 50","SMA 200","EMA 20","EMA 50"]:
-                    if col in calc and calc[col].notna().any(): fig.add_trace(go.Scatter(x=calc["Date"],y=calc[col],name=col,mode="lines"))
-                fig.update_layout(template="plotly_dark",height=560,xaxis_rangeslider_visible=False,title=f"{symbol} · historical candles")
-                st.plotly_chart(fig,use_container_width=True)
-                last = calc.iloc[-1]
-                a,b,c,d = st.columns(4)
-                a.metric("Latest close",fmt(last["Close"]))
-                b.metric("RSI 14",fmt(last.get("RSI 14")))
-                c.metric("ATR 14",fmt(last.get("ATR 14")))
-                d.metric("Latest source date",last["Date"].strftime("%Y-%m-%d"))
-                st.dataframe(calc.tail(30),use_container_width=True,hide_index=True)
-        except Exception as exc:
-            st.error(f"Could not render stock deep-dive: {type(exc).__name__}: {exc}")
+    st.subheader("29 · Automatic stock deep-dive")
+    deep_univ=get_auto_universe(period="2y")
+    if deep_univ.empty:
+        st.warning("Stock deep-dive unavailable because public OHLCV history could not be retrieved.")
     else:
-        st.info("Upload real OHLCV history to activate this deep-dive. The main dashboard's public tickers are not silently treated as a full stock universe.")
+        symbols=sorted(deep_univ["Symbol"].dropna().unique())
+        symbol=st.selectbox("Stock from automatic research universe",symbols,key="deep_auto_symbol")
+        sdf=deep_univ[deep_univ["Symbol"]==symbol].copy().sort_values("Date")
+        calc=indicators(sdf)
+        fig=go.Figure(go.Candlestick(x=calc["Date"],open=calc["Open"],high=calc["High"],low=calc["Low"],close=calc["Close"],name=symbol))
+        for col in ["SMA 20","SMA 50","SMA 200","EMA 20","EMA 50"]:
+            if col in calc and calc[col].notna().any(): fig.add_trace(go.Scatter(x=calc["Date"],y=calc[col],name=col,mode="lines"))
+        fig.update_layout(template="plotly_dark",height=560,xaxis_rangeslider_visible=False,title=f"{symbol} · daily historical candles")
+        st.plotly_chart(fig,use_container_width=True)
+        last=calc.iloc[-1]
+        a,b,c,d=st.columns(4)
+        a.metric("Latest close",fmt(last["Close"])); b.metric("RSI 14",fmt(last.get("RSI 14"))); c.metric("ATR 14",fmt(last.get("ATR 14"))); d.metric("Latest source date",last["Date"].strftime("%Y-%m-%d"))
+        st.caption(f"Source: Yahoo Finance via yfinance · {len(calc)} returned bars · Latest candle is not guaranteed live.")
+        st.dataframe(calc.tail(30),use_container_width=True,hide_index=True)
+        st.download_button("Download stock history and indicators",calc.to_csv(index=False).encode("utf-8"),f"{symbol.lower()}_deep_dive.csv","text/csv")
 
 with advanced_tabs[4]:
-    st.subheader("30 · Strategy backtest")
-    st.write("A transparent long-only SMA crossover research backtest using uploaded daily close data. This is not a recommendation and does not model slippage, taxes, corporate actions or intraday execution.")
-    bt_file = st.file_uploader("Backtest close-price CSV", type=["csv"], key="strategy_backtest")
-    if bt_file is not None:
-        try:
-            bt = pd.read_csv(bt_file)
-            bt.columns = [str(c).strip() for c in bt.columns]
-            if not {"Date","Close"}.issubset(bt.columns):
-                st.error("Required columns: Date, Close. One instrument per upload.")
-            else:
-                bt["Date"] = pd.to_datetime(bt["Date"],errors="coerce")
-                bt["Close"] = pd.to_numeric(bt["Close"],errors="coerce")
-                bt = bt.dropna(subset=["Date","Close"]).sort_values("Date").drop_duplicates("Date")
-                fast = st.slider("Fast SMA",2,100,20,key="bt_fast")
-                slow = st.slider("Slow SMA",5,250,50,key="bt_slow")
-                cost_bps = st.number_input("Estimated transaction cost per position change (basis points)",min_value=0.0,max_value=200.0,value=5.0,step=1.0,key="bt_cost")
-                if fast >= slow:
-                    st.warning("Fast SMA must be shorter than slow SMA.")
-                elif len(bt) <= slow:
-                    st.warning(f"Need more than {slow} daily observations for this configuration; current rows: {len(bt)}.")
-                else:
-                    bt["SMA_fast"] = bt["Close"].rolling(fast,min_periods=fast).mean()
-                    bt["SMA_slow"] = bt["Close"].rolling(slow,min_periods=slow).mean()
-                    bt["Signal"] = (bt["SMA_fast"] > bt["SMA_slow"]).astype(int)
-                    bt["Position"] = bt["Signal"].shift(1).fillna(0)
-                    bt["Market return"] = bt["Close"].pct_change().fillna(0)
-                    bt["Turnover"] = bt["Position"].diff().abs().fillna(bt["Position"].abs())
-                    bt["Strategy return"] = bt["Position"]*bt["Market return"] - bt["Turnover"]*(cost_bps/10000)
-                    bt["Equity curve"] = (1+bt["Strategy return"]).cumprod()
-                    bt["Buy & hold"] = (1+bt["Market return"]).cumprod()
-                    bt["Drawdown"] = bt["Equity curve"]/bt["Equity curve"].cummax()-1
-                    total = (bt["Equity curve"].iloc[-1]-1)*100
-                    bh = (bt["Buy & hold"].iloc[-1]-1)*100
-                    dd = bt["Drawdown"].min()*100
-                    daily = bt["Strategy return"]
-                    vol = daily.std()
-                    sharpe = (daily.mean()/vol*np.sqrt(252)) if pd.notna(vol) and vol>0 else np.nan
-                    a,b,c,d = st.columns(4)
-                    a.metric("Strategy return",f"{total:.2f}%")
-                    b.metric("Buy & hold",f"{bh:.2f}%")
-                    c.metric("Max drawdown",f"{dd:.2f}%")
-                    d.metric("Annualised Sharpe (rough)",fmt(sharpe,2))
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=bt["Date"],y=bt["Equity curve"],name="SMA strategy"))
-                    fig.add_trace(go.Scatter(x=bt["Date"],y=bt["Buy & hold"],name="Buy & hold"))
-                    fig.update_layout(template="plotly_dark",height=420,title="Growth of ₹1 (before taxes; transaction cost assumption applied)")
-                    st.plotly_chart(fig,use_container_width=True)
-                    st.dataframe(bt.tail(30),use_container_width=True,hide_index=True)
-                    st.download_button("Download backtest results",bt.to_csv(index=False).encode("utf-8"),"sma_backtest_results.csv","text/csv")
-        except Exception as exc:
-            st.error(f"Could not run backtest: {type(exc).__name__}: {exc}")
+    st.subheader("30 · Automatic strategy backtest")
+    st.write("Long-only SMA crossover test using the dashboard's retrieved daily OHLCV history. Includes an assumed transaction cost; does not model slippage, taxes, corporate actions or intraday execution.")
+    bt_univ=get_auto_universe(period="5y")
+    if bt_univ.empty:
+        st.warning("Backtest unavailable because public historical data could not be retrieved.")
     else:
-        st.info("Upload a real historical close series to run a reproducible backtest.")
+        bt_symbol=st.selectbox("Stock",sorted(bt_univ["Symbol"].dropna().unique()),key="bt_auto_symbol")
+        bt=bt_univ[bt_univ["Symbol"]==bt_symbol].copy().sort_values("Date").dropna(subset=["Close"])
+        fast=st.slider("Fast SMA",2,100,20,key="bt_auto_fast")
+        slow=st.slider("Slow SMA",5,250,50,key="bt_auto_slow")
+        cost_bps=st.number_input("Transaction cost per position change (basis points)",min_value=0.0,max_value=200.0,value=5.0,step=1.0,key="bt_auto_cost")
+        if fast>=slow: st.warning("Fast SMA must be shorter than slow SMA.")
+        elif len(bt)<=slow: st.warning(f"Need more than {slow} returned daily observations; current rows: {len(bt)}.")
+        else:
+            bt["SMA_fast"]=bt["Close"].rolling(fast,min_periods=fast).mean()
+            bt["SMA_slow"]=bt["Close"].rolling(slow,min_periods=slow).mean()
+            bt["Signal"]=(bt["SMA_fast"]>bt["SMA_slow"]).astype(int)
+            bt["Position"]=bt["Signal"].shift(1).fillna(0)
+            bt["Market return"]=bt["Close"].pct_change().fillna(0)
+            bt["Turnover"]=bt["Position"].diff().abs().fillna(bt["Position"].abs())
+            bt["Strategy return"]=bt["Position"]*bt["Market return"]-bt["Turnover"]*(cost_bps/10000)
+            bt["Equity curve"]=(1+bt["Strategy return"]).cumprod()
+            bt["Buy & hold"]=(1+bt["Market return"]).cumprod()
+            bt["Drawdown"]=bt["Equity curve"]/bt["Equity curve"].cummax()-1
+            total=(bt["Equity curve"].iloc[-1]-1)*100; bh=(bt["Buy & hold"].iloc[-1]-1)*100; dd=bt["Drawdown"].min()*100
+            vol=bt["Strategy return"].std(); sharpe=(bt["Strategy return"].mean()/vol*np.sqrt(252)) if pd.notna(vol) and vol>0 else np.nan
+            a,b,c,d=st.columns(4)
+            a.metric("Strategy return",f"{total:.2f}%"); b.metric("Buy & hold",f"{bh:.2f}%"); c.metric("Max drawdown",f"{dd:.2f}%"); d.metric("Annualised Sharpe (rough)",fmt(sharpe))
+            fig=go.Figure(); fig.add_trace(go.Scatter(x=bt["Date"],y=bt["Equity curve"],name="SMA strategy")); fig.add_trace(go.Scatter(x=bt["Date"],y=bt["Buy & hold"],name="Buy & hold"))
+            fig.update_layout(template="plotly_dark",height=420,title="Growth of ₹1 (approximate costs applied)")
+            st.plotly_chart(fig,use_container_width=True)
+            st.caption(f"Source: Yahoo Finance · {len(bt)} daily bars · last candle {bt['Date'].max():%Y-%m-%d}. Illustrative research only, not a recommendation.")
+            st.dataframe(bt.tail(30),use_container_width=True,hide_index=True)
+            st.download_button("Download automatic backtest results",bt.to_csv(index=False).encode("utf-8"),f"{bt_symbol.lower()}_sma_backtest.csv","text/csv")
 
 with advanced_tabs[5]:
     st.subheader("31 · Data quality and source audit")
