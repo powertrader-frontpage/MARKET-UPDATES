@@ -1022,7 +1022,35 @@ with extra_tabs[1]:
         "Stock · ARE&M": "NSE:ARE&M-EQ",
         "Stock · PATANJALI": "NSE:PATANJALI-EQ",
     }
-    option_underlying = st.selectbox("Underlying (index or F&O stock)", list(option_underlying_labels.keys()), key="auto_opt_underlying")
+    # Searchable selector with simple index/stock filters; the full mapping remains available.
+    selector_col1, selector_col2 = st.columns([2, 1])
+    option_search = selector_col1.text_input(
+        "Search F&O stock or index",
+        placeholder="Type a symbol, e.g. RELIANCE, HDFCBANK, NIFTY",
+        key="option_chain_symbol_search",
+    ).strip().upper()
+    option_category = selector_col2.selectbox(
+        "Instrument type",
+        ["All", "Stocks only", "Indices only"],
+        key="option_chain_instrument_filter",
+    )
+    filtered_underlyings = [
+        label for label in option_underlying_labels
+        if (not option_search or option_search in label.upper())
+        and (
+            option_category == "All"
+            or (option_category == "Stocks only" and label.startswith("Stock · "))
+            or (option_category == "Indices only" and label.startswith("Index · "))
+        )
+    ]
+    if not filtered_underlyings:
+        st.warning("No matching instrument. Try another symbol or select All.")
+        st.stop()
+    option_underlying = st.selectbox(
+        f"Underlying ({len(filtered_underlyings)} matches)",
+        filtered_underlyings,
+        key="auto_opt_underlying_searchable",
+    )
     if not st.session_state.get("fyers_access_token") or not fyers_credentials():
         st.warning("Connect FYERS in the sidebar to load the live option chain, PCR, open interest, max pain and Greeks. No values are estimated when disconnected.")
     else:
