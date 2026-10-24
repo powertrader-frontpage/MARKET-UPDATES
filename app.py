@@ -583,9 +583,9 @@ def _sentiment_change(label, ticker, weight, inverse=False):
 # Try multiple public GIFT Nifty quote pages because individual sites may block cloud-hosted requests.
 # These public quotes can be delayed/indicative; never silently substitute a different instrument.
 gift_sources = [
+    ("Investing.com GIFT Nifty futures", "https://www.investing.com/indices/gift-nifty-50-c1-futures"),
+    ("Investing.com India GIFT Nifty futures", "https://in.investing.com/indices/gift-nifty-50-c1-futures"),
     ("Moneycontrol indicative quote", "https://www.moneycontrol.com/live-index/gift-nifty"),
-    ("NiftyTrader public snapshot", "https://www.niftytrader.in/gift-nifty-live"),
-    ("Angel One public snapshot", "https://www.angelone.in/indices/gift-nifty"),
 ]
 gift_loaded = False
 gift_failures = []
@@ -593,25 +593,28 @@ for gift_source_name, gift_url in gift_sources:
     try:
         gift_response = requests.get(
             gift_url,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36"},
-            timeout=8,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+            timeout=10,
         )
         gift_response.raise_for_status()
         gift_html = gift_response.text
         gift_text = html.unescape(re.sub(r"<[^>]+>", " ", gift_html))
         gift_text = re.sub(r"\\s+", " ", gift_text)
-        # Find a quote-like change/percent pair near the page's GIFT Nifty content.
-        gift_upper = gift_text.upper()
-        gift_anchor = gift_upper.find("GIFT NIFTY")
-        gift_search_text = gift_text[gift_anchor:gift_anchor + 12000] if gift_anchor >= 0 else gift_text[:12000]
+        # Investing.com displays the daily change as e.g. -106.50(-0.47%).
+        # Parse the change/percent pair only from the GIFT Nifty futures page.
         gift_match = re.search(
-            r"([+-]?\\d[\\d,]*\\.?\\d*)\\s*\\(?\\s*([+-]?\\d+\\.\\d{1,2})\\s*%\\s*\\)?",
-            gift_search_text,
+            r"([+-]?\\d[\\d,]*\\.\\d{1,2})\\s*\\(\\s*([+-]?\\d+\\.\\d{1,2})\\s*%\\s*\\)",
+            gift_text,
         )
-        # Moneycontrol formats the change as "-72.50 (-0.32%)"; other sources may omit parentheses.
         if not gift_match:
+            # Moneycontrol's page may show the percent pair separately from point change.
+            gift_anchor = gift_text.upper().find("DERIVED:CFD")
+            gift_search_text = gift_text[gift_anchor:gift_anchor + 5000] if gift_anchor >= 0 else ""
             gift_match = re.search(
-                r"([+-]\\d[\\d,]*\\.?\\d*)\\s*\\(\\s*([+-]?\\d+\\.\\d{1,2})\\s*%\\s*\\)",
+                r"([+-]?\\d[\\d,]*\\.\\d{1,2})\\s*\\(\\s*([+-]?\\d+\\.\\d{1,2})\\s*%\\s*\\)",
                 gift_search_text,
             )
         if not gift_match:
@@ -625,7 +628,7 @@ for gift_source_name, gift_url in gift_sources:
             "Factor": f"GIFT Nifty · {gift_source_name}",
             "Latest change": f"{gift_change_pct:+.2f}% ({gift_change_points:+,.2f} pts)",
             "Signal": "Positive" if gift_score > 0 else "Negative" if gift_score < 0 else "Flat",
-            "Source bar": "Public web quote · timestamp may be delayed",
+            "Source bar": "Public web quote · check market status for freshness",
         })
         gift_loaded = True
         break
