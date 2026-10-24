@@ -641,9 +641,14 @@ _sentiment_change("Infosys ADR", "INFY", 0.15, inverse=False)
 _sentiment_change("Wipro ADR", "WIT", 0.10, inverse=False)
 _sentiment_change("HDFC Bank ADR", "HDB", 0.075, inverse=False)
 _sentiment_change("ICICI Bank ADR", "IBN", 0.075, inverse=False)
+# Do not publish a confident full-market direction when the highest-weight GIFT Nifty cue is missing.
+# Partial score remains visible for transparency, but the headline is explicitly marked incomplete.
+gift_available = any(str(item.get("Factor", "")).startswith("GIFT Nifty") for item in sentiment_details)
 sentiment_weight = sum(weight for _, weight in sentiment_parts)
 sentiment_score = sum(score * weight for score, weight in sentiment_parts) / sentiment_weight if sentiment_weight else np.nan
-if pd.notna(sentiment_score) and sentiment_score >= 0.25:
+if not gift_available:
+    sentiment_color, sentiment_label = "#f59e0b", "INCOMPLETE · GIFT Nifty unavailable"
+elif pd.notna(sentiment_score) and sentiment_score >= 0.25:
     sentiment_color, sentiment_label = "#22c55e", "POSITIVE · Bullish bias"
 elif pd.notna(sentiment_score) and sentiment_score <= -0.25:
     sentiment_color, sentiment_label = "#ef4444", "NEGATIVE · Bearish bias"
