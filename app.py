@@ -275,24 +275,26 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
         selected_label = st.selectbox("Search/select NSE stock", list(symbol_labels.keys()), index=0, key="fyers_chart_symbol")
         col_res, col_period = st.columns(2)
         with col_res:
-            chart_resolution = st.selectbox("Candle interval", ["1", "5", "15", "30", "60", "1D"], index=1, key="fyers_chart_resolution")
+            chart_resolution = st.selectbox("Candle interval", ["1", "5", "15", "30", "60", "120", "240", "1D", "1W"], index=2, key="fyers_chart_resolution", format_func=lambda value: {"1":"1 minute","5":"5 minutes","15":"15 minutes","30":"30 minutes","60":"1 hour","120":"2 hours","240":"4 hours","1D":"1 day","1W":"1 week"}[value])
         with col_period:
-            chart_days_label = st.selectbox("History window", ["5 days", "1 month", "3 months", "6 months", "1 year"], index=2, key="fyers_chart_days")
-        chart_days = {"5 days": 5, "1 month": 31, "3 months": 92, "6 months": 183, "1 year": 365}[chart_days_label]
+            chart_days_label = st.selectbox("History window", ["5 days", "1 month", "3 months", "6 months", "1 year", "2 years", "5 years"], index=2, key="fyers_chart_days")
+        chart_days = {"5 days": 5, "1 month": 31, "3 months": 92, "6 months": 183, "1 year": 365, "2 years": 730, "5 years": 1825}[chart_days_label]
         if chart_resolution in {"1", "5"} and chart_days > 5:
             st.warning("For 1-minute and 5-minute candles, the chart automatically limits history to the most recent 5 calendar days to avoid oversized or unsupported requests.")
             chart_days = 5
         st.markdown("**Chart tools**")
-        ind1, ind2, ind3, ind4 = st.columns(4)
+        ind1, ind2, ind3, ind4, ind5 = st.columns(5)
         with ind1:
-            show_ema9 = st.checkbox("EMA 9", value=True, key="fyers_ema9")
-        with ind2:
             show_ema21 = st.checkbox("EMA 21", value=True, key="fyers_ema21")
+        with ind2:
+            show_ema50 = st.checkbox("EMA 50", value=False, key="fyers_ema50")
         with ind3:
-            show_sma50 = st.checkbox("SMA 50", value=False, key="fyers_sma50")
+            show_ema200 = st.checkbox("EMA 200", value=False, key="fyers_ema200")
         with ind4:
-            show_bbands = st.checkbox("Bollinger Bands", value=False, key="fyers_bbands")
-        show_rsi = st.checkbox("Show RSI (14) panel", value=False, key="fyers_rsi")
+            show_rsi = st.checkbox("RSI", value=False, key="fyers_rsi")
+        with ind5:
+            show_stoch_rsi = st.checkbox("Stochastic RSI", value=False, key="fyers_stoch_rsi")
+        show_volume = st.checkbox("Volume", value=False, key="fyers_volume")
         st.caption("After the chart loads, use the Plotly toolbar to draw lines, rectangles, circles, and annotations. These drawings are temporary and reset when the chart is rebuilt.")
         if st.button("Load / refresh FYERS chart", key="fyers_load_chart"):
             chart_symbol = symbol_labels[selected_label]
