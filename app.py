@@ -37,7 +37,6 @@ st.markdown("""
 
 st.title("📈 Market Intelligence Terminal")
 st.caption("Free hybrid edition · No broker API · Source-labelled data · Missing data stays missing")
-st.warning("Important: public Yahoo Finance data is best-effort and intended for personal use; intraday values may be delayed, stale or unavailable. TradingView embeds have their own exchange coverage and delay rules. This is not a guaranteed real-time trading feed.")
 
 INDEXES = {
     "NIFTY 50": "^NSEI",
@@ -555,8 +554,6 @@ with tabs[0]:
             snap_fig = px.bar(snapshot_plot.sort_values("Change %"), x="Change %", y="Instrument", color="Direction", color_discrete_map={"Positive":"#22c55e","Negative":"#ef4444"}, orientation="h", template="plotly_dark", title="Market snapshot · change vs previous returned bar")
             snap_fig.update_layout(height=max(260, 36 * len(snapshot_plot)), margin=dict(l=10,r=10,t=45,b=10), showlegend=False, xaxis_title="Change (%)", yaxis_title="")
             st.plotly_chart(snap_fig, use_container_width=True, config={"displaylogo": False}, key="overview_snapshot_change_chart")
-    st.markdown("#### Global market and news widgets")
-    tv_widget("market-overview", {"colorTheme": "dark", "dateRange": "1D", "showChart": True, "locale": "en", "width": "100%", "height": 420, "isTransparent": False, "showSymbolLogo": True, "showFloatingTooltip": False, "tabs": [{"title": "Indices", "symbols": [{"s": "NSE:NIFTY"}, {"s": "NSE:BANKNIFTY"}, {"s": "TVC:VIX"}, {"s": "TVC:UKOIL"}, {"s": "NASDAQ:NDX"}, {"s": "SP:SPX"}]}]}, 430)
 with tabs[1]:
     st.subheader("Market charts")
     st.caption("Clean, full-width charts built from the data already loaded by this dashboard. Source is Yahoo Finance via yfinance; daily bars can be delayed or stale. For FYERS-sourced charts, use the FYERS stock charts section below.")
@@ -795,7 +792,7 @@ with extra_tabs[0]:
             c.metric("RSI 14", fmt(rsi))
             d.metric("Realized vol 20d annualized", fmt(last.get("Realized volatility 20d %")) + "%")
             st.caption(f"Based on {len(rc)} source bars; last source candle {last['Date']:%d %b %Y %H:%M IST}. Thresholds are heuristic, not predictions.")
-            st.dataframe(rc[["Date","Close","EMA 20","EMA 50","RSI 14","ADX 14","ATR 14","Realized volatility 20d %"]].tail(30), use_container_width=True, hide_index=True)
+            st.caption("Detailed indicator history table hidden to keep this dashboard focused; key regime metrics and trend chart remain available.")
 
 with extra_tabs[1]:
     st.subheader("14 · Options analytics")
@@ -1807,5 +1804,10 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
         if st.session_state.get("fyers_stream_active") and st.session_state.get("fyers_stream_symbol") != live_symbol:
             st.warning("The active stream is subscribed to a different symbol. Stop it, then start again for the selected chart symbol.")
         st.info("FYERS WebSocket updates the live quote overlay and redraws the displayed chart every 2 seconds. Historical candles remain the last fetched candle set; the latest price line is live. Stream is read-only and does not place orders.")
+with st.expander("Important: Public Yahoo Finance and market-data limitations", expanded=False):
+    st.warning("Yahoo Finance data accessed through yfinance is best-effort and intended for personal use. Intraday values may be delayed, stale or unavailable; this is not a guaranteed real-time trading feed.")
+    st.write("TradingView embeds, where used elsewhere in the app, have their own exchange coverage and delay rules. Always check the source candle timestamp and verify important prices with your broker or official exchange before trading.")
+    st.markdown("[Yahoo Finance data coverage and delays](https://help.yahoo.com/kb/SLN2310.html) · [TradingView widgets and data coverage](https://www.tradingview.com/widget/)")
+
 if refresh:
     st.cache_data.clear()
