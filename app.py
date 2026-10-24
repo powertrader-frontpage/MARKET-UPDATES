@@ -340,11 +340,12 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                             tick_queue.put_nowait({"_error": str(message), "received_at": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()})
                         except Exception:
                             pass
+                    socket_holder = {"socket": None}
                     def _on_connect():
-                        socket_ref = st.session_state.get("fyers_socket_ref")
-                        if socket_ref:
-                            socket_ref.subscribe(symbols=[live_symbol], data_type="SymbolUpdate")
-                            socket_ref.keep_running()
+                        connected_socket = socket_holder.get("socket")
+                        if connected_socket:
+                            connected_socket.subscribe(symbols=[live_symbol], data_type="SymbolUpdate")
+                            connected_socket.keep_running()
                     socket_ref = data_ws.FyersDataSocket(
                         access_token=f"{app_id}:{access_token}",
                         log_path="",
@@ -357,6 +358,7 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         on_error=_socket_error,
                         on_message=_push_tick,
                     )
+                    socket_holder["socket"] = socket_ref
                     st.session_state["fyers_tick_queue"] = tick_queue
                     st.session_state["fyers_socket_ref"] = socket_ref
                     st.session_state["fyers_stream_symbol"] = live_symbol
