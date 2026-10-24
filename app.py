@@ -553,6 +553,61 @@ for col, name in zip(cols, headline_names):
 
 st.caption("Headline values are the latest returned daily bar, not guaranteed live quotes. Positive/negative changes are colour-coded; for USD/INR, a falling rate indicates rupee appreciation.")
 
+# Daily global-cue sentiment panel is intentionally placed immediately above Market Regime.
+st.subheader("Today's Market Direction · Global Sentiment")
+st.caption("Daily bias estimate from GIFT Nifty, Brent crude, and US-listed Indian IT/bank ADRs. Refresh the dashboard to recalculate. Signals are probabilistic and source availability is shown transparently.")
+sentiment_parts = []
+sentiment_details = []
+sentiment_errors = []
+def _sentiment_change(label, ticker, weight, inverse=False):
+    try:
+        frame, err = get_history(ticker, "1mo", "1d")
+        snap = quote_snapshot(frame)
+        if not snap:
+            sentiment_errors.append(f"{label}: unavailable")
+            return
+        last, change, pct = snap
+        pct = float(pct)
+        score = -1 if pct > 0 else 1 if pct < 0 else 0 if inverse else (1 if pct > 0 else -1 if pct < 0 else 0)
+        # For crude, rising prices are a headwind for India; for ADRs/GIFT, positive moves are supportive.
+        if inverse:
+            score = -1 if pct > 0 else 1 if pct < 0 else 0
+        else:
+            score = 1 if pct > 0 else -1 if pct < 0 else 0
+        sentiment_parts.append((score, weight))
+        sentiment_details.append({"Factor": label, "Latest change": f"{pct:+.2f}%", "Signal": "Positive" if score > 0 else "Negative" if score < 0 else "Flat", "Source bar": last["Date"].strftime("%d %b %Y")})
+    except Exception:
+        sentiment_errors.append(f"{label}: unavailable")
+
+# GIFT Nifty is attempted via Yahoo's commonly exposed futures symbol; if unavailable, it is omitted rather than inferred.
+_sentiment_change("GIFT Nifty futures proxy", "NIFTY=F", 0.40, inverse=False)
+_sentiment_change("Brent crude (inverse impact)", "BZ=F", 0.20, inverse=True)
+_sentiment_change("Infosys ADR", "INFY", 0.15, inverse=False)
+_sentiment_change("Wipro ADR", "WIT", 0.10, inverse=False)
+_sentiment_change("HDFC Bank ADR", "HDB", 0.075, inverse=False)
+_sentiment_change("ICICI Bank ADR", "IBN", 0.075, inverse=False)
+sentiment_weight = sum(weight for _, weight in sentiment_parts)
+sentiment_score = sum(score * weight for score, weight in sentiment_parts) / sentiment_weight if sentiment_weight else np.nan
+if pd.notna(sentiment_score) and sentiment_score >= 0.25:
+    sentiment_color, sentiment_label = "#22c55e", "POSITIVE · Bullish bias"
+elif pd.notna(sentiment_score) and sentiment_score <= -0.25:
+    sentiment_color, sentiment_label = "#ef4444", "NEGATIVE · Bearish bias"
+elif pd.notna(sentiment_score):
+    sentiment_color, sentiment_label = "#f59e0b", "MIXED · Wait for confirmation"
+else:
+    sentiment_color, sentiment_label = "#94a3b8", "UNAVAILABLE · Insufficient market cues"
+sentiment_card, sentiment_factors = st.columns([1, 2])
+with sentiment_card:
+    st.markdown(f'<div style="border:1px solid #343a46;border-left:5px solid {sentiment_color};border-radius:12px;padding:16px;min-height:125px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">PREDICTED NIFTY DIRECTION</div><div style="font-size:clamp(19px,2.8vw,27px);font-weight:750;color:{sentiment_color};">{sentiment_label}</div><div style="font-size:12px;color:#aeb6c2;margin-top:8px;">Weighted cue score: {f"{sentiment_score:+.2f}" if pd.notna(sentiment_score) else "—"} · Updated {now_ist:%d %b %Y %H:%M IST}</div></div>', unsafe_allow_html=True)
+with sentiment_factors:
+    if sentiment_details:
+        st.dataframe(pd.DataFrame(sentiment_details), use_container_width=True, hide_index=True)
+    else:
+        st.warning("No usable global cue data returned. No direction is guessed.")
+if sentiment_errors:
+    st.caption("Unavailable factors: " + "; ".join(sentiment_errors))
+st.caption("Method: positive GIFT/ADR moves support a bullish bias; rising Brent is a headwind for India. Available factors are normalized by their included weights. ADRs and Yahoo futures proxies may be delayed and do not replace a verified pre-open GIFT Nifty quote. Confirm with NIFTY/Bank NIFTY price action after the open.")
+
 # At-a-glance regime panel is intentionally placed above the navigation tabs.
 st.subheader("Market regime & trend strength")
 overview_regime_name = st.selectbox("Regime instrument", list(INDEXES.keys()), index=0, key="overview_regime_symbol")
