@@ -605,7 +605,12 @@ else:
         trend_fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified", xaxis_title="Source candle date", yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0))
         st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
 
-tabs = st.tabs(["Overview", "Live charts", "Technical analysis", "Sector rotation", "Global markets", "FII/DII & news", "Derivatives", "History & sources", "NIFTY historical returns"])
+st.markdown("### NIFTY 50 stock heatmap")
+st.caption("The main market view · NIFTY 50 constituents only · Tile size reflects market capitalization · Green/red reflects daily change")
+tv_widget("stock-heatmap", {"dataSource": "NIFTY50", "blockSize": "market_cap_basic", "blockColor": "change", "grouping": "sector", "locale": "en", "colorTheme": "dark", "hasTopBar": False, "isDataSetEnabled": False, "isZoomEnabled": True, "hasSymbolTooltip": True, "isMonoSize": False, "width": "100%", "height": 520}, 530)
+st.divider()
+
+tabs = [st.expander(label, expanded=False) for label in ["Overview · market snapshot", "Live charts", "Technical analysis", "Sector rotation", "Global markets", "FII/DII & news", "Derivatives", "History & sources", "NIFTY historical returns"]]
 with tabs[0]:
     st.subheader("Market snapshot and historical source data")
     rows = []
@@ -770,9 +775,7 @@ with tabs[3]:
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.warning("No sector index series were returned by the public source. No values have been substituted.")
-    st.markdown("#### NIFTY 50 stock heatmap")
-    st.caption("Focused on NIFTY 50 constituents only · Tile size reflects market capitalization · Color reflects daily change")
-    tv_widget("stock-heatmap", {"dataSource": "NIFTY50", "blockSize": "market_cap_basic", "blockColor": "change", "grouping": "sector", "locale": "en", "colorTheme": "dark", "hasTopBar": False, "isDataSetEnabled": False, "isZoomEnabled": True, "hasSymbolTooltip": True, "isMonoSize": False, "width": "100%", "height": 520}, 530)
+
 
 with tabs[4]:
     st.subheader("Global markets and commodities")
@@ -880,10 +883,10 @@ st.divider()
 st.caption("For research and monitoring only. Verify exchange timestamps and official sources before trading. Public widgets and public-source data may be delayed, incomplete or unavailable; this dashboard is not an execution system or investment advice.")
 
 # Expanded research modules (13–22). Calculations use public-source data; personal journal data remains user-controlled.
-extra_tabs = st.tabs([
-    "13 Regime", "14 Options status", "15 Risk", "16 Backtest", "17 Breadth",
-    "18 Events", "19 Trade journal", "20 Data quality", "21 Cross-asset", "22 Signals"
-])
+extra_tabs = [st.expander(label, expanded=False) for label in [
+    "14 Options analytics", "15 Risk & position sizing", "16 Strategy backtest", "17 Market breadth",
+    "18 Events & gap risk", "19 Trade journal", "20 Data quality", "21 Cross-asset performance", "22 Technical signals"
+]]
 
 # Module 13 removed: the market regime and trend-strength panel is already shown on the Overview page.
 
@@ -1373,7 +1376,7 @@ with extra_tabs[9]:
 
 
 # Additional research modules inspired by the user's reference dashboard.
-research_tabs = st.tabs(["23 Industry intelligence", "24 Delivery & money-flow proxies", "25 Daily briefing"])
+research_tabs = [st.expander(label, expanded=False) for label in ["23 Industry intelligence", "24 Delivery & money-flow proxies", "25 Daily briefing"]]
 
 with research_tabs[0]:
     st.subheader("23 · Industry intelligence and rotation")
@@ -1471,14 +1474,14 @@ with research_tabs[2]:
 
 
 # Additional modules completing the major workflows shown in the reference screenshots.
-advanced_tabs = st.tabs([
-    "26 Macro & event log",
+advanced_tabs = [st.expander(label, expanded=False) for label in [
+    "26 Macro & event monitor",
     "27 Breadth & stock scanner",
     "28 Derivatives lab",
     "29 Stock deep-dive",
     "30 Strategy backtest",
     "31 Data quality"
-])
+]]
 
 with advanced_tabs[0]:
     st.subheader("26 · Automatic macro & geopolitical event monitor")
