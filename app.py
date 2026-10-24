@@ -606,8 +606,49 @@ else:
         st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
 
 st.markdown("### NIFTY 50 stock heatmap")
-st.caption("The main market view · NIFTY 50 constituents only · Tile size reflects market capitalization · Green/red reflects daily change")
-tv_widget("stock-heatmap", {"dataSource": "NIFTY50", "blockSize": "market_cap_basic", "blockColor": "change", "grouping": "sector", "locale": "en", "colorTheme": "dark", "hasTopBar": False, "isDataSetEnabled": False, "isZoomEnabled": True, "hasSymbolTooltip": True, "isMonoSize": False, "width": "100%", "height": 520}, 530)
+st.caption("NIFTY 50 constituents only · Tile size is equal-weighted in this view · Green = positive daily change, red = negative daily change")
+NIFTY50_HEATMAP_SYMBOLS = [
+    "ADANIENT.NS", "ADANIPORTS.NS", "APOLLOHOSP.NS", "ASIANPAINT.NS", "AXISBANK.NS",
+    "BAJAJ-AUTO.NS", "BAJFINANCE.NS", "BAJAJFINSV.NS", "BEL.NS", "BHARTIARTL.NS",
+    "CIPLA.NS", "COALINDIA.NS", "DRREDDY.NS", "EICHERMOT.NS", "ETERNAL.NS",
+    "GRASIM.NS", "HCLTECH.NS", "HDFCBANK.NS", "HDFCLIFE.NS", "HINDALCO.NS",
+    "HINDUNILVR.NS", "ICICIBANK.NS", "INDUSINDBK.NS", "INFY.NS", "ITC.NS",
+    "JIOFIN.NS", "JSWSTEEL.NS", "KOTAKBANK.NS", "LT.NS", "M&M.NS",
+    "MARUTI.NS", "NESTLEIND.NS", "NTPC.NS", "ONGC.NS", "POWERGRID.NS",
+    "RELIANCE.NS", "SBILIFE.NS", "SBIN.NS", "SHRIRAMFIN.NS", "SUNPHARMA.NS",
+    "TATACONSUM.NS", "TATAMOTORS.NS", "TATASTEEL.NS", "TCS.NS", "TECHM.NS",
+    "TITAN.NS", "TRENT.NS", "ULTRACEMCO.NS", "WIPRO.NS", "TMPV.NS"
+]
+@st.cache_data(ttl=300, show_spinner=False)
+def _nifty50_heatmap_data(symbols: tuple[str, ...]):
+    raw = yf.download(list(symbols), period="5d", interval="1d", group_by="ticker", auto_adjust=False, progress=False, threads=True)
+    rows = []
+    for symbol in symbols:
+        try:
+            frame = raw[symbol].dropna(subset=["Close"])
+            closes = frame["Close"].dropna()
+            if len(closes) >= 2 and float(closes.iloc[-2]) != 0:
+                last_close = float(closes.iloc[-1])
+                change_pct = (last_close / float(closes.iloc[-2]) - 1) * 100
+                rows.append({"Symbol": symbol.removesuffix(".NS"), "Close": last_close, "Change (%)": change_pct})
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+    return pd.DataFrame(rows)
+with st.spinner("Loading NIFTY 50 constituent performance…"):
+    heatmap_df = _nifty50_heatmap_data(tuple(NIFTY50_HEATMAP_SYMBOLS))
+if heatmap_df.empty:
+    st.warning("NIFTY 50 heatmap data is temporarily unavailable from the public data source.")
+else:
+    heatmap_df["Direction"] = np.where(heatmap_df["Change (%)"] >= 0, "Positive", "Negative")
+    heatmap_df["Color"] = heatmap_df["Change (%)"]
+    heatmap_fig = px.treemap(
+        heatmap_df, path=["Direction", "Symbol"], values=np.ones(len(heatmap_df)),
+        color="Change (%)", color_continuous_scale=["#ef4444", "#252a34", "#16a34a"],
+        color_continuous_midpoint=0, hover_data={"Close": ":,.2f", "Change (%)": ":.2f", "Direction": False, "Color": False}
+    )
+    heatmap_fig.update_traces(texttemplate="%{label}<br>%{color:.2f}%", textfont_size=12)
+    heatmap_fig.update_layout(template="plotly_dark", height=520, margin=dict(l=4, r=4, t=8, b=4), coloraxis_colorbar_title="Daily %")
+    st.plotly_chart(heatmap_fig, use_container_width=True, config={"displaylogo": False}, key="nifty50_only_treemap")
 st.divider()
 
 tabs = [st.expander(label, expanded=False) for label in ["Overview · market snapshot", "Live charts", "Technical analysis", "Sector rotation", "Global markets", "FII/DII & news", "Derivatives", "History & sources", "NIFTY historical returns"]]
@@ -884,11 +925,11 @@ st.caption("For research and monitoring only. Verify exchange timestamps and off
 
 # Expanded research modules (13–22). Calculations use public-source data; personal journal data remains user-controlled.
 extra_tabs = [st.expander(label, expanded=False) for label in [
-    "14 Options analytics", "15 Risk & position sizing", "16 Strategy backtest", "17 Market breadth",
-    "18 Events & gap risk", "19 Trade journal", "20 Data quality", "21 Cross-asset performance", "22 Technical signals"
+    "13 Regime & trend strength", "14 Options analytics", "15 Risk & position sizing",
+    "16 Strategy backtest", "17 Market breadth", "18 Events & gap risk",
+    "19 Trade journal", "20 Data quality", "21 Cross-asset performance", "22 Technical signals"
 ]]
 
-# Preserve the removed Module 13 slot so module numbering remains aligned with extra_tabs indices.
 with extra_tabs[0]:
     st.caption("Market regime and trend strength are displayed in the main dashboard above.")
 
