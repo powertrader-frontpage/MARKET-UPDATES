@@ -661,9 +661,6 @@ with tabs[0]:
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     st.markdown("#### Global market and news widgets")
     tv_widget("market-overview", {"colorTheme": "dark", "dateRange": "1D", "showChart": True, "locale": "en", "width": "100%", "height": 420, "isTransparent": False, "showSymbolLogo": True, "showFloatingTooltip": False, "tabs": [{"title": "Indices", "symbols": [{"s": "NSE:NIFTY"}, {"s": "NSE:BANKNIFTY"}, {"s": "TVC:VIX"}, {"s": "TVC:UKOIL"}, {"s": "NASDAQ:NDX"}, {"s": "SP:SPX"}]}]}, 430)
-    st.markdown("#### Market news feed (provided by TradingView)")
-    tv_widget("news", {"feedMode": "market", "colorTheme": "dark", "isTransparent": False, "displayMode": "regular", "width": "100%", "height": 450, "locale": "en"}, 460)
-
 with tabs[1]:
     st.subheader("Embedded interactive charts")
     chart_choice = st.selectbox("Choose chart", ["NIFTY 50", "BANK NIFTY", "INFY", "WIPRO", "Brent Crude", "India VIX"])
