@@ -265,374 +265,6 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
             st.caption("Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
 
 
-# FYERS chart workspace: all NSE cash-market equity symbols from FYERS Symbol Master.
-if "fyers_access_token" in st.session_state and fyers_credentials():
-    st.divider()
-    st.subheader("FYERS stock charts")
-    st.caption("Choose any symbol from FYERS' NSE capital-market symbol master. Candles are from FYERS Historical Data; the current quote is fetched separately. This is not a continuously updating WebSocket chart.")
-    symbols_list, symbols_error = fyers_nse_equity_symbols()
-    if symbols_error:
-        st.warning(symbols_error)
-    elif not symbols_list:
-        st.warning("The FYERS symbol master returned no NSE equity symbols.")
-    else:
-        symbol_labels = {f"{name or symbol} · {symbol}": symbol for symbol, name in symbols_list}
-        selected_label = st.selectbox("Search/select NSE stock", list(symbol_labels.keys()), index=0, key="fyers_chart_symbol")
-        col_res, col_period = st.columns(2)
-        with col_res:
-            chart_resolution = st.selectbox("Candle interval", ["1", "5", "15", "30", "60", "120", "240", "1D", "1W"], index=2, key="fyers_chart_resolution", format_func=lambda value: {"1":"1 minute","5":"5 minutes","15":"15 minutes","30":"30 minutes","60":"1 hour","120":"2 hours","240":"4 hours","1D":"1 day","1W":"1 week"}[value])
-        with col_period:
-            chart_days_label = st.selectbox("History window", ["5 days", "1 month", "3 months", "6 months", "1 year", "2 years", "5 years"], index=2, key="fyers_chart_days")
-        chart_days = {"5 days": 5, "1 month": 31, "3 months": 92, "6 months": 183, "1 year": 365, "2 years": 730, "5 years": 1825}[chart_days_label]
-        if chart_resolution in {"1", "5"} and chart_days > 5:
-            st.warning("For 1-minute and 5-minute candles, the chart automatically limits history to the most recent 5 calendar days to avoid oversized or unsupported requests.")
-            chart_days = 5
-        st.markdown("**Chart tools**")
-        ind1, ind2, ind3, ind4, ind5 = st.columns(5)
-        with ind1:
-            show_ema21 = st.checkbox("EMA 21", value=True, key="fyers_ema21")
-        with ind2:
-            show_ema50 = st.checkbox("EMA 50", value=False, key="fyers_ema50")
-        with ind3:
-            show_ema200 = st.checkbox("EMA 200", value=False, key="fyers_ema200")
-        with ind4:
-            show_rsi = st.checkbox("RSI", value=False, key="fyers_rsi")
-        with ind5:
-            show_stoch_rsi = st.checkbox("Stochastic RSI", value=False, key="fyers_stoch_rsi")
-        show_volume = st.checkbox("Volume", value=False, key="fyers_volume")
-        st.caption("After the chart loads, use the Plotly toolbar to draw lines, rectangles, circles, and annotations. These drawings are temporary and reset when the chart is rebuilt.")
-        if st.button("Load / refresh FYERS chart", key="fyers_load_chart"):
-            chart_symbol = symbol_labels[selected_label]
-            with st.spinner(f"Fetching FYERS candles for {chart_symbol}..."):
-                candles, candle_error = fyers_history(fyers_credentials()[0], st.session_state["fyers_access_token"], chart_symbol, chart_resolution, chart_days)
-            if candle_error:
-                st.warning(f"Chart data unavailable: {candle_error}")
-            else:
-                candles = candles.copy()
-                candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
-                candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
-                if candles.empty:
-                    st.warning("FYERS returned no valid OHLC candles for this selection.")
-                else:
-                    st.session_state["fyers_chart_data"] = candles.to_json(date_format="iso", orient="split")
-                    st.session_state["fyers_chart_symbol_loaded"] = chart_symbol
-                    st.session_state["fyers_chart_resolution_loaded"] = chart_resolution
-                    st.session_state["fyers_chart_loaded_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
-                    st.session_state.pop("fyers_chart_error", None)
-
-        # Start a single FYERS Data Socket for the currently selected chart symbol.
-        st.markdown("**Live market stream**")
-        live_symbol = symbol_labels[selected_label]
-        stream_symbol = st.session_state.get("fyers_stream_symbol")
-        stream_active = bool(st.session_state.get("fyers_stream_active"))
-        live_col1, live_col2 = st.columns(2)
-        with live_col1:
-            if not stream_active and st.button("▶ Start live updates", key="fyers_start_stream"):
-                try:
-                    import queue
-                    import threading
-                    from fyers_apiv3.FyersWebsocket import data_ws
-
-                    tick_queue = queue.Queue(maxsize=2000)
-                    app_id = fyers_credentials()[0]
-                    access_token = st.session_state["fyers_access_token"]
-                    def _push_tick(message):
-                        if isinstance(message, dict) and message.get("symbol") and message.get("ltp") is not None:
-                            try:
-                                tick_queue.put_nowait(dict(message, received_at=datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()))
-                            except Exception:
-                                pass
-                    def _socket_error(message):
-                        try:
-                            tick_queue.put_nowait({"_error": str(message), "received_at": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()})
-                        except Exception:
-                            pass
-                    socket_holder = {"socket": None}
-                    def _on_connect():
-                        connected_socket = socket_holder.get("socket")
-                        if connected_socket:
-                            connected_socket.subscribe(symbols=[live_symbol], data_type="SymbolUpdate")
-                            connected_socket.keep_running()
-                    socket_ref = data_ws.FyersDataSocket(
-                        access_token=f"{app_id}:{access_token}",
-                        log_path="",
-                        litemode=False,
-                        write_to_file=False,
-                        reconnect=True,
-                        reconnect_retry=10,
-                        on_connect=_on_connect,
-                        on_close=_socket_error,
-                        on_error=_socket_error,
-                        on_message=_push_tick,
-                    )
-                    socket_holder["socket"] = socket_ref
-                    st.session_state["fyers_tick_queue"] = tick_queue
-                    st.session_state["fyers_socket_ref"] = socket_ref
-                    st.session_state["fyers_stream_symbol"] = live_symbol
-                    st.session_state["fyers_stream_active"] = True
-                    thread = threading.Thread(target=socket_ref.connect, daemon=True)
-                    st.session_state["fyers_socket_thread"] = thread
-                    thread.start()
-                    st.success(f"Started FYERS live stream for {live_symbol}.")
-                except Exception as exc:
-                    st.session_state["fyers_stream_active"] = False
-                    st.error(f"Could not start FYERS live stream ({exc.__class__.__name__}). Check app deployment and FYERS session.")
-        with live_col2:
-            if stream_active and st.button("■ Stop live updates", key="fyers_stop_stream"):
-                try:
-                    socket_ref = st.session_state.get("fyers_socket_ref")
-                    if socket_ref:
-                        socket_ref.close_connection()
-                except Exception:
-                    pass
-                st.session_state["fyers_stream_active"] = False
-                st.session_state.pop("fyers_socket_ref", None)
-                st.session_state.pop("fyers_socket_thread", None)
-                st.session_state.pop("fyers_tick_queue", None)
-                st.session_state.pop("fyers_live_tick", None)
-                st.rerun()
-
-        @st.fragment(run_every=2)
-        def _fyers_live_chart_fragment():
-            import queue as _queue
-            tick_queue = st.session_state.get("fyers_tick_queue")
-            if tick_queue is not None:
-                while True:
-                    try:
-                        tick = tick_queue.get_nowait()
-                    except _queue.Empty:
-                        break
-                    if tick.get("_error"):
-                        st.session_state["fyers_stream_error"] = tick["_error"]
-                    elif tick.get("symbol") == st.session_state.get("fyers_stream_symbol"):
-                        st.session_state["fyers_live_tick"] = tick
-                        st.session_state["fyers_stream_error"] = None
-
-            tick = st.session_state.get("fyers_live_tick")
-            if tick and tick.get("symbol") == st.session_state.get("fyers_stream_symbol"):
-                tick_time = tick.get("exch_feed_time") or tick.get("last_traded_time")
-                try:
-                    tick_time_text = datetime.fromtimestamp(float(tick_time), ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") if tick_time else tick.get("received_at", "time unavailable")
-                except Exception:
-                    tick_time_text = tick.get("received_at", "time unavailable")
-                m1, m2, m3 = st.columns(3)
-                with m1:
-                    st.metric("FYERS live LTP", f"{float(tick['ltp']):,.2f}", f"{float(tick.get('chp', 0)):+.2f}%" if tick.get("chp") is not None else None)
-                with m2:
-                    st.metric("Day high", f"{float(tick['high_price']):,.2f}" if tick.get("high_price") is not None else "—")
-                with m3:
-                    st.metric("Day low", f"{float(tick['low_price']):,.2f}" if tick.get("low_price") is not None else "—")
-                st.caption(f"WebSocket feed time: {tick_time_text} · Last received by app: {tick.get('received_at', 'unknown')}")
-            elif st.session_state.get("fyers_stream_error"):
-                st.warning("FYERS stream message: " + str(st.session_state["fyers_stream_error"])[:300])
-            elif st.session_state.get("fyers_stream_active"):
-                st.info("Connecting to FYERS Data Socket; waiting for the first market update.")
-            else:
-                st.caption("Live stream is stopped. Start it during market hours to receive updates.")
-
-            chart_json = st.session_state.get("fyers_chart_data")
-            if chart_json:
-                chart_symbol_loaded = st.session_state.get("fyers_chart_symbol_loaded", live_symbol)
-                candles = pd.read_json(chart_json, orient="split")
-                candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
-                candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
-                if not candles.empty:
-                    tick = st.session_state.get("fyers_live_tick")
-                    current_ltp = tick.get("ltp") if tick and tick.get("symbol") == chart_symbol_loaded else None
-                    fig = go.Figure(data=[go.Candlestick(x=candles["Date"], open=candles["Open"], high=candles["High"], low=candles["Low"], close=candles["Close"], name=chart_symbol_loaded)])
-                    for span, enabled in [(21, show_ema21), (50, show_ema50), (200, show_ema200)]:
-                        if enabled:
-                            ema_values = candles["Close"].ewm(span=span, adjust=False).mean()
-                            fig.add_trace(go.Scatter(x=candles["Date"], y=ema_values, name="EMA " + str(span), mode="lines", line=dict(width=1.4)))
-                    if show_volume and "Volume" in candles:
-                        volume_fig = go.Figure(go.Bar(x=candles["Date"], y=candles["Volume"], name="Volume"))
-                        volume_fig.update_layout(title="Volume", template="plotly_dark", height=220, margin=dict(l=20,r=20,t=40,b=20), xaxis_title="Time (IST)")
-                        st.plotly_chart(volume_fig, use_container_width=True, config={"displaylogo": False}, key="fyers_volume_plot")
-                    if current_ltp is not None:
-                        fig.add_hline(y=float(current_ltp), line_dash="dot", annotation_text=f"Live FYERS LTP: {float(current_ltp):,.2f}")
-                    fig.update_layout(title=f"{chart_symbol_loaded} · FYERS candles", xaxis_title="Time (IST)", yaxis_title="Price", xaxis_rangeslider_visible=False, height=650, hovermode="x unified", margin=dict(l=20, r=20, t=60, b=20))
-                    fig.update_xaxes(type="date", tickformat="%d %b %H:%M" if st.session_state.get("fyers_chart_resolution_loaded") != "1D" else "%d %b %Y", showspikes=True, spikemode="across", spikesnap="cursor")
-                    fig.update_yaxes(fixedrange=False)
-                    st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False, "modeBarButtonsToAdd": ["drawline", "drawopenpath", "drawclosedpath", "drawcircle", "drawrect", "eraseshape"]}, key="fyers_live_chart_plot")
-                    st.caption(f"Historical candles: FYERS · fetched: {st.session_state.get('fyers_chart_loaded_at', 'unknown')} · live quote overlay refreshes every 2 seconds while connected.")
-                    delta = candles["Close"].diff()
-                    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                    rs = gain / loss.replace(0, np.nan)
-                    rsi = (100 - (100 / (1 + rs))).fillna(50)
-                    if show_rsi:
-                        rsi_fig = go.Figure(go.Scatter(x=candles["Date"], y=rsi, name="RSI 14", line=dict(width=1.5)))
-                        rsi_fig.add_hline(y=70, line_dash="dash")
-                        rsi_fig.add_hline(y=30, line_dash="dash")
-                        rsi_fig.update_layout(title="RSI (14)", template="plotly_dark", height=240, margin=dict(l=20,r=20,t=45,b=20), yaxis=dict(range=[0,100]), xaxis_title="Time (IST)")
-                        st.plotly_chart(rsi_fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_rsi_plot")
-                    if show_stoch_rsi:
-                        rsi_low = rsi.rolling(14, min_periods=14).min()
-                        rsi_high = rsi.rolling(14, min_periods=14).max()
-                        stoch = ((rsi-rsi_low)/(rsi_high-rsi_low).replace(0, np.nan))*100
-                        stoch_k = stoch.rolling(3, min_periods=3).mean()
-                        stoch_d = stoch_k.rolling(3, min_periods=3).mean()
-                        sf = go.Figure()
-                        sf.add_trace(go.Scatter(x=candles["Date"], y=stoch_k, name="Stoch RSI %K"))
-                        sf.add_trace(go.Scatter(x=candles["Date"], y=stoch_d, name="Stoch RSI %D"))
-                        sf.add_hline(y=80, line_dash="dash")
-                        sf.add_hline(y=20, line_dash="dash")
-                        sf.update_layout(title="Stochastic RSI (14,14,3,3)", template="plotly_dark", height=240, margin=dict(l=20,r=20,t=45,b=20), yaxis=dict(range=[0,100]), xaxis_title="Time (IST)")
-                        st.plotly_chart(sf, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_stoch_rsi_plot")
-
-        _fyers_live_chart_fragment()
-
-        if st.session_state.get("fyers_stream_active") and st.session_state.get("fyers_stream_symbol") != live_symbol:
-            st.warning("The active stream is subscribed to a different symbol. Stop it, then start again for the selected chart symbol.")
-        st.info("FYERS WebSocket updates the live quote overlay and redraws the displayed chart every 2 seconds. Historical candles remain the last fetched candle set; the latest price line is live. Stream is read-only and does not place orders.")
-if refresh:
-    st.cache_data.clear()
-
-@st.cache_data(ttl=300, show_spinner=False)
-def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, str | None]:
-    """Fetch best-effort market history from Yahoo Finance via yfinance; never synthesize rows."""
-    try:
-        data = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False, actions=False, raise_errors=True)
-        if data is None or data.empty:
-            return pd.DataFrame(), "Source returned no rows for this ticker/period/interval."
-        data = data.reset_index()
-        date_col = "Datetime" if "Datetime" in data.columns else "Date"
-        data = data.rename(columns={date_col: "Date"})
-        data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
-        if data["Date"].dt.tz is None:
-            data["Date"] = data["Date"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
-        else:
-            data["Date"] = data["Date"].dt.tz_convert("Asia/Kolkata")
-        for c in ["Open", "High", "Low", "Close", "Volume"]:
-            if c in data.columns:
-                data[c] = pd.to_numeric(data[c], errors="coerce")
-        data = data.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
-        return data.reset_index(drop=True), None
-    except Exception as exc:
-        return pd.DataFrame(), f"Fetch failed: {type(exc).__name__}: {str(exc)[:240]}"
-
-# Public-data universe used to make stock research less manual. Industry labels are static classifications,
-# while prices are fetched live from Yahoo Finance and must be verified against source timestamps.
-AUTO_UNIVERSE = {
-    "RELIANCE.NS": "Energy", "TCS.NS": "IT", "INFY.NS": "IT", "HCLTECH.NS": "IT",
-    "WIPRO.NS": "IT", "TECHM.NS": "IT", "HDFCBANK.NS": "Financials", "ICICIBANK.NS": "Financials",
-    "SBIN.NS": "Financials", "KOTAKBANK.NS": "Financials", "AXISBANK.NS": "Financials",
-    "BAJFINANCE.NS": "Financials", "BAJAJFINSV.NS": "Financials", "BHARTIARTL.NS": "Telecom",
-    "ITC.NS": "FMCG", "HINDUNILVR.NS": "FMCG", "NESTLEIND.NS": "FMCG", "TATAMOTORS.NS": "Auto",
-    "M&M.NS": "Auto", "MARUTI.NS": "Auto", "SUNPHARMA.NS": "Pharma", "DRREDDY.NS": "Pharma",
-    "CIPLA.NS": "Pharma", "LT.NS": "Industrials", "ULTRACEMCO.NS": "Cement", "TATASTEEL.NS": "Metals",
-    "JSWSTEEL.NS": "Metals", "NTPC.NS": "Utilities", "POWERGRID.NS": "Utilities", "ONGC.NS": "Energy",
-    "COALINDIA.NS": "Energy", "ASIANPAINT.NS": "Consumer", "TITAN.NS": "Consumer", "ADANIPORTS.NS": "Infrastructure",
-    "TRENT.NS": "Retail", "BEL.NS": "Industrials", "INDUSINDBK.NS": "Financials",
-}
-
-@st.cache_data(ttl=21600, show_spinner=False)
-def get_auto_universe(period: str = "2y") -> pd.DataFrame:
-    """Fetch actual daily OHLCV for a fixed large-cap universe; return empty data on source failure."""
-    tickers = list(AUTO_UNIVERSE)
-    try:
-        raw = yf.download(tickers, period=period, interval="1d", auto_adjust=False, group_by="ticker",
-                          threads=True, progress=False, actions=False)
-        if raw is None or raw.empty:
-            return pd.DataFrame()
-        rows=[]
-        for ticker in tickers:
-            try:
-                if isinstance(raw.columns, pd.MultiIndex):
-                    if ticker not in raw.columns.get_level_values(0):
-                        continue
-                    part=raw[ticker].copy()
-                else:
-                    part=raw.copy()
-                part=part.reset_index()
-                date_col="Date" if "Date" in part.columns else "Datetime"
-                if date_col not in part.columns or "Close" not in part.columns:
-                    continue
-                part=part.rename(columns={date_col:"Date"})
-                part["Date"]=pd.to_datetime(part["Date"],errors="coerce")
-                part["Symbol"]=ticker.replace(".NS","")
-                part["Industry"]=AUTO_UNIVERSE[ticker]
-                for c in ["Open","High","Low","Close","Volume"]:
-                    if c in part.columns: part[c]=pd.to_numeric(part[c],errors="coerce")
-                part=part.dropna(subset=["Date","Close"])
-                if not part.empty:
-                    rows.append(part[[c for c in ["Date","Symbol","Industry","Open","High","Low","Close","Volume"] if c in part.columns]])
-            except Exception:
-                continue
-        return pd.concat(rows,ignore_index=True) if rows else pd.DataFrame()
-    except Exception:
-        return pd.DataFrame()
-
-def get_news_rss(query: str, limit: int = 12) -> tuple[pd.DataFrame, str | None]:
-    """Fetch public Google News RSS search results; headlines are attributed and never treated as verified causal explanations."""
-    import xml.etree.ElementTree as ET
-    from urllib.parse import quote_plus
-    try:
-        url = "https://news.google.com/rss/search?q=" + quote_plus(query) + "&hl=en-IN&gl=IN&ceid=IN:en"
-        response = requests.get(url, headers={"User-Agent":"Mozilla/5.0 MarketIntelligenceTerminal/1.0"}, timeout=12)
-        response.raise_for_status()
-        root = ET.fromstring(response.content)
-        rows = []
-        for item in root.findall(".//item")[:limit]:
-            title = (item.findtext("title") or "").strip()
-            link = (item.findtext("link") or "").strip()
-            pub = (item.findtext("pubDate") or "").strip()
-            source = item.find("source")
-            publisher = (source.text or "").strip() if source is not None else ""
-            if title and link:
-                rows.append({"Published (RSS)":pub,"Headline":title,"Publisher":publisher,"Source link":link})
-        if not rows:
-            return pd.DataFrame(), "RSS returned no headline rows."
-        return pd.DataFrame(rows), None
-    except Exception as exc:
-        return pd.DataFrame(), f"News RSS unavailable: {type(exc).__name__}: {str(exc)[:150]}"
-
-
-def indicators(data: pd.DataFrame) -> pd.DataFrame:
-    out = data.copy()
-    close = out["Close"]
-    for n in [5, 11, 20, 50, 100, 200]:
-        out[f"SMA {n}"] = close.rolling(n, min_periods=n).mean()
-        out[f"EMA {n}"] = close.ewm(span=n, adjust=False, min_periods=n).mean()
-    delta = close.diff()
-    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-    rs = gain / loss.replace(0, np.nan)
-    out["RSI 14"] = 100 - 100 / (1 + rs)
-    out.loc[(loss == 0) & gain.notna(), "RSI 14"] = 100
-    if {"High", "Low"}.issubset(out.columns):
-        out["Daily Range"] = out["High"] - out["Low"]
-        for n in [5, 10, 14, 20]:
-            out[f"ADR {n}"] = out["Daily Range"].rolling(n, min_periods=n).mean()
-        prev_close = close.shift(1)
-        tr = pd.concat([out["High"]-out["Low"], (out["High"]-prev_close).abs(), (out["Low"]-prev_close).abs()], axis=1).max(axis=1)
-        out["ATR 14"] = tr.rolling(14, min_periods=14).mean()
-    out["Return %"] = close.pct_change() * 100
-    return out
-
-def fmt(value, decimals=2):
-    try:
-        if pd.isna(value): return "—"
-        return f"{float(value):,.{decimals}f}"
-    except Exception:
-        return "—"
-
-def tv_widget(kind: str, config: dict, height: int = 500):
-    config_json = json.dumps(config, ensure_ascii=False).replace("</", "<\\/")
-    script = f'''<div class="tradingview-widget-container" style="height:{height}px;width:100%"><div class="tradingview-widget-container__widget" style="height:calc(100% - 28px);width:100%"></div><div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/" rel="noopener nofollow" target="_blank"><span>TradingView</span></a></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-{kind}.js" async>{config_json}</script></div>'''
-    components.html(script, height=height + 10, scrolling=False)
-
-def advanced_chart(symbol: str, height: int = 720):
-    tv_widget("advanced-chart", {"autosize": True, "symbol": symbol, "interval": "D", "timezone": "Asia/Kolkata", "theme": "dark", "style": "1", "locale": "en", "allow_symbol_change": True, "calendar": False, "support_host": "https://www.tradingview.com"}, height)
-
-def quote_snapshot(df: pd.DataFrame):
-    if df.empty: return None
-    last = df.iloc[-1]
-    prev = df.iloc[-2] if len(df) > 1 else None
-    change = float(last["Close"] - prev["Close"]) if prev is not None else np.nan
-    pct = change / float(prev["Close"]) * 100 if prev is not None and float(prev["Close"]) != 0 else np.nan
-    return last, change, pct
-
 # Pull key instruments. The sidebar interval controls intraday bars; daily history is used for indicators.
 market_data: dict[str, pd.DataFrame] = {}
 market_errors: dict[str, str | None] = {}
@@ -668,67 +300,70 @@ for col, name in zip(cols, headline_names):
 
 st.caption("Headline values are the latest returned daily bar, not guaranteed live quotes. Positive/negative changes are colour-coded; for USD/INR, a falling rate indicates rupee appreciation.")
 
+# At-a-glance regime panel is intentionally placed above the navigation tabs.
+st.subheader("Market regime & trend strength")
+st.subheader("Market regime & trend strength")
+overview_regime_name = st.selectbox("Regime instrument", list(INDEXES.keys()), index=0, key="overview_regime_symbol")
+overview_regime_df = market_data[overview_regime_name]
+if overview_regime_df.empty or len(overview_regime_df) < 30:
+    st.warning("Insufficient returned OHLC history to assess regime. No regime label generated.")
+else:
+    overview_rc = indicators(overview_regime_df).copy()
+    if {"High", "Low", "Close"}.issubset(overview_rc.columns):
+        overview_prevc = overview_rc["Close"].shift(1)
+        overview_tr = pd.concat([(overview_rc["High"]-overview_rc["Low"]), (overview_rc["High"]-overview_prevc).abs(), (overview_rc["Low"]-overview_prevc).abs()], axis=1).max(axis=1)
+        overview_up = overview_rc["High"].diff()
+        overview_down = -overview_rc["Low"].diff()
+        overview_plus_dm = overview_up.where((overview_up > overview_down) & (overview_up > 0), 0.0)
+        overview_minus_dm = overview_down.where((overview_down > overview_up) & (overview_down > 0), 0.0)
+        overview_atr14 = overview_tr.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+        overview_pdi = 100 * overview_plus_dm.ewm(alpha=1/14, min_periods=14, adjust=False).mean() / overview_atr14.replace(0, np.nan)
+        overview_mdi = 100 * overview_minus_dm.ewm(alpha=1/14, min_periods=14, adjust=False).mean() / overview_atr14.replace(0, np.nan)
+        overview_dx = 100 * (overview_pdi-overview_mdi).abs() / (overview_pdi+overview_mdi).replace(0, np.nan)
+        overview_adx = overview_dx.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+        overview_last = overview_rc.iloc[-1]
+        overview_adx_value = overview_adx.iloc[-1]
+        overview_rsi_value = overview_last.get("RSI 14", np.nan)
+        overview_close = overview_last["Close"]
+        overview_ema20 = overview_last.get("EMA 20", np.nan)
+        overview_ema50 = overview_last.get("EMA 50", np.nan)
+        overview_regime = "Insufficient indicator history"
+        if pd.notna(overview_adx_value) and pd.notna(overview_ema20) and pd.notna(overview_ema50):
+            if overview_adx_value >= 25 and overview_close > overview_ema20 > overview_ema50:
+                overview_regime = "Trending bullish"
+            elif overview_adx_value >= 25 and overview_close < overview_ema20 < overview_ema50:
+                overview_regime = "Trending bearish"
+            elif overview_adx_value < 20:
+                overview_regime = "Range / weak trend"
+            else:
+                overview_regime = "Transition / mixed"
+        # Return % is in percentage points; convert to decimal before annualizing.
+        overview_vol = overview_rc["Return %"].rolling(20).std().iloc[-1] / 100 * np.sqrt(252)
+        regime_cols = st.columns([1.35, 1, 1])
+        regime_color = "#22c55e" if overview_regime == "Trending bullish" else "#ef4444" if overview_regime == "Trending bearish" else "#f59e0b"
+        regime_cols[0].markdown(
+            f'<div style="border:1px solid #343a46;border-radius:12px;padding:12px 14px;min-height:92px;">'
+            f'<div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">Market regime</div>'
+            f'<div style="font-size:clamp(16px,2.8vw,25px);line-height:1.25;font-weight:650;color:{regime_color};overflow-wrap:anywhere;">{overview_regime}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        regime_cols[1].metric("ADX 14", fmt(overview_adx_value))
+        regime_cols[2].metric("RSI 14", fmt(overview_rsi_value))
+        st.caption(f"Calculated from {overview_regime_name} historical OHLC data · last source bar: {overview_last['Date']:%d %b %Y, %H:%M IST} · not a live signal.")
+        st.markdown("#### Price trend")
+        trend_fig = go.Figure()
+        trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["Close"], name="Close", mode="lines", line=dict(color="#60a5fa", width=2)))
+        if "EMA 20" in overview_rc:
+            trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 20"], name="EMA 20", mode="lines", line=dict(color="#f59e0b", width=1.5)))
+        if "EMA 50" in overview_rc:
+            trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 50"], name="EMA 50", mode="lines", line=dict(color="#a78bfa", width=1.5)))
+        trend_fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified", xaxis_title="Source candle date", yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0))
+        st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
+
 tabs = st.tabs(["Overview", "Live charts", "Technical analysis", "Sector rotation", "Global markets", "FII/DII & news", "Derivatives", "History & sources"])
 with tabs[0]:
-    st.subheader("Market regime & trend strength")
-    overview_regime_name = st.selectbox("Regime instrument", list(INDEXES.keys()), index=0, key="overview_regime_symbol")
-    overview_regime_df = market_data[overview_regime_name]
-    if overview_regime_df.empty or len(overview_regime_df) < 30:
-        st.warning("Insufficient returned OHLC history to assess regime. No regime label generated.")
-    else:
-        overview_rc = indicators(overview_regime_df).copy()
-        if {"High", "Low", "Close"}.issubset(overview_rc.columns):
-            overview_prevc = overview_rc["Close"].shift(1)
-            overview_tr = pd.concat([(overview_rc["High"]-overview_rc["Low"]), (overview_rc["High"]-overview_prevc).abs(), (overview_rc["Low"]-overview_prevc).abs()], axis=1).max(axis=1)
-            overview_up = overview_rc["High"].diff()
-            overview_down = -overview_rc["Low"].diff()
-            overview_plus_dm = overview_up.where((overview_up > overview_down) & (overview_up > 0), 0.0)
-            overview_minus_dm = overview_down.where((overview_down > overview_up) & (overview_down > 0), 0.0)
-            overview_atr14 = overview_tr.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-            overview_pdi = 100 * overview_plus_dm.ewm(alpha=1/14, min_periods=14, adjust=False).mean() / overview_atr14.replace(0, np.nan)
-            overview_mdi = 100 * overview_minus_dm.ewm(alpha=1/14, min_periods=14, adjust=False).mean() / overview_atr14.replace(0, np.nan)
-            overview_dx = 100 * (overview_pdi-overview_mdi).abs() / (overview_pdi+overview_mdi).replace(0, np.nan)
-            overview_adx = overview_dx.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-            overview_last = overview_rc.iloc[-1]
-            overview_adx_value = overview_adx.iloc[-1]
-            overview_rsi_value = overview_last.get("RSI 14", np.nan)
-            overview_close = overview_last["Close"]
-            overview_ema20 = overview_last.get("EMA 20", np.nan)
-            overview_ema50 = overview_last.get("EMA 50", np.nan)
-            overview_regime = "Insufficient indicator history"
-            if pd.notna(overview_adx_value) and pd.notna(overview_ema20) and pd.notna(overview_ema50):
-                if overview_adx_value >= 25 and overview_close > overview_ema20 > overview_ema50:
-                    overview_regime = "Trending bullish"
-                elif overview_adx_value >= 25 and overview_close < overview_ema20 < overview_ema50:
-                    overview_regime = "Trending bearish"
-                elif overview_adx_value < 20:
-                    overview_regime = "Range / weak trend"
-                else:
-                    overview_regime = "Transition / mixed"
-            # Return % is in percentage points; convert to decimal before annualizing.
-            overview_vol = overview_rc["Return %"].rolling(20).std().iloc[-1] / 100 * np.sqrt(252)
-            regime_cols = st.columns([1.35, 1, 1])
-            regime_color = "#22c55e" if overview_regime == "Trending bullish" else "#ef4444" if overview_regime == "Trending bearish" else "#f59e0b"
-            regime_cols[0].markdown(
-                f'<div style="border:1px solid #343a46;border-radius:12px;padding:12px 14px;min-height:92px;">'
-                f'<div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">Market regime</div>'
-                f'<div style="font-size:clamp(16px,2.8vw,25px);line-height:1.25;font-weight:650;color:{regime_color};overflow-wrap:anywhere;">{overview_regime}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-            regime_cols[1].metric("ADX 14", fmt(overview_adx_value))
-            regime_cols[2].metric("RSI 14", fmt(overview_rsi_value))
-            st.caption(f"Calculated from {overview_regime_name} historical OHLC data · last source bar: {overview_last['Date']:%d %b %Y, %H:%M IST} · not a live signal.")
-            st.markdown("#### Price trend")
-            trend_fig = go.Figure()
-            trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["Close"], name="Close", mode="lines", line=dict(color="#60a5fa", width=2)))
-            if "EMA 20" in overview_rc:
-                trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 20"], name="EMA 20", mode="lines", line=dict(color="#f59e0b", width=1.5)))
-            if "EMA 50" in overview_rc:
-                trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 50"], name="EMA 50", mode="lines", line=dict(color="#a78bfa", width=1.5)))
-            trend_fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified", xaxis_title="Source candle date", yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0))
-            st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
-    st.divider()
+    st.subheader("Market snapshot and historical source data")
     st.subheader("Market snapshot")
     rows = []
     for name, df in market_data.items():
@@ -1454,3 +1089,372 @@ with advanced_tabs[5]:
     st.write("- TradingView embedded charts are a separate provider and may have exchange-specific delays.")
     st.write("- Public daily price history does not provide real option-chain OI, implied volatility, max pain, FII/DII flows or verified geopolitical causes.")
     st.write("- Calculations are only as sound as the dates, adjustments, universe membership and source rows supplied.")
+
+
+# FYERS chart workspace: all NSE cash-market equity symbols from FYERS Symbol Master.
+if "fyers_access_token" in st.session_state and fyers_credentials():
+    st.divider()
+    st.subheader("FYERS stock charts")
+    st.caption("Choose any symbol from FYERS' NSE capital-market symbol master. Candles are from FYERS Historical Data; the current quote is fetched separately. This is not a continuously updating WebSocket chart.")
+    symbols_list, symbols_error = fyers_nse_equity_symbols()
+    if symbols_error:
+        st.warning(symbols_error)
+    elif not symbols_list:
+        st.warning("The FYERS symbol master returned no NSE equity symbols.")
+    else:
+        symbol_labels = {f"{name or symbol} · {symbol}": symbol for symbol, name in symbols_list}
+        selected_label = st.selectbox("Search/select NSE stock", list(symbol_labels.keys()), index=0, key="fyers_chart_symbol")
+        col_res, col_period = st.columns(2)
+        with col_res:
+            chart_resolution = st.selectbox("Candle interval", ["1", "5", "15", "30", "60", "120", "240", "1D", "1W"], index=2, key="fyers_chart_resolution", format_func=lambda value: {"1":"1 minute","5":"5 minutes","15":"15 minutes","30":"30 minutes","60":"1 hour","120":"2 hours","240":"4 hours","1D":"1 day","1W":"1 week"}[value])
+        with col_period:
+            chart_days_label = st.selectbox("History window", ["5 days", "1 month", "3 months", "6 months", "1 year", "2 years", "5 years"], index=2, key="fyers_chart_days")
+        chart_days = {"5 days": 5, "1 month": 31, "3 months": 92, "6 months": 183, "1 year": 365, "2 years": 730, "5 years": 1825}[chart_days_label]
+        if chart_resolution in {"1", "5"} and chart_days > 5:
+            st.warning("For 1-minute and 5-minute candles, the chart automatically limits history to the most recent 5 calendar days to avoid oversized or unsupported requests.")
+            chart_days = 5
+        st.markdown("**Chart tools**")
+        ind1, ind2, ind3, ind4, ind5 = st.columns(5)
+        with ind1:
+            show_ema21 = st.checkbox("EMA 21", value=True, key="fyers_ema21")
+        with ind2:
+            show_ema50 = st.checkbox("EMA 50", value=False, key="fyers_ema50")
+        with ind3:
+            show_ema200 = st.checkbox("EMA 200", value=False, key="fyers_ema200")
+        with ind4:
+            show_rsi = st.checkbox("RSI", value=False, key="fyers_rsi")
+        with ind5:
+            show_stoch_rsi = st.checkbox("Stochastic RSI", value=False, key="fyers_stoch_rsi")
+        show_volume = st.checkbox("Volume", value=False, key="fyers_volume")
+        st.caption("After the chart loads, use the Plotly toolbar to draw lines, rectangles, circles, and annotations. These drawings are temporary and reset when the chart is rebuilt.")
+        if st.button("Load / refresh FYERS chart", key="fyers_load_chart"):
+            chart_symbol = symbol_labels[selected_label]
+            with st.spinner(f"Fetching FYERS candles for {chart_symbol}..."):
+                candles, candle_error = fyers_history(fyers_credentials()[0], st.session_state["fyers_access_token"], chart_symbol, chart_resolution, chart_days)
+            if candle_error:
+                st.warning(f"Chart data unavailable: {candle_error}")
+            else:
+                candles = candles.copy()
+                candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
+                candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
+                if candles.empty:
+                    st.warning("FYERS returned no valid OHLC candles for this selection.")
+                else:
+                    st.session_state["fyers_chart_data"] = candles.to_json(date_format="iso", orient="split")
+                    st.session_state["fyers_chart_symbol_loaded"] = chart_symbol
+                    st.session_state["fyers_chart_resolution_loaded"] = chart_resolution
+                    st.session_state["fyers_chart_loaded_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
+                    st.session_state.pop("fyers_chart_error", None)
+
+        # Start a single FYERS Data Socket for the currently selected chart symbol.
+        st.markdown("**Live market stream**")
+        live_symbol = symbol_labels[selected_label]
+        stream_symbol = st.session_state.get("fyers_stream_symbol")
+        stream_active = bool(st.session_state.get("fyers_stream_active"))
+        live_col1, live_col2 = st.columns(2)
+        with live_col1:
+            if not stream_active and st.button("▶ Start live updates", key="fyers_start_stream"):
+                try:
+                    import queue
+                    import threading
+                    from fyers_apiv3.FyersWebsocket import data_ws
+
+                    tick_queue = queue.Queue(maxsize=2000)
+                    app_id = fyers_credentials()[0]
+                    access_token = st.session_state["fyers_access_token"]
+                    def _push_tick(message):
+                        if isinstance(message, dict) and message.get("symbol") and message.get("ltp") is not None:
+                            try:
+                                tick_queue.put_nowait(dict(message, received_at=datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()))
+                            except Exception:
+                                pass
+                    def _socket_error(message):
+                        try:
+                            tick_queue.put_nowait({"_error": str(message), "received_at": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()})
+                        except Exception:
+                            pass
+                    socket_holder = {"socket": None}
+                    def _on_connect():
+                        connected_socket = socket_holder.get("socket")
+                        if connected_socket:
+                            connected_socket.subscribe(symbols=[live_symbol], data_type="SymbolUpdate")
+                            connected_socket.keep_running()
+                    socket_ref = data_ws.FyersDataSocket(
+                        access_token=f"{app_id}:{access_token}",
+                        log_path="",
+                        litemode=False,
+                        write_to_file=False,
+                        reconnect=True,
+                        reconnect_retry=10,
+                        on_connect=_on_connect,
+                        on_close=_socket_error,
+                        on_error=_socket_error,
+                        on_message=_push_tick,
+                    )
+                    socket_holder["socket"] = socket_ref
+                    st.session_state["fyers_tick_queue"] = tick_queue
+                    st.session_state["fyers_socket_ref"] = socket_ref
+                    st.session_state["fyers_stream_symbol"] = live_symbol
+                    st.session_state["fyers_stream_active"] = True
+                    thread = threading.Thread(target=socket_ref.connect, daemon=True)
+                    st.session_state["fyers_socket_thread"] = thread
+                    thread.start()
+                    st.success(f"Started FYERS live stream for {live_symbol}.")
+                except Exception as exc:
+                    st.session_state["fyers_stream_active"] = False
+                    st.error(f"Could not start FYERS live stream ({exc.__class__.__name__}). Check app deployment and FYERS session.")
+        with live_col2:
+            if stream_active and st.button("■ Stop live updates", key="fyers_stop_stream"):
+                try:
+                    socket_ref = st.session_state.get("fyers_socket_ref")
+                    if socket_ref:
+                        socket_ref.close_connection()
+                except Exception:
+                    pass
+                st.session_state["fyers_stream_active"] = False
+                st.session_state.pop("fyers_socket_ref", None)
+                st.session_state.pop("fyers_socket_thread", None)
+                st.session_state.pop("fyers_tick_queue", None)
+                st.session_state.pop("fyers_live_tick", None)
+                st.rerun()
+
+        @st.fragment(run_every=2)
+        def _fyers_live_chart_fragment():
+            import queue as _queue
+            tick_queue = st.session_state.get("fyers_tick_queue")
+            if tick_queue is not None:
+                while True:
+                    try:
+                        tick = tick_queue.get_nowait()
+                    except _queue.Empty:
+                        break
+                    if tick.get("_error"):
+                        st.session_state["fyers_stream_error"] = tick["_error"]
+                    elif tick.get("symbol") == st.session_state.get("fyers_stream_symbol"):
+                        st.session_state["fyers_live_tick"] = tick
+                        st.session_state["fyers_stream_error"] = None
+
+            tick = st.session_state.get("fyers_live_tick")
+            if tick and tick.get("symbol") == st.session_state.get("fyers_stream_symbol"):
+                tick_time = tick.get("exch_feed_time") or tick.get("last_traded_time")
+                try:
+                    tick_time_text = datetime.fromtimestamp(float(tick_time), ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") if tick_time else tick.get("received_at", "time unavailable")
+                except Exception:
+                    tick_time_text = tick.get("received_at", "time unavailable")
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    st.metric("FYERS live LTP", f"{float(tick['ltp']):,.2f}", f"{float(tick.get('chp', 0)):+.2f}%" if tick.get("chp") is not None else None)
+                with m2:
+                    st.metric("Day high", f"{float(tick['high_price']):,.2f}" if tick.get("high_price") is not None else "—")
+                with m3:
+                    st.metric("Day low", f"{float(tick['low_price']):,.2f}" if tick.get("low_price") is not None else "—")
+                st.caption(f"WebSocket feed time: {tick_time_text} · Last received by app: {tick.get('received_at', 'unknown')}")
+            elif st.session_state.get("fyers_stream_error"):
+                st.warning("FYERS stream message: " + str(st.session_state["fyers_stream_error"])[:300])
+            elif st.session_state.get("fyers_stream_active"):
+                st.info("Connecting to FYERS Data Socket; waiting for the first market update.")
+            else:
+                st.caption("Live stream is stopped. Start it during market hours to receive updates.")
+
+            chart_json = st.session_state.get("fyers_chart_data")
+            if chart_json:
+                chart_symbol_loaded = st.session_state.get("fyers_chart_symbol_loaded", live_symbol)
+                candles = pd.read_json(chart_json, orient="split")
+                candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
+                candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
+                if not candles.empty:
+                    tick = st.session_state.get("fyers_live_tick")
+                    current_ltp = tick.get("ltp") if tick and tick.get("symbol") == chart_symbol_loaded else None
+                    fig = go.Figure(data=[go.Candlestick(x=candles["Date"], open=candles["Open"], high=candles["High"], low=candles["Low"], close=candles["Close"], name=chart_symbol_loaded)])
+                    for span, enabled in [(21, show_ema21), (50, show_ema50), (200, show_ema200)]:
+                        if enabled:
+                            ema_values = candles["Close"].ewm(span=span, adjust=False).mean()
+                            fig.add_trace(go.Scatter(x=candles["Date"], y=ema_values, name="EMA " + str(span), mode="lines", line=dict(width=1.4)))
+                    if show_volume and "Volume" in candles:
+                        volume_fig = go.Figure(go.Bar(x=candles["Date"], y=candles["Volume"], name="Volume"))
+                        volume_fig.update_layout(title="Volume", template="plotly_dark", height=220, margin=dict(l=20,r=20,t=40,b=20), xaxis_title="Time (IST)")
+                        st.plotly_chart(volume_fig, use_container_width=True, config={"displaylogo": False}, key="fyers_volume_plot")
+                    if current_ltp is not None:
+                        fig.add_hline(y=float(current_ltp), line_dash="dot", annotation_text=f"Live FYERS LTP: {float(current_ltp):,.2f}")
+                    fig.update_layout(title=f"{chart_symbol_loaded} · FYERS candles", xaxis_title="Time (IST)", yaxis_title="Price", xaxis_rangeslider_visible=False, height=650, hovermode="x unified", margin=dict(l=20, r=20, t=60, b=20))
+                    fig.update_xaxes(type="date", tickformat="%d %b %H:%M" if st.session_state.get("fyers_chart_resolution_loaded") != "1D" else "%d %b %Y", showspikes=True, spikemode="across", spikesnap="cursor")
+                    fig.update_yaxes(fixedrange=False)
+                    st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False, "modeBarButtonsToAdd": ["drawline", "drawopenpath", "drawclosedpath", "drawcircle", "drawrect", "eraseshape"]}, key="fyers_live_chart_plot")
+                    st.caption(f"Historical candles: FYERS · fetched: {st.session_state.get('fyers_chart_loaded_at', 'unknown')} · live quote overlay refreshes every 2 seconds while connected.")
+                    delta = candles["Close"].diff()
+                    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                    rs = gain / loss.replace(0, np.nan)
+                    rsi = (100 - (100 / (1 + rs))).fillna(50)
+                    if show_rsi:
+                        rsi_fig = go.Figure(go.Scatter(x=candles["Date"], y=rsi, name="RSI 14", line=dict(width=1.5)))
+                        rsi_fig.add_hline(y=70, line_dash="dash")
+                        rsi_fig.add_hline(y=30, line_dash="dash")
+                        rsi_fig.update_layout(title="RSI (14)", template="plotly_dark", height=240, margin=dict(l=20,r=20,t=45,b=20), yaxis=dict(range=[0,100]), xaxis_title="Time (IST)")
+                        st.plotly_chart(rsi_fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_rsi_plot")
+                    if show_stoch_rsi:
+                        rsi_low = rsi.rolling(14, min_periods=14).min()
+                        rsi_high = rsi.rolling(14, min_periods=14).max()
+                        stoch = ((rsi-rsi_low)/(rsi_high-rsi_low).replace(0, np.nan))*100
+                        stoch_k = stoch.rolling(3, min_periods=3).mean()
+                        stoch_d = stoch_k.rolling(3, min_periods=3).mean()
+                        sf = go.Figure()
+                        sf.add_trace(go.Scatter(x=candles["Date"], y=stoch_k, name="Stoch RSI %K"))
+                        sf.add_trace(go.Scatter(x=candles["Date"], y=stoch_d, name="Stoch RSI %D"))
+                        sf.add_hline(y=80, line_dash="dash")
+                        sf.add_hline(y=20, line_dash="dash")
+                        sf.update_layout(title="Stochastic RSI (14,14,3,3)", template="plotly_dark", height=240, margin=dict(l=20,r=20,t=45,b=20), yaxis=dict(range=[0,100]), xaxis_title="Time (IST)")
+                        st.plotly_chart(sf, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_stoch_rsi_plot")
+
+        _fyers_live_chart_fragment()
+
+        if st.session_state.get("fyers_stream_active") and st.session_state.get("fyers_stream_symbol") != live_symbol:
+            st.warning("The active stream is subscribed to a different symbol. Stop it, then start again for the selected chart symbol.")
+        st.info("FYERS WebSocket updates the live quote overlay and redraws the displayed chart every 2 seconds. Historical candles remain the last fetched candle set; the latest price line is live. Stream is read-only and does not place orders.")
+if refresh:
+    st.cache_data.clear()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, str | None]:
+    """Fetch best-effort market history from Yahoo Finance via yfinance; never synthesize rows."""
+    try:
+        data = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False, actions=False, raise_errors=True)
+        if data is None or data.empty:
+            return pd.DataFrame(), "Source returned no rows for this ticker/period/interval."
+        data = data.reset_index()
+        date_col = "Datetime" if "Datetime" in data.columns else "Date"
+        data = data.rename(columns={date_col: "Date"})
+        data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
+        if data["Date"].dt.tz is None:
+            data["Date"] = data["Date"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
+        else:
+            data["Date"] = data["Date"].dt.tz_convert("Asia/Kolkata")
+        for c in ["Open", "High", "Low", "Close", "Volume"]:
+            if c in data.columns:
+                data[c] = pd.to_numeric(data[c], errors="coerce")
+        data = data.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
+        return data.reset_index(drop=True), None
+    except Exception as exc:
+        return pd.DataFrame(), f"Fetch failed: {type(exc).__name__}: {str(exc)[:240]}"
+
+# Public-data universe used to make stock research less manual. Industry labels are static classifications,
+# while prices are fetched live from Yahoo Finance and must be verified against source timestamps.
+AUTO_UNIVERSE = {
+    "RELIANCE.NS": "Energy", "TCS.NS": "IT", "INFY.NS": "IT", "HCLTECH.NS": "IT",
+    "WIPRO.NS": "IT", "TECHM.NS": "IT", "HDFCBANK.NS": "Financials", "ICICIBANK.NS": "Financials",
+    "SBIN.NS": "Financials", "KOTAKBANK.NS": "Financials", "AXISBANK.NS": "Financials",
+    "BAJFINANCE.NS": "Financials", "BAJAJFINSV.NS": "Financials", "BHARTIARTL.NS": "Telecom",
+    "ITC.NS": "FMCG", "HINDUNILVR.NS": "FMCG", "NESTLEIND.NS": "FMCG", "TATAMOTORS.NS": "Auto",
+    "M&M.NS": "Auto", "MARUTI.NS": "Auto", "SUNPHARMA.NS": "Pharma", "DRREDDY.NS": "Pharma",
+    "CIPLA.NS": "Pharma", "LT.NS": "Industrials", "ULTRACEMCO.NS": "Cement", "TATASTEEL.NS": "Metals",
+    "JSWSTEEL.NS": "Metals", "NTPC.NS": "Utilities", "POWERGRID.NS": "Utilities", "ONGC.NS": "Energy",
+    "COALINDIA.NS": "Energy", "ASIANPAINT.NS": "Consumer", "TITAN.NS": "Consumer", "ADANIPORTS.NS": "Infrastructure",
+    "TRENT.NS": "Retail", "BEL.NS": "Industrials", "INDUSINDBK.NS": "Financials",
+}
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_auto_universe(period: str = "2y") -> pd.DataFrame:
+    """Fetch actual daily OHLCV for a fixed large-cap universe; return empty data on source failure."""
+    tickers = list(AUTO_UNIVERSE)
+    try:
+        raw = yf.download(tickers, period=period, interval="1d", auto_adjust=False, group_by="ticker",
+                          threads=True, progress=False, actions=False)
+        if raw is None or raw.empty:
+            return pd.DataFrame()
+        rows=[]
+        for ticker in tickers:
+            try:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    if ticker not in raw.columns.get_level_values(0):
+                        continue
+                    part=raw[ticker].copy()
+                else:
+                    part=raw.copy()
+                part=part.reset_index()
+                date_col="Date" if "Date" in part.columns else "Datetime"
+                if date_col not in part.columns or "Close" not in part.columns:
+                    continue
+                part=part.rename(columns={date_col:"Date"})
+                part["Date"]=pd.to_datetime(part["Date"],errors="coerce")
+                part["Symbol"]=ticker.replace(".NS","")
+                part["Industry"]=AUTO_UNIVERSE[ticker]
+                for c in ["Open","High","Low","Close","Volume"]:
+                    if c in part.columns: part[c]=pd.to_numeric(part[c],errors="coerce")
+                part=part.dropna(subset=["Date","Close"])
+                if not part.empty:
+                    rows.append(part[[c for c in ["Date","Symbol","Industry","Open","High","Low","Close","Volume"] if c in part.columns]])
+            except Exception:
+                continue
+        return pd.concat(rows,ignore_index=True) if rows else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+def get_news_rss(query: str, limit: int = 12) -> tuple[pd.DataFrame, str | None]:
+    """Fetch public Google News RSS search results; headlines are attributed and never treated as verified causal explanations."""
+    import xml.etree.ElementTree as ET
+    from urllib.parse import quote_plus
+    try:
+        url = "https://news.google.com/rss/search?q=" + quote_plus(query) + "&hl=en-IN&gl=IN&ceid=IN:en"
+        response = requests.get(url, headers={"User-Agent":"Mozilla/5.0 MarketIntelligenceTerminal/1.0"}, timeout=12)
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+        rows = []
+        for item in root.findall(".//item")[:limit]:
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            pub = (item.findtext("pubDate") or "").strip()
+            source = item.find("source")
+            publisher = (source.text or "").strip() if source is not None else ""
+            if title and link:
+                rows.append({"Published (RSS)":pub,"Headline":title,"Publisher":publisher,"Source link":link})
+        if not rows:
+            return pd.DataFrame(), "RSS returned no headline rows."
+        return pd.DataFrame(rows), None
+    except Exception as exc:
+        return pd.DataFrame(), f"News RSS unavailable: {type(exc).__name__}: {str(exc)[:150]}"
+
+
+def indicators(data: pd.DataFrame) -> pd.DataFrame:
+    out = data.copy()
+    close = out["Close"]
+    for n in [5, 11, 20, 50, 100, 200]:
+        out[f"SMA {n}"] = close.rolling(n, min_periods=n).mean()
+        out[f"EMA {n}"] = close.ewm(span=n, adjust=False, min_periods=n).mean()
+    delta = close.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    rs = gain / loss.replace(0, np.nan)
+    out["RSI 14"] = 100 - 100 / (1 + rs)
+    out.loc[(loss == 0) & gain.notna(), "RSI 14"] = 100
+    if {"High", "Low"}.issubset(out.columns):
+        out["Daily Range"] = out["High"] - out["Low"]
+        for n in [5, 10, 14, 20]:
+            out[f"ADR {n}"] = out["Daily Range"].rolling(n, min_periods=n).mean()
+        prev_close = close.shift(1)
+        tr = pd.concat([out["High"]-out["Low"], (out["High"]-prev_close).abs(), (out["Low"]-prev_close).abs()], axis=1).max(axis=1)
+        out["ATR 14"] = tr.rolling(14, min_periods=14).mean()
+    out["Return %"] = close.pct_change() * 100
+    return out
+
+def fmt(value, decimals=2):
+    try:
+        if pd.isna(value): return "—"
+        return f"{float(value):,.{decimals}f}"
+    except Exception:
+        return "—"
+
+def tv_widget(kind: str, config: dict, height: int = 500):
+    config_json = json.dumps(config, ensure_ascii=False).replace("</", "<\\/")
+    script = f'''<div class="tradingview-widget-container" style="height:{height}px;width:100%"><div class="tradingview-widget-container__widget" style="height:calc(100% - 28px);width:100%"></div><div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/" rel="noopener nofollow" target="_blank"><span>TradingView</span></a></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-{kind}.js" async>{config_json}</script></div>'''
+    components.html(script, height=height + 10, scrolling=False)
+
+def advanced_chart(symbol: str, height: int = 720):
+    tv_widget("advanced-chart", {"autosize": True, "symbol": symbol, "interval": "D", "timezone": "Asia/Kolkata", "theme": "dark", "style": "1", "locale": "en", "allow_symbol_change": True, "calendar": False, "support_host": "https://www.tradingview.com"}, height)
+
+def quote_snapshot(df: pd.DataFrame):
+    if df.empty: return None
+    last = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else None
+    change = float(last["Close"] - prev["Close"]) if prev is not None else np.nan
+    pct = change / float(prev["Close"]) * 100 if prev is not None and float(prev["Close"]) != 0 else np.nan
+    return last, change, pct
