@@ -605,7 +605,7 @@ for gift_source_name, gift_url in gift_sources:
         gift_response.raise_for_status()
         gift_html = gift_response.text
         gift_text = html.unescape(re.sub(r"<[^>]+>", " ", gift_html))
-        gift_text = re.sub(r"\\s+", " ", gift_text)
+        gift_text = re.sub(r"\s+", " ", gift_text)
         # Prefer the quote in the main GIFT NIFTY block, before global-market tables.
         gift_upper = gift_text.upper()
         gift_anchor = gift_upper.find("GIFT NIFTY NSE IFSC")
@@ -614,7 +614,7 @@ for gift_source_name, gift_url in gift_sources:
         gift_search_text = gift_text[gift_anchor:gift_anchor + 5000] if gift_anchor >= 0 else gift_text[:5000]
         # Expected display: 24,609.50 ▼ -22.00 (-0.09%).
         gift_match = re.search(
-            r"([+-]?\\d[\\d,]*\\.\\d{1,2})\\s*\\(\\s*([+-]?\\d+\\.\\d{1,2})\\s*%\\s*\\)",
+            r"([+-]?\d[\d,]*\.\d{1,2})\s*\(\s*([+-]?\d+\.\d{1,2})\s*%\s*\)",
             gift_search_text,
         )
         if not gift_match:
@@ -624,7 +624,7 @@ for gift_source_name, gift_url in gift_sources:
         gift_change_pct = float(gift_match.group(2))
         gift_score = 1 if gift_change_pct > 0 else -1 if gift_change_pct < 0 else 0
         sentiment_parts.append((gift_score, 0.40))
-        gift_asof_match = re.search(r"Last updated:\\s*([^·]{1,80})", gift_search_text, flags=re.IGNORECASE)
+        gift_asof_match = re.search(r"Last updated:\s*([^·]{1,80})", gift_search_text, flags=re.IGNORECASE)
         gift_asof = gift_asof_match.group(1).strip() if gift_asof_match else "Timestamp not parsed; verify source"
         sentiment_details.append({
             "Factor": f"GIFT Nifty · {gift_source_name}",
