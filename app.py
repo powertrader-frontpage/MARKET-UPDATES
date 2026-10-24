@@ -627,49 +627,134 @@ with research_tabs[0]:
 
 with research_tabs[1]:
     st.subheader("24 · Delivery activity and money-flow proxies")
-    st.write("Delivery percentage is not reliably available through the same free price-history feed. This section therefore remains optional: upload genuine NSE delivery data when you have it. No delivery values are guessed.")
-    st.markdown("[Open official NSE All Reports](https://www.nseindia.com/all-reports) · Look for security-wise delivery / deliverable quantity reports.")
-    flow_file = st.file_uploader("Delivery / turnover CSV", type=["csv"], key="delivery_flow_csv")
-    if flow_file is not None:
-        try:
+    st.write("Automatically retrieves NSE's official Full Bhavcopy and Security Deliverable data when the public archive is accessible. This is end-of-day data, not live intraday flow.")
+    st.markdown("[Official NSE All Reports](https://www.nseindia.com/all-reports) · [NSE archive](https://nsearchives.nseindia.com/products/content/)")
+    flow_file = st.file_uploader("Optional: override with a genuine delivery / turnover CSV", type=["csv"], key="delivery_flow_csv")
+    st.button("↻ Fetch official NSE delivery history", key="auto_delivery_fetch", on_click=st.cache_data.clear)
+    st.caption("NSE source: sec_bhavdata_full daily CSV. Delivery percentage comes from DELIV_PER; traded value is TURNOVER_LACS × 100,000. EQ series only. Report dates are validated; no sample values are used.")
+    @st.cache_data(ttl=21600, show_spinner=False)
+    def get_nse_delivery_history(max_sessions: int = 20) -> tuple[pd.DataFrame, str | None]:
+        import io
+        import time as _time
+        from datetime import timedelta
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Accept": "text/csv,text/plain,*/*",
+            "Referer": "https://www.nseindia.com/all-reports",
+        })
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        parts, errors, valid_sessions = [], [], 0
+        for offset in range(46):
+            day = today - timedelta(days=offset)
+            if day.weekday() >= 5:
+                continue
+            url = f"https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{day:%d%m%Y}.csv"
+            try:
+                response = session.get(url, timeout=8)
+                if response.status_code != 200 or not response.text.strip():
+                    errors.append(f"{day:%Y-%m-%d}: HTTP {response.status_code}")
+                    continue
+                if response.text.lstrip().lower().startswith(("<!doctype html", "<html")):
+                    errors.append(f"{day:%Y-%m-%d}: returned HTML instead of CSV")
+                    continue
+                frame = pd.read_csv(io.StringIO(response.text), skipinitialspace=True, dtype=str)
+                frame.columns = [str(c).strip().upper() for c in frame.columns]
+                required = {"SYMBOL", "SERIES", "DATE1", "CLOSE_PRICE", "TTL_TRD_QNTY", "TURNOVER_LACS", "DELIV_PER"}
+                if not required.issubset(frame.columns):
+                    errors.append(f"{day:%Y-%m-%d}: NSE columns not recognised")
+                    continue
+                parsed_dates = pd.to_datetime(frame["DATE1"].astype(str).str.strip(), errors="coerce", dayfirst=True)
+                actual_dates = parsed_dates.dropna().dt.date.unique()
+                if len(actual_dates) != 1 or actual_dates[0] != day:
+                    errors.append(f"{day:%Y-%m-%d}: report date mismatch")
+                    continue
+                frame["SERIES"] = frame["SERIES"].astype(str).str.strip().str.upper()
+                frame = frame[frame["SERIES"] == "EQ"].copy()
+                if frame.empty:
+                    errors.append(f"{day:%Y-%m-%d}: no EQ rows")
+                    continue
+                frame["Date"] = pd.to_datetime(frame["DATE1"].astype(str).str.strip(), errors="coerce", dayfirst=True)
+                frame["Symbol"] = frame["SYMBOL"].astype(str).str.strip().str.upper()
+                industry_map = {k.replace(".NS", ""): v for k, v in AUTO_UNIVERSE.items()}
+                frame["Industry"] = frame["Symbol"].map(industry_map).fillna("")
+                frame["Close"] = pd.to_numeric(frame["CLOSE_PRICE"].astype(str).str.strip(), errors="coerce")
+                frame["Volume"] = pd.to_numeric(frame["TTL_TRD_QNTY"].astype(str).str.strip(), errors="coerce")
+                frame["DeliveryPct"] = pd.to_numeric(frame["DELIV_PER"].astype(str).str.strip(), errors="coerce")
+                frame["TradedValue"] = pd.to_numeric(frame["TURNOVER_LACS"].astype(str).str.strip(), errors="coerce") * 100000
+                clean = frame[["Date","Symbol","Industry","Close","Volume","DeliveryPct","TradedValue"]].dropna(subset=["Date","Symbol","Close","Volume","DeliveryPct"])
+                if clean.empty:
+                    errors.append(f"{day:%Y-%m-%d}: no usable delivery rows")
+                    continue
+                parts.append(clean)
+                valid_sessions += 1
+                if valid_sessions >= max_sessions:
+                    break
+                _time.sleep(0.25)
+            except Exception as exc:
+                errors.append(f"{day:%Y-%m-%d}: {type(exc).__name__}: {str(exc)[:90]}")
+        if not parts:
+            detail = "; ".join(errors[-3:]) if errors else "No trading-day reports found in the lookback window."
+            return pd.DataFrame(), f"NSE archive unavailable or no verified reports returned. {detail}"
+        result = pd.concat(parts, ignore_index=True).drop_duplicates(["Symbol","Date"], keep="last").sort_values(["Symbol","Date"])
+        return result.reset_index(drop=True), None
+
+    try:
+        flow_error = None
+        if flow_file is not None:
             flow = pd.read_csv(flow_file)
             flow.columns = [str(c).strip() for c in flow.columns]
+            source_label = "User-uploaded CSV (as supplied)"
             required = {"Symbol", "Date", "Close", "Volume", "DeliveryPct"}
             if not required.issubset(flow.columns):
-                st.error("Required columns: Symbol, Date, Close, Volume, DeliveryPct.")
+                st.error("Required upload columns: Symbol, Date, Close, Volume, DeliveryPct.")
+                flow = pd.DataFrame()
+        else:
+            with st.spinner("Retrieving and validating recent official NSE delivery reports…"):
+                flow, flow_error = get_nse_delivery_history()
+            source_label = "NSE official Full Bhavcopy and Security Deliverable data"
+            if flow_error:
+                st.warning(flow_error)
+        if not flow.empty:
+            flow.columns = [str(c).strip() for c in flow.columns]
+            flow["Date"] = pd.to_datetime(flow["Date"], errors="coerce", dayfirst=True)
+            for col in ["Close", "Volume", "DeliveryPct", "TradedValue"]:
+                if col in flow:
+                    flow[col] = pd.to_numeric(flow[col], errors="coerce")
+            flow = flow.dropna(subset=["Symbol","Date","Close","Volume","DeliveryPct"]).sort_values(["Symbol","Date"]).drop_duplicates(["Symbol","Date"], keep="last")
+            flow["AvgVol20"] = flow.groupby("Symbol")["Volume"].transform(lambda x: x.rolling(20, min_periods=10).mean())
+            flow["AvgDelivery20"] = flow.groupby("Symbol")["DeliveryPct"].transform(lambda x: x.rolling(20, min_periods=10).mean())
+            flow["Delivery change vs 20d pp"] = flow["DeliveryPct"] - flow["AvgDelivery20"]
+            flow["Volume vs 20d avg"] = flow["Volume"] / flow["AvgVol20"].replace(0, np.nan)
+            latest_date = flow["Date"].max()
+            last_flow = flow[flow["Date"] == latest_date].copy()
+            previous = flow.groupby("Symbol").tail(2).groupby("Symbol")["Close"].apply(lambda s: (s.iloc[-1]/s.iloc[-2]-1)*100 if len(s)>1 and s.iloc[-2] else np.nan)
+            last_flow["Price change %"] = last_flow["Symbol"].map(previous)
+            if "TradedValue" not in last_flow or last_flow["TradedValue"].isna().all():
+                last_flow["TradedValue"] = last_flow["Close"] * last_flow["Volume"]
+                value_label = "Close × volume proxy (not exchange turnover)"
             else:
-                flow["Date"] = pd.to_datetime(flow["Date"], errors="coerce")
-                for col in ["Close", "Volume", "DeliveryPct", "TradedValue"]:
-                    if col in flow: flow[col] = pd.to_numeric(flow[col], errors="coerce")
-                flow = flow.dropna(subset=["Symbol", "Date", "Close", "Volume", "DeliveryPct"]).sort_values(["Symbol", "Date"]).drop_duplicates(["Symbol", "Date"], keep="last")
-                flow["AvgVol20"] = flow.groupby("Symbol")["Volume"].transform(lambda x: x.rolling(20, min_periods=10).mean())
-                flow["AvgDelivery20"] = flow.groupby("Symbol")["DeliveryPct"].transform(lambda x: x.rolling(20, min_periods=10).mean())
-                flow["Delivery change vs 20d pp"] = flow["DeliveryPct"] - flow["AvgDelivery20"]
-                flow["Volume vs 20d avg"] = flow["Volume"] / flow["AvgVol20"].replace(0, np.nan)
-                latest_date = flow["Date"].max()
-                last_flow = flow[flow["Date"] == latest_date].copy()
-                previous = flow.groupby("Symbol").tail(2).groupby("Symbol")["Close"].apply(lambda s: (s.iloc[-1]/s.iloc[-2]-1)*100 if len(s)>1 and s.iloc[-2] else np.nan)
-                last_flow["Price change %"] = last_flow["Symbol"].map(previous)
-                if "TradedValue" in last_flow:
-                    sort_col = "TradedValue"
-                else:
-                    last_flow["TradedValue proxy"] = last_flow["Close"] * last_flow["Volume"]
-                    sort_col = "TradedValue proxy"
-                last_flow["Activity flag"] = np.select([
-                    (last_flow["Price change %"] > 0) & (last_flow["Delivery change vs 20d pp"] > 0) & (last_flow["Volume vs 20d avg"] > 1),
-                    (last_flow["Price change %"] < 0) & (last_flow["Delivery change vs 20d pp"] > 0) & (last_flow["Volume vs 20d avg"] > 1)],
-                    ["Price up + delivery/volume elevated","Price down + delivery/volume elevated"], default="Mixed / insufficient confirmation")
-                show_cols = [c for c in ["Date","Symbol","Industry","Close","Price change %","Volume","Volume vs 20d avg","DeliveryPct","AvgDelivery20","Delivery change vs 20d pp",sort_col,"Activity flag"] if c in last_flow.columns]
-                st.caption(f"Latest uploaded date: {latest_date:%Y-%m-%d}. Rankings derive only from uploaded rows.")
-                st.dataframe(last_flow.sort_values(sort_col, ascending=False)[show_cols], use_container_width=True, hide_index=True)
-                st.download_button("Download activity analysis", last_flow[show_cols].to_csv(index=False).encode("utf-8"), file_name="delivery_activity_analysis.csv", mime="text/csv")
-        except Exception as exc:
-            st.error(f"Could not calculate delivery activity: {type(exc).__name__}: {exc}")
-    else:
-        st.info("No delivery or money-flow values are calculated until you upload a genuine dataset.")
-    st.markdown("**Suggested input schema**")
-    st.code("Date,Symbol,Industry,Close,Volume,DeliveryPct,TradedValue\n2026-01-02,ABC,Pharma,123.45,100000,42.5,12345000", language="csv")
-    st.caption("The row above is a schema example only, not real market data.")
+                value_label = "NSE reported traded value (₹)"
+            last_flow["Activity flag"] = np.select([
+                (last_flow["Price change %"] > 0) & (last_flow["Delivery change vs 20d pp"] > 0) & (last_flow["Volume vs 20d avg"] > 1),
+                (last_flow["Price change %"] < 0) & (last_flow["Delivery change vs 20d pp"] > 0) & (last_flow["Volume vs 20d avg"] > 1)],
+                ["Price up + delivery/volume elevated","Price down + delivery/volume elevated"], default="Mixed / insufficient confirmation")
+            show_cols = [c for c in ["Date","Symbol","Industry","Close","Price change %","Volume","Volume vs 20d avg","DeliveryPct","AvgDelivery20","Delivery change vs 20d pp","TradedValue","Activity flag"] if c in last_flow.columns]
+            st.caption(f"Source: {source_label} · Latest verified date: {latest_date:%Y-%m-%d} · {flow['Date'].nunique()} sessions loaded · Traded value: {value_label}. Unknown industry labels are left blank.")
+            if flow["Date"].nunique() < 10:
+                st.info("Fewer than 10 verified sessions are available. 20-session averages remain blank until enough genuine history is retrieved.")
+            st.dataframe(last_flow.sort_values("TradedValue", ascending=False)[show_cols], use_container_width=True, hide_index=True)
+            st.download_button("Download activity analysis", last_flow[show_cols].to_csv(index=False).encode("utf-8"), file_name="delivery_activity_analysis.csv", mime="text/csv")
+            with st.expander("Source coverage and data notes"):
+                st.write("Official source: NSE Full Bhavcopy and Security Deliverable data (sec_bhavdata_full). DeliveryPct is the source's DELIV_PER field. TradedValue converts TURNOVER_LACS from lakhs to rupees. Only EQ series are included.")
+                st.write("The archive may block automated requests or omit unpublished/holiday dates. Data is end-of-day, not live. Every accepted report is checked against its requested date; missing values are never estimated.")
+                st.write(f"Loaded {flow['Symbol'].nunique()} symbols across {flow['Date'].nunique()} sessions.")
+        elif flow_file is not None:
+            st.info("No analysis shown because the uploaded file did not contain the required columns.")
+        elif not flow_error:
+            st.info("No verified NSE delivery rows were returned. No values have been fabricated.")
+    except Exception as exc:
+        st.error(f"Could not calculate delivery activity: {type(exc).__name__}: {exc}")
 
 with research_tabs[2]:
     st.subheader("25 · Daily market briefing")
