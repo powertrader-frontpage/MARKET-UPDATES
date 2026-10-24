@@ -606,17 +606,32 @@ for gift_source_name, gift_url in gift_sources:
         gift_html = gift_response.text
         gift_text = html.unescape(re.sub(r"<[^>]+>", " ", gift_html))
         gift_text = re.sub(r"\s+", " ", gift_text)
-        # Prefer the quote in the main GIFT NIFTY block, before global-market tables.
+        # First inspect the browser-rendered page's usual text pattern; also search raw HTML
+        # because some site templates keep quote values in embedded JSON/data attributes.
         gift_upper = gift_text.upper()
         gift_anchor = gift_upper.find("GIFT NIFTY NSE IFSC")
         if gift_anchor < 0:
             gift_anchor = gift_upper.find("GIFT NIFTY")
-        gift_search_text = gift_text[gift_anchor:gift_anchor + 5000] if gift_anchor >= 0 else gift_text[:5000]
-        # Expected display: 24,609.50 ▼ -22.00 (-0.09%).
+        gift_search_text = gift_text[gift_anchor:gift_anchor + 8000] if gift_anchor >= 0 else gift_text[:8000]
         gift_match = re.search(
             r"([+-]?\d[\d,]*\.\d{1,2})\s*\(\s*([+-]?\d+\.\d{1,2})\s*%\s*\)",
             gift_search_text,
         )
+        if not gift_match:
+            # Fallback: inspect raw HTML/embedded JSON where whitespace or tags may differ.
+            gift_raw = html.unescape(gift_html).replace("\\u002d", "-").replace("\\/", "/")
+            gift_match = re.search(
+                r"([+-]?\d[\d,]*\.\d{1,2})[^0-9]{0,100}\(\s*([+-]?\d+\.\d{1,2})\s*%\s*\)",
+                gift_raw,
+                flags=re.IGNORECASE,
+            )
+        if not gift_match:
+            # Some templates render the point change and percentage in separate adjacent elements.
+            gift_match = re.search(
+                r"(?:GIFT NIFTY.{0,1200}?)([+-]\d[\d,]*\.\d{1,2}).{0,100}?([+-]\d+\.\d{1,2})\s*%",
+                gift_text,
+                flags=re.IGNORECASE,
+            )
         if not gift_match:
             gift_failures.append(f"{gift_source_name}: quote pattern not found")
             continue
