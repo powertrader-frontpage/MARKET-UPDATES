@@ -26,6 +26,14 @@ st.set_page_config(page_title="Market Intelligence Terminal", page_icon="📈", 
 st.markdown("""
 <style>
 .block-container{padding-top:1rem;padding-bottom:2rem}
+[data-testid="stMetric"]{border-left:4px solid #64748b}
+.signal-good [data-testid="stMetric"]{border-left-color:#22c55e}
+.signal-bad [data-testid="stMetric"]{border-left-color:#ef4444}
+.signal-neutral [data-testid="stMetric"]{border-left-color:#f59e0b}
+div[data-testid="stExpander"]{border:1px solid rgba(148,163,184,.3);border-radius:12px;overflow:hidden}
+div[data-testid="stExpander"] summary{font-weight:650}
+div[data-testid="stDataFrame"]{border-radius:10px;overflow:hidden}
+
 [data-testid="stMetric"]{background:rgba(100,120,145,.08);border:1px solid rgba(120,140,160,.25);padding:12px;border-radius:12px}
 .small-note{font-size:.85rem;opacity:.8}\n[data-testid='stDataFrame']{max-width:100%}
 [data-testid="stMetricDelta"] svg{display:inline-block}
@@ -592,8 +600,10 @@ else:
             f'</div>',
             unsafe_allow_html=True,
         )
-        regime_cols[1].metric("ADX 14", fmt(overview_adx_value))
-        regime_cols[2].metric("RSI 14", fmt(overview_rsi_value))
+        adx_color = "#22c55e" if pd.notna(overview_adx_value) and overview_adx_value >= 25 else "#f59e0b" if pd.notna(overview_adx_value) and overview_adx_value >= 20 else "#94a3b8"
+        rsi_color = "#ef4444" if pd.notna(overview_rsi_value) and overview_rsi_value < 30 else "#22c55e" if pd.notna(overview_rsi_value) and overview_rsi_value > 70 else "#f59e0b" if pd.notna(overview_rsi_value) and (overview_rsi_value >= 60 or overview_rsi_value <= 40) else "#94a3b8"
+        regime_cols[1].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {adx_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">ADX 14 · trend strength</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{adx_color};">{fmt(overview_adx_value)}</div><div style="font-size:12px;color:#aeb6c2;">{ "Strong trend" if pd.notna(overview_adx_value) and overview_adx_value >= 25 else "Trend building" if pd.notna(overview_adx_value) and overview_adx_value >= 20 else "Weak trend" }</div></div>', unsafe_allow_html=True)
+        regime_cols[2].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {rsi_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">RSI 14 · momentum</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{rsi_color};">{fmt(overview_rsi_value)}</div><div style="font-size:12px;color:#aeb6c2;">{ "Oversold" if pd.notna(overview_rsi_value) and overview_rsi_value < 30 else "Overbought" if pd.notna(overview_rsi_value) and overview_rsi_value > 70 else "Bullish momentum" if pd.notna(overview_rsi_value) and overview_rsi_value >= 60 else "Bearish momentum" if pd.notna(overview_rsi_value) and overview_rsi_value <= 40 else "Neutral" }</div></div>', unsafe_allow_html=True)
         st.caption(f"Calculated from {overview_regime_name} historical OHLC data · last source bar: {overview_last['Date']:%d %b %Y, %H:%M IST} · not a live signal.")
         st.markdown("#### Price trend")
         trend_fig = go.Figure()
@@ -774,10 +784,14 @@ with tabs[2]:
                 fig.add_trace(go.Scatter(x=calc["Date"], y=calc[ma], name=ma, line={"width": 1.3}))
         fig.update_layout(template="plotly_dark", height=470, margin={"l": 10, "r": 10, "t": 25, "b": 10}, xaxis_title="Source candle time", yaxis_title="Price")
         st.plotly_chart(fig, use_container_width=True)
-        rsi_fig = go.Figure(go.Scatter(x=calc["Date"], y=calc["RSI 14"], name="RSI 14"))
-        rsi_fig.add_hline(y=70, line_dash="dash")
-        rsi_fig.add_hline(y=30, line_dash="dash")
-        rsi_fig.update_layout(template="plotly_dark", height=260, yaxis={"range": [0,100]}, margin={"l":10,"r":10,"t":20,"b":10})
+        rsi_fig = go.Figure()
+        rsi_fig.add_hrect(y0=0, y1=30, fillcolor="rgba(239,68,68,.16)", line_width=0)
+        rsi_fig.add_hrect(y0=70, y1=100, fillcolor="rgba(34,197,94,.16)", line_width=0)
+        rsi_fig.add_hrect(y0=30, y1=70, fillcolor="rgba(245,158,11,.06)", line_width=0)
+        rsi_fig.add_trace(go.Scatter(x=calc["Date"], y=calc["RSI 14"], name="RSI 14", line={"color":"#60a5fa","width":2.5"}))
+        rsi_fig.add_hline(y=70, line_dash="dash", line_color="#22c55e", annotation_text="Overbought > 70")
+        rsi_fig.add_hline(y=30, line_dash="dash", line_color="#ef4444", annotation_text="Oversold < 30")
+        rsi_fig.update_layout(template="plotly_dark", height=280, yaxis={"range": [0,100]}, margin={"l":10,"r":10,"t":25,"b":10}, title="RSI 14 · green > 70, red < 30")
         st.plotly_chart(rsi_fig, use_container_width=True)
         pivot = None
         if len(calc) >= 2 and {"High", "Low", "Close"}.issubset(calc.columns):
@@ -891,7 +905,7 @@ with tabs[8]:
         if annual_rows:
             annual_df = pd.DataFrame(annual_rows)
             st.markdown("#### Comparative yearly performance")
-            st.dataframe(annual_df.style.format({"Reference close": "{:,.2f}", "Year-end/latest close": "{:,.2f}", "Return (%)": "{:+.2f}"}), use_container_width=True, hide_index=True)
+            st.dataframe(annual_df.style.format({"Reference close": "{:,.2f}", "Year-end/latest close": "{:,.2f}", "Return (%)": "{:+.2f}"}).map(lambda v: "color: #22c55e; font-weight: 700" if isinstance(v, (int, float, np.number)) and v > 0 else "color: #ef4444; font-weight: 700" if isinstance(v, (int, float, np.number)) and v < 0 else "", subset=["Return (%)"]), use_container_width=True, hide_index=True)
             annual_fig = go.Figure(go.Bar(x=annual_df["Year"], y=annual_df["Return (%)"], marker_color=["#22c55e" if v >= 0 else "#ef4444" for v in annual_df["Return (%)"]], text=[f"{v:+.2f}%" for v in annual_df["Return (%)"]], textposition="outside", cliponaxis=False))
             annual_fig.add_hline(y=0, line_color="#9ca3af", line_width=1)
             annual_fig.update_layout(template="plotly_dark", title="NIFTY 50 Calendar-Year Returns (latest year is YTD)", yaxis_title="Return (%)", height=360, margin=dict(l=10, r=10, t=55, b=10), showlegend=False)
