@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import secrets
 import time
+import re
 from urllib.parse import urlencode
 
 st.set_page_config(page_title="Market Intelligence Terminal", page_icon="📈", layout="wide")
@@ -579,8 +580,30 @@ def _sentiment_change(label, ticker, weight, inverse=False):
     except Exception:
         sentiment_errors.append(f"{label}: unavailable")
 
-# GIFT Nifty is attempted via Yahoo's commonly exposed futures symbol; if unavailable, it is omitted rather than inferred.
-_sentiment_change("GIFT Nifty futures proxy", "NIFTY=F", 0.40, inverse=False)
+# Prefer Moneycontrol's published GIFT Nifty page over an unverified Yahoo futures ticker.
+# Moneycontrol labels this quote as a derived/indicative CFD, so show the source and caveat.
+try:
+    gift_url = "https://www.moneycontrol.com/live-index/gift-nifty"
+    gift_response = requests.get(gift_url, headers={"User-Agent": "Mozilla/5.0 MarketIntelligenceTerminal/1.0"}, timeout=12)
+    gift_response.raise_for_status()
+    gift_html = gift_response.text
+    gift_text = html.unescape(re.sub(r"<[^>]+>", " ", gift_html))
+    gift_text = re.sub(r"\\s+", " ", gift_text)
+    gift_anchor = gift_text.upper().find("DERIVED:CFD")
+    gift_search_text = gift_text[gift_anchor:gift_anchor + 1800] if gift_anchor >= 0 else gift_text[:12000]
+    gift_match = re.search(r"([+-]?\\d[\\d,]*\\.\\d{1,2})\\s*\\(\\s*([+-]?\\d+\\.\\d+)\\s*%\\s*\\)", gift_search_text)
+    if gift_match:
+        gift_change_points = float(gift_match.group(1).replace(",", ""))
+        gift_change_pct = float(gift_match.group(2))
+        gift_score = 1 if gift_change_pct > 0 else -1 if gift_change_pct < 0 else 0
+        sentiment_parts.append((gift_score, 0.40))
+        gift_asof_match = re.search(r"As on\\s+(.{0,70}?)(?:Markets Closed|Day Range|Open\\s*\\|)", gift_search_text, flags=re.IGNORECASE)
+        gift_asof = re.sub(r"\\s+", " ", gift_asof_match.group(1)).strip() if gift_asof_match else "time not parsed"
+        sentiment_details.append({"Factor": "GIFT Nifty · Moneycontrol indicative quote", "Latest change": f"{gift_change_pct:+.2f}% ({gift_change_points:+,.2f} pts)", "Signal": "Positive" if gift_score > 0 else "Negative" if gift_score < 0 else "Flat", "Source bar": gift_asof})
+    else:
+        sentiment_errors.append("GIFT Nifty (Moneycontrol quote pattern not found)")
+except Exception as exc:
+    sentiment_errors.append(f"GIFT Nifty (Moneycontrol unavailable: {exc.__class__.__name__})")
 _sentiment_change("Brent crude (inverse impact)", "BZ=F", 0.20, inverse=True)
 _sentiment_change("Infosys ADR", "INFY", 0.15, inverse=False)
 _sentiment_change("Wipro ADR", "WIT", 0.10, inverse=False)
