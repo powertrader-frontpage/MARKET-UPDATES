@@ -684,44 +684,116 @@ if not gift_loaded:
 _sentiment_change("Brent crude (inverse impact)", "BZ=F", 0.20, inverse=True)
 _sentiment_change("USD/INR (inverse impact)", "INR=X", 0.10, inverse=True)
 
-# Fetch the latest NSE-published cash-market FII/FPI and DII net flows where available.
-# The flow report is provisional; failures remain unavailable rather than being filled with estimates.
+# Fetch the latest NSE-published cash-market FII/FPI and DII net flows.
+# Prefer NSE's JSON endpoint; retain HTML-table parsing as a fallback. Never invent values.
 def _nse_fii_dii_latest():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-IN,en;q=0.9",
+        "Referer": "https://www.nseindia.com/reports/fii-dii",
+        "Connection": "keep-alive",
+    }
+
+    def _number(value):
+        if value is None:
+            return np.nan
+        return pd.to_numeric(str(value).replace(",", "").replace("₹", "").strip(), errors="coerce")
+
+    def _date_text(value):
+        parsed = pd.to_datetime(str(value).strip(), errors="coerce", dayfirst=True)
+        return parsed.strftime("%d %b %Y") if pd.notna(parsed) else str(value).strip() or "Date unavailable"
+
+    def _normalize_records(records):
+        if isinstance(records, dict):
+            records = records.get("data", records.get("dataTable", records.get("rows", [records])))
+        if not isinstance(records, list):
+            return {}
+        rows = []
+        for item in records:
+            if not isinstance(item, dict):
+                continue
+            lowered = {str(k).strip().lower(): v for k, v in item.items()}
+            category = str(lowered.get("category", lowered.get("investorcategory", ""))).upper()
+            if "FII" in category or "FPI" in category:
+                key = "FII/FPI"
+            elif "DII" in category:
+                key = "DII"
+            else:
+                # Some NSE API responses provide the two categories as paired fields.
+                continue
+            net_raw = lowered.get("netvalue", lowered.get("net value", lowered.get("net", None)))
+            if net_raw is None:
+                net_raw = lowered.get("fiinet" if key == "FII/FPI" else "diinet")
+            net_value = _number(net_raw)
+            if pd.isna(net_value):
+                continue
+            date_raw = lowered.get("date", lowered.get("tradedate", ""))
+            parsed_date = pd.to_datetime(str(date_raw), errors="coerce", dayfirst=True)
+            rows.append((key, float(net_value), parsed_date, _date_text(date_raw)))
+        if not rows:
+            # Alternate API shape: one record may contain fiinet/diinet and one shared date.
+            for item in records:
+                if not isinstance(item, dict):
+                    continue
+                lowered = {str(k).strip().lower(): v for k, v in item.items()}
+                date_raw = lowered.get("date", "")
+                parsed_date = pd.to_datetime(str(date_raw), errors="coerce", dayfirst=True)
+                for key, field in [("FII/FPI", "fiinet"), ("DII", "diinet")]:
+                    value = _number(lowered.get(field))
+                    if pd.notna(value):
+                        rows.append((key, float(value), parsed_date, _date_text(date_raw)))
+        result = {}
+        for key, net_value, parsed_date, date_label in rows:
+            current = result.get(key)
+            if current is None or (pd.notna(parsed_date) and (pd.isna(current.get("_parsed_date")) or parsed_date > current["_parsed_date"])):
+                result[key] = {"net": net_value, "date": date_label, "_parsed_date": parsed_date}
+        for value in result.values():
+            value.pop("_parsed_date", None)
+        return result if "FII/FPI" in result and "DII" in result else {}
+
+    session = requests.Session()
     try:
-        session = requests.Session()
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Referer": "https://www.nseindia.com/",
-        }
-        session.get("https://www.nseindia.com/", headers=headers, timeout=8)
-        response = session.get("https://www.nseindia.com/reports/fii-dii", headers=headers, timeout=12)
-        response.raise_for_status()
-        tables = pd.read_html(response.text)
-        for table in tables:
-            cols = {str(c).strip().lower(): c for c in table.columns}
-            category_col = next((c for k, c in cols.items() if "category" in k), None)
-            net_col = next((c for k, c in cols.items() if "net value" in k), None)
-            date_col = next((c for k, c in cols.items() if k == "date" or "date" in k), None)
+        # Warm the session to obtain the NSE cookies required by its data endpoint.
+        session.get("https://www.nseindia.com/", headers=headers, timeout=10)
+        api_response = session.get("https://www.nseindia.com/api/fiidiiTradeReact", headers=headers, timeout=15)
+        api_response.raise_for_status()
+        api_data = api_response.json()
+        normalized = _normalize_records(api_data)
+        if normalized:
+            return normalized
+    except Exception:
+        pass
+
+    # Fallback: parse the official NSE report tables if the JSON endpoint is blocked or changes.
+    try:
+        page_response = session.get("https://www.nseindia.com/reports/fii-dii", headers=headers, timeout=15)
+        page_response.raise_for_status()
+        for table in pd.read_html(page_response.text):
+            table = table.copy()
+            if isinstance(table.columns, pd.MultiIndex):
+                table.columns = [" ".join(str(part) for part in col if str(part) != "nan").strip() for col in table.columns]
+            cols = {str(col).strip().lower(): col for col in table.columns}
+            category_col = next((col for name, col in cols.items() if "category" in name), None)
+            net_col = next((col for name, col in cols.items() if "net value" in name), None)
+            date_col = next((col for name, col in cols.items() if name == "date" or name.endswith(" date") or "date" in name), None)
             if category_col is None or net_col is None:
                 continue
-            out = {}
+            records = []
             for _, row in table.iterrows():
                 category = str(row.get(category_col, "")).strip().upper()
-                if "FII" in category or "FPI" in category:
-                    key = "FII/FPI"
-                elif "DII" in category:
-                    key = "DII"
-                else:
+                if "FII" not in category and "FPI" not in category and "DII" not in category:
                     continue
-                value = pd.to_numeric(str(row.get(net_col, "")).replace(",", "").replace("₹", ""), errors="coerce")
-                if pd.notna(value):
-                    date_value = str(row.get(date_col, "")).strip() if date_col is not None else "Date unavailable"
-                    out[key] = {"net": float(value), "date": date_value}
-            if "FII/FPI" in out and "DII" in out:
-                return out
+                records.append({
+                    "category": category,
+                    "date": row.get(date_col, "") if date_col is not None else "",
+                    "netValue": row.get(net_col),
+                })
+            normalized = _normalize_records(records)
+            if normalized:
+                return normalized
     except Exception:
-        return {}
+        pass
     return {}
 
 fii_dii_flows = _nse_fii_dii_latest()
