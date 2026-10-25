@@ -2950,5 +2950,155 @@ with st.expander("Important: Public Yahoo Finance and market-data limitations", 
 
 
 
+# Automatic small-cap and mid-cap turnaround scanner.
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_turnaround_constituents():
+    sources = {
+        "Mid-cap": "https://www.niftyindices.com/IndexConstituent/ind_niftymidcap150list.csv",
+        "Small-cap": "https://www.niftyindices.com/IndexConstituent/ind_niftysmallcap250list.csv",
+    }
+    rows = []
+    errors = []
+    for segment, url in sources.items():
+        try:
+            response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+            response.raise_for_status()
+            from io import StringIO
+            frame = pd.read_csv(StringIO(response.text))
+            symbol_col = next((c for c in frame.columns if str(c).strip().lower() == "symbol"), None)
+            name_col = next((c for c in frame.columns if str(c).strip().lower() in ("company name", "companyname")), None)
+            if symbol_col is None:
+                errors.append(f"{segment} constituent list did not contain a Symbol column.")
+                continue
+            for _, row in frame.iterrows():
+                symbol = str(row.get(symbol_col, "")).strip()
+                if symbol and symbol.lower() != "nan":
+                    rows.append({"Symbol": symbol, "Company": str(row.get(name_col, symbol)).strip() if name_col else symbol, "Segment": segment, "Ticker": symbol + ".NS"})
+        except Exception as exc:
+            errors.append(f"{segment} constituent list unavailable ({exc.__class__.__name__}).")
+    if not rows:
+        return pd.DataFrame(), "; ".join(errors) if errors else "No constituents returned."
+    return pd.DataFrame(rows).drop_duplicates(subset=["Ticker"]), "; ".join(errors) if errors else None
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_one_turnaround_fundamentals(ticker: str, segment: str, company: str):
+    """Read quarterly income-statement data only; return no row when the source lacks enough data."""
+    try:
+        q = yf.Ticker(ticker).quarterly_income_stmt
+        if q is None or q.empty or q.shape[1] < 2:
+            return None
+        q = q.copy()
+        q.columns = pd.to_datetime(q.columns, errors="coerce")
+        q = q.loc[:, ~q.columns.isna()].sort_index(axis=1, ascending=False)
+        if q.shape[1] < 2:
+            return None
+        def metric(names, col):
+            for name in names:
+                if name in q.index:
+                    try:
+                        value = pd.to_numeric(q.loc[name, col], errors="coerce")
+                        if pd.notna(value):
+                            return float(value)
+                    except Exception:
+                        pass
+            return np.nan
+        rev_names = ["Total Revenue", "Operating Revenue", "Revenue"]
+        profit_names = ["Net Income", "Net Income Common Stockholders", "Net Income From Continuing Operation Net Minority Interest"]
+        op_names = ["Operating Income", "EBIT"]
+        dates = list(q.columns)
+        rev_now, rev_prev = metric(rev_names, dates[0]), metric(rev_names, dates[1])
+        profit_now, profit_prev = metric(profit_names, dates[0]), metric(profit_names, dates[1])
+        op_now = metric(op_names, dates[0])
+        # Prefer year-on-year comparisons when a matching quarter four periods back exists.
+        rev_base = metric(rev_names, dates[4]) if len(dates) >= 5 else np.nan
+        profit_base = metric(profit_names, dates[4]) if len(dates) >= 5 else np.nan
+        op_base = metric(op_names, dates[4]) if len(dates) >= 5 else np.nan
+        if not np.isfinite(rev_now) or rev_now <= 0 or not np.isfinite(profit_now):
+            return None
+        rev_yoy = (rev_now / rev_base - 1) * 100 if np.isfinite(rev_base) and rev_base > 0 else np.nan
+        if np.isfinite(profit_base) and profit_base != 0:
+            profit_yoy = (profit_now / abs(profit_base) - 1) * 100 if profit_base > 0 else np.nan
+        else:
+            profit_yoy = np.nan
+        margin_now = op_now / rev_now * 100 if np.isfinite(op_now) else np.nan
+        margin_prev = metric(op_names, dates[1]) / rev_prev * 100 if np.isfinite(metric(op_names, dates[1])) and np.isfinite(rev_prev) and rev_prev > 0 else np.nan
+        # A recovery from a loss to profit is explicitly flagged; growth rates across negative bases are not fabricated.
+        loss_to_profit = np.isfinite(profit_base) and profit_base < 0 and profit_now > 0
+        improving_profit = np.isfinite(profit_yoy) and profit_yoy >= 15
+        improving_sales = np.isfinite(rev_yoy) and rev_yoy >= 10
+        margin_improving = np.isfinite(margin_now) and np.isfinite(margin_prev) and margin_now > margin_prev
+        signals = sum([improving_sales, improving_profit, margin_improving, loss_to_profit])
+        if signals < 2:
+            return None
+        latest_date = dates[0].strftime("%Y-%m-%d") if hasattr(dates[0], "strftime") else str(dates[0])
+        return {
+            "Company": company, "Symbol": ticker.replace(".NS", ""), "Segment": segment,
+            "Latest quarter": latest_date, "Sales growth YoY %": round(rev_yoy, 1) if np.isfinite(rev_yoy) else np.nan,
+            "Profit growth YoY %": round(profit_yoy, 1) if np.isfinite(profit_yoy) else ("Loss → profit" if loss_to_profit else np.nan),
+            "Operating margin %": round(margin_now, 1) if np.isfinite(margin_now) else np.nan,
+            "Margin improved QoQ": bool(margin_improving) if np.isfinite(margin_now) and np.isfinite(margin_prev) else "Insufficient data",
+            "Turnaround signals": int(signals),
+            "Reason flagged": ", ".join([label for label, ok in [
+                ("Sales growth ≥10% YoY", improving_sales),
+                ("Profit growth ≥15% YoY", improving_profit),
+                ("Loss-to-profit recovery", loss_to_profit),
+                ("Operating margin improved QoQ", margin_improving),
+            ] if ok]),
+            "Source": "Yahoo Finance quarterly income statement",
+        }
+    except Exception:
+        return None
+
+def run_turnaround_scan(segments: tuple[str, ...]):
+    universe, universe_error = get_turnaround_constituents()
+    if universe.empty:
+        return pd.DataFrame(), universe_error or "Index constituent data unavailable."
+    universe = universe[universe["Segment"].isin(segments)]
+    # A modest worker pool keeps the screen practical while covering the selected index constituents.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    found = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(get_one_turnaround_fundamentals, row["Ticker"], row["Segment"], row["Company"]) for _, row in universe.iterrows()]
+        for future in as_completed(futures):
+            try:
+                item = future.result()
+                if item:
+                    found.append(item)
+            except Exception:
+                continue
+    result = pd.DataFrame(found)
+    if not result.empty:
+        result["_sort"] = pd.to_numeric(result["Turnaround signals"], errors="coerce")
+        result = result.sort_values(["_sort", "Sales growth YoY %"], ascending=[False, False], na_position="last").drop(columns=["_sort"])
+    return result, universe_error
+
+with st.expander("32 · Automatic small-cap & mid-cap turnaround scanner", expanded=True):
+    st.subheader("Automatic Turnaround Watchlist")
+    st.write("Scans current Nifty Midcap 150 and Nifty Smallcap 250 constituents for improving sales, profit recovery and operating margins. New constituents can enter when the index lists update. This is a research screen, not a buy signal.")
+    segment_choice = st.multiselect("Segments to scan", ["Mid-cap", "Small-cap"], default=["Mid-cap", "Small-cap"], key="turnaround_segments")
+    st.caption("Fundamentals: Yahoo Finance quarterly income statements · Constituents: Nifty Indices CSV lists · Cached for up to 6 hours. Initial scans may take a few minutes.")
+    if st.button("Scan / refresh turnaround stocks", type="primary", key="run_auto_turnaround_scan", disabled=not segment_choice):
+        with st.spinner("Scanning index constituents for improving fundamentals. This can take a few minutes…"):
+            scan_df, scan_warning = run_turnaround_scan(tuple(sorted(segment_choice)))
+        st.session_state["auto_turnaround_scan_results"] = scan_df
+        st.session_state["auto_turnaround_scan_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
+        st.session_state["auto_turnaround_scan_segments"] = ", ".join(segment_choice)
+        st.session_state["auto_turnaround_scan_warning"] = scan_warning
+    scan_df = st.session_state.get("auto_turnaround_scan_results", pd.DataFrame())
+    if st.session_state.get("auto_turnaround_scan_time"):
+        st.caption("Last scan: " + st.session_state["auto_turnaround_scan_time"] + " · Segments: " + st.session_state.get("auto_turnaround_scan_segments", ""))
+    if st.session_state.get("auto_turnaround_scan_warning"):
+        st.warning(st.session_state["auto_turnaround_scan_warning"])
+    if isinstance(scan_df, pd.DataFrame) and not scan_df.empty:
+        st.success(f"{len(scan_df)} potential turnaround candidate(s) matched the current rules.")
+        st.dataframe(scan_df, use_container_width=True, hide_index=True, height=520)
+        st.download_button("Download turnaround watchlist CSV", scan_df.to_csv(index=False).encode("utf-8"), file_name="small_midcap_turnaround_watchlist.csv", mime="text/csv", key="download_auto_turnaround_csv")
+        st.caption("Missing metrics remain blank. Profit growth across a negative comparison base is not calculated; loss-to-profit is flagged separately. Debt, cash flow and valuation are not screened in this first version because quarterly statement coverage is inconsistent.")
+    elif "auto_turnaround_scan_time" in st.session_state:
+        st.info("No candidates met the current rules, or the data provider returned insufficient quarterly data. This is not proof that no turnaround stocks exist.")
+    else:
+        st.info("Select segments and press Scan / refresh to generate the first watchlist. Re-run after market-data refresh to catch new qualifying stocks.")
+
+
 if refresh:
     st.cache_data.clear()
