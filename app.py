@@ -1544,11 +1544,27 @@ with st.expander("Scan small-cap / mid-cap turnaround stocks", expanded=False):
     segment_choice = st.multiselect("Segments to scan", ["Mid-cap", "Small-cap"], default=["Mid-cap", "Small-cap"], key="turnaround_segments")
     st.caption("Fundamentals: Yahoo Finance quarterly income statements · Constituents: Nifty Indices CSV lists · Cached for up to 6 hours. Initial scans may take a few minutes.")
     if st.button("Scan / refresh turnaround stocks", type="primary", key="run_auto_turnaround_scan", disabled=not segment_choice):
+        previous_df = st.session_state.get("auto_turnaround_scan_results", pd.DataFrame())
+        previous_segments = tuple(sorted(st.session_state.get("auto_turnaround_scan_segment_keys", ())))
+        current_segments = tuple(sorted(segment_choice))
         with st.spinner("Scanning index constituents for improving fundamentals. This can take a few minutes…"):
-            scan_df, scan_warning = run_turnaround_scan(tuple(sorted(segment_choice)))
+            scan_df, scan_warning = run_turnaround_scan(current_segments)
+        # Compare only like-for-like scans. On the first scan or when the selected segments change,
+        # establish a baseline instead of incorrectly labelling every result as new.
+        if isinstance(scan_df, pd.DataFrame) and not scan_df.empty:
+            if isinstance(previous_df, pd.DataFrame) and not previous_df.empty and previous_segments == current_segments and "Symbol" in previous_df.columns:
+                previous_symbols = set(previous_df["Symbol"].astype(str).str.upper())
+                scan_df = scan_df.copy()
+                scan_df["Status"] = scan_df["Symbol"].astype(str).str.upper().map(
+                    lambda symbol: "🆕 NEW" if symbol not in previous_symbols else "Previously detected"
+                )
+            else:
+                scan_df = scan_df.copy()
+                scan_df["Status"] = "Baseline scan"
         st.session_state["auto_turnaround_scan_results"] = scan_df
         st.session_state["auto_turnaround_scan_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
         st.session_state["auto_turnaround_scan_segments"] = ", ".join(segment_choice)
+        st.session_state["auto_turnaround_scan_segment_keys"] = current_segments
         st.session_state["auto_turnaround_scan_warning"] = scan_warning
     scan_df = st.session_state.get("auto_turnaround_scan_results", pd.DataFrame())
     if st.session_state.get("auto_turnaround_scan_time"):
@@ -1556,8 +1572,22 @@ with st.expander("Scan small-cap / mid-cap turnaround stocks", expanded=False):
     if st.session_state.get("auto_turnaround_scan_warning"):
         st.warning(st.session_state["auto_turnaround_scan_warning"])
     if isinstance(scan_df, pd.DataFrame) and not scan_df.empty:
-        st.success(f"{len(scan_df)} potential turnaround candidate(s) matched the current rules.")
-        st.dataframe(scan_df, use_container_width=True, hide_index=True, height=520)
+        new_count = int((scan_df.get("Status", pd.Series(dtype=str)) == "🆕 NEW").sum()) if "Status" in scan_df.columns else 0
+        if new_count:
+            st.success(f"🆕 {new_count} NEW turnaround stock(s) since your previous comparable scan.")
+        elif "Status" in scan_df.columns and (scan_df["Status"] == "Baseline scan").all():
+            st.info("Baseline saved. On your next scan with the same segments selected, newly qualifying stocks will be marked NEW.")
+        else:
+            st.success(f"{len(scan_df)} potential turnaround candidate(s) matched the current rules; no new stocks since the previous comparable scan.")
+        if "Status" in scan_df.columns:
+            def _turnaround_new_row_style(row):
+                if str(row.get("Status", "")) == "🆕 NEW":
+                    return ["background-color: #14532d; color: #ffffff; font-weight: 700"] * len(row)
+                return [""] * len(row)
+            styled_scan = scan_df.style.apply(_turnaround_new_row_style, axis=1)
+            st.dataframe(styled_scan, use_container_width=True, hide_index=True, height=520)
+        else:
+            st.dataframe(scan_df, use_container_width=True, hide_index=True, height=520)
         st.download_button("Download turnaround watchlist CSV", scan_df.to_csv(index=False).encode("utf-8"), file_name="small_midcap_turnaround_watchlist.csv", mime="text/csv", key="download_auto_turnaround_csv")
         st.caption("Missing metrics remain blank. Profit growth across a negative comparison base is not calculated; loss-to-profit is flagged separately. Debt, cash flow and valuation are not screened in this first version because quarterly statement coverage is inconsistent.")
     elif "auto_turnaround_scan_time" in st.session_state:
