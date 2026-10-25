@@ -1142,23 +1142,25 @@ else:
             else:
                 fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
 
-# Compact NIFTY 50 support/resistance reference using the latest completed daily candle.
-# Classic floor pivots are informational levels, not guaranteed turning points.
-st.markdown("#### NIFTY 50 · Support & Resistance")
-nifty_sr_df = market_data.get("NIFTY 50", pd.DataFrame())
-if nifty_sr_df.empty:
-    nifty_sr_df, nifty_sr_error = get_history("^NSEI", "1mo", "1d")
+# Compact support/resistance follows the currently selected regime instrument.
+# Classic floor pivots use the latest completed daily candle returned for that instrument.
+sr_display_name = overview_regime_name
+sr_yahoo_ticker = INDEXES.get(sr_display_name, sr_display_name + ".NS")
+st.markdown(f"#### {html.escape(sr_display_name)} · Support & Resistance")
+sr_history_df = market_data.get(sr_display_name, pd.DataFrame()).copy()
+# Market headline history may be short/intraday; fetch daily bars for a consistent pivot source.
+if sr_history_df.empty or not {"High", "Low", "Close"}.issubset(sr_history_df.columns):
+    sr_history_df, sr_history_error = get_history(sr_yahoo_ticker, "3mo", "1d")
 sr_prev = None
-if not nifty_sr_df.empty and {"High", "Low", "Close"}.issubset(nifty_sr_df.columns):
-    sr_history = nifty_sr_df.dropna(subset=["High", "Low", "Close"]).copy()
+if not sr_history_df.empty and {"High", "Low", "Close"}.issubset(sr_history_df.columns):
+    sr_history = sr_history_df.dropna(subset=["High", "Low", "Close"]).copy()
     if "Date" in sr_history.columns:
         sr_history["Date"] = pd.to_datetime(sr_history["Date"], errors="coerce")
         sr_history = sr_history.dropna(subset=["Date"]).sort_values("Date")
     if not sr_history.empty:
         latest_sr_day = sr_history.iloc[-1]["Date"].date() if "Date" in sr_history.columns else None
         today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-        # A row dated today may still be forming; use the preceding session when available.
-        # On weekends/holidays, use the most recent available completed session.
+        # Avoid using a potentially incomplete candle dated today.
         if latest_sr_day is not None and latest_sr_day >= today_ist and len(sr_history) >= 2:
             sr_prev = sr_history.iloc[-2]
         else:
@@ -1183,9 +1185,9 @@ if sr_prev is not None:
             unsafe_allow_html=True,
         )
     sr_date = sr_prev["Date"].strftime("%d %b %Y") if "Date" in sr_prev.index and pd.notna(sr_prev["Date"]) else "latest available daily candle"
-    st.caption(f"Classic pivot levels calculated from {sr_date} OHLC · Informational only; source: returned NIFTY 50 daily history.")
+    st.caption(f"Classic pivot levels for {sr_display_name}, calculated from {sr_date} OHLC · Informational only; source: returned daily history for {sr_yahoo_ticker}.")
 else:
-    st.caption("Support/resistance unavailable: insufficient valid NIFTY 50 daily OHLC data.")
+    st.caption(f"Support/resistance unavailable for {sr_display_name}: insufficient valid daily OHLC data from {sr_yahoo_ticker}.")
 
 # Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
 st.markdown("### Leading sectors vs NIFTY 50")
