@@ -1497,12 +1497,37 @@ def get_one_turnaround_fundamentals(ticker: str, segment: str, company: str):
         if signals < 2:
             return None
         latest_date = dates[0].strftime("%Y-%m-%d") if hasattr(dates[0], "strftime") else str(dates[0])
+        # Supplement turnaround signals with available annual fundamentals; never fill missing fields with estimates.
+        info = {}
+        debt_equity = pe_ratio = roe_pct = operating_cash_flow = np.nan
+        try:
+            stock_obj = yf.Ticker(ticker)
+            info = stock_obj.get_info() or {}
+            debt_raw = pd.to_numeric(info.get("debtToEquity"), errors="coerce")
+            debt_equity = float(debt_raw) if pd.notna(debt_raw) else np.nan
+            pe_raw = pd.to_numeric(info.get("trailingPE"), errors="coerce")
+            pe_ratio = float(pe_raw) if pd.notna(pe_raw) else np.nan
+            roe_raw = pd.to_numeric(info.get("returnOnEquity"), errors="coerce")
+            roe_pct = float(roe_raw) * 100 if pd.notna(roe_raw) else np.nan
+            cf = stock_obj.cashflow
+            if isinstance(cf, pd.DataFrame) and not cf.empty:
+                for cf_name in ["Operating Cash Flow", "OperatingCashFlow", "Total Cash From Operating Activities"]:
+                    if cf_name in cf.index:
+                        cf_raw = pd.to_numeric(cf.loc[cf_name].iloc[0], errors="coerce")
+                        operating_cash_flow = float(cf_raw) if pd.notna(cf_raw) else np.nan
+                        break
+        except Exception:
+            pass
         return {
             "Company": company, "Symbol": ticker.replace(".NS", ""), "Segment": segment,
             "Latest quarter": latest_date, "Sales growth YoY %": round(rev_yoy, 1) if np.isfinite(rev_yoy) else np.nan,
             "Profit growth YoY %": round(profit_yoy, 1) if np.isfinite(profit_yoy) else ("Loss → profit" if loss_to_profit else np.nan),
             "Operating margin %": round(margin_now, 1) if np.isfinite(margin_now) else np.nan,
             "Margin improved QoQ": bool(margin_improving) if np.isfinite(margin_now) and np.isfinite(margin_prev) else "Insufficient data",
+            "ROE %": round(roe_pct, 1) if np.isfinite(roe_pct) else np.nan,
+            "Debt/equity": round(debt_equity, 1) if np.isfinite(debt_equity) else np.nan,
+            "Trailing P/E": round(pe_ratio, 1) if np.isfinite(pe_ratio) else np.nan,
+            "Operating cash flow (annual, ₹)": operating_cash_flow,
             "Turnaround signals": int(signals),
             "Reason flagged": ", ".join([label for label, ok in [
                 ("Sales growth ≥10% YoY", improving_sales),
@@ -1510,7 +1535,7 @@ def get_one_turnaround_fundamentals(ticker: str, segment: str, company: str):
                 ("Loss-to-profit recovery", loss_to_profit),
                 ("Operating margin improved QoQ", margin_improving),
             ] if ok]),
-            "Source": "Yahoo Finance quarterly income statement",
+            "Source": "Yahoo Finance quarterly income statement; annual fundamentals where available",
         }
     except Exception:
         return None
