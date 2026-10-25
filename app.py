@@ -987,7 +987,14 @@ st.markdown("""<div style="font-size:clamp(28px,4vw,42px);font-weight:850;letter
 st.caption("Ranked daily-candle setups · green = bullish, red = bearish. Public data may be delayed.")
 with st.expander("Scan bullish/bearish setups and liquidity sweeps", expanded=False):
     ob_lookback = st.selectbox("Structure lookback", ["20 sessions", "40 sessions", "60 sessions"], index=0, key="ob_lookback")
-    ob_volume_filter = st.toggle("Require above-average volume for sweep confirmation (1.2× 20-day average)", value=False, key="ob_volume_filter")
+    ob_volume_mode = st.selectbox(
+        "Volume confirmation",
+        ["Off", "On — require at least 1.2× 20-day average"],
+        index=0,
+        key="ob_volume_mode_select",
+        help="When On, liquidity-sweep signals are confirmed only when the latest volume is at least 1.2 times the previous 20-session average."
+    )
+    ob_volume_filter = ob_volume_mode.startswith("On")
     ob_scan = st.button("Scan NIFTY 50 liquid stocks", key="ob_scan_button", type="primary")
     if ob_scan:
         ob_days = int(ob_lookback.split()[0])
