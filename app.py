@@ -682,6 +682,64 @@ if not gift_loaded:
     })
     sentiment_errors.append("GIFT Nifty live quote unavailable; showing the last confirmed 24 Oct snapshot for reference only (" + "; ".join(gift_failures) + ")")
 _sentiment_change("Brent crude (inverse impact)", "BZ=F", 0.20, inverse=True)
+_sentiment_change("USD/INR (inverse impact)", "INR=X", 0.10, inverse=True)
+
+# Fetch the latest NSE-published cash-market FII/FPI and DII net flows where available.
+# The flow report is provisional; failures remain unavailable rather than being filled with estimates.
+def _nse_fii_dii_latest():
+    try:
+        session = requests.Session()
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Referer": "https://www.nseindia.com/",
+        }
+        session.get("https://www.nseindia.com/", headers=headers, timeout=8)
+        response = session.get("https://www.nseindia.com/reports/fii-dii", headers=headers, timeout=12)
+        response.raise_for_status()
+        tables = pd.read_html(response.text)
+        for table in tables:
+            cols = {str(c).strip().lower(): c for c in table.columns}
+            category_col = next((c for k, c in cols.items() if "category" in k), None)
+            net_col = next((c for k, c in cols.items() if "net value" in k), None)
+            date_col = next((c for k, c in cols.items() if k == "date" or "date" in k), None)
+            if category_col is None or net_col is None:
+                continue
+            out = {}
+            for _, row in table.iterrows():
+                category = str(row.get(category_col, "")).strip().upper()
+                if "FII" in category or "FPI" in category:
+                    key = "FII/FPI"
+                elif "DII" in category:
+                    key = "DII"
+                else:
+                    continue
+                value = pd.to_numeric(str(row.get(net_col, "")).replace(",", "").replace("₹", ""), errors="coerce")
+                if pd.notna(value):
+                    date_value = str(row.get(date_col, "")).strip() if date_col is not None else "Date unavailable"
+                    out[key] = {"net": float(value), "date": date_value}
+            if "FII/FPI" in out and "DII" in out:
+                return out
+    except Exception:
+        return {}
+    return {}
+
+fii_dii_flows = _nse_fii_dii_latest()
+for flow_name, flow_weight in [("FII/FPI", 0.075), ("DII", 0.075)]:
+    flow = fii_dii_flows.get(flow_name)
+    if flow is None:
+        sentiment_errors.append(f"{flow_name} cash-market flow: unavailable from NSE")
+        sentiment_details.append({"Factor": f"{flow_name} net flow (NSE cash market)", "Latest change": "Unavailable", "Signal": "Unavailable", "Source bar": "NSE data not retrieved"})
+        continue
+    net_flow = flow["net"]
+    flow_score = 1 if net_flow > 0 else -1 if net_flow < 0 else 0
+    sentiment_parts.append((flow_score, flow_weight))
+    sentiment_details.append({
+        "Factor": f"{flow_name} net flow (NSE cash market)",
+        "Latest change": f"₹{net_flow:+,.2f} crore",
+        "Signal": "Positive" if flow_score > 0 else "Negative" if flow_score < 0 else "Flat",
+        "Source bar": flow["date"],
+    })
 _sentiment_change("Infosys ADR", "INFY", 0.15, inverse=False)
 _sentiment_change("Wipro ADR", "WIT", 0.10, inverse=False)
 _sentiment_change("HDFC Bank ADR", "HDB", 0.075, inverse=False)
