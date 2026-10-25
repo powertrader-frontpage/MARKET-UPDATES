@@ -1129,6 +1129,37 @@ else:
             else:
                 fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
 
+# Compact NIFTY 50 support/resistance reference using the previous completed daily candle.
+# Classic floor pivots are informational levels, not guaranteed turning points.
+st.markdown("#### NIFTY 50 · Support & Resistance")
+nifty_sr_df = market_data.get("NIFTY 50", pd.DataFrame())
+if nifty_sr_df.empty:
+    nifty_sr_df, nifty_sr_error = get_history("^NSEI", "1mo", "1d")
+if not nifty_sr_df.empty and {"High", "Low", "Close"}.issubset(nifty_sr_df.columns) and len(nifty_sr_df) >= 2:
+    sr_prev = nifty_sr_df.dropna(subset=["High", "Low", "Close"]).iloc[-2]
+    sr_high, sr_low, sr_close = float(sr_prev["High"]), float(sr_prev["Low"]), float(sr_prev["Close"])
+    sr_pivot = (sr_high + sr_low + sr_close) / 3.0
+    sr_levels = {
+        "R2": sr_pivot + (sr_high - sr_low),
+        "R1": 2 * sr_pivot - sr_low,
+        "Pivot": sr_pivot,
+        "S1": 2 * sr_pivot - sr_high,
+        "S2": sr_pivot - (sr_high - sr_low),
+    }
+    sr_cols = st.columns(5)
+    sr_colors = {"R2": "#ef4444", "R1": "#f97316", "Pivot": "#f59e0b", "S1": "#22c55e", "S2": "#16a34a"}
+    for sr_col, sr_name in zip(sr_cols, ["R2", "R1", "Pivot", "S1", "S2"]):
+        sr_col.markdown(
+            f'<div style="border:1px solid #343a46;border-top:3px solid {sr_colors[sr_name]};border-radius:8px;padding:7px 9px;text-align:center;">'
+            f'<div style="font-size:12px;color:#aeb6c2;">{sr_name}</div>'
+            f'<div style="font-size:16px;font-weight:650;color:{sr_colors[sr_name]};">{sr_levels[sr_name]:,.2f}</div></div>',
+            unsafe_allow_html=True,
+        )
+    sr_date = sr_prev["Date"].strftime("%d %b %Y") if "Date" in sr_prev.index and pd.notna(sr_prev["Date"]) else "previous completed daily candle"
+    st.caption(f"Classic pivot levels calculated from {sr_date} OHLC · Informational only; levels update when a new completed daily candle is available.")
+else:
+    st.caption("Support/resistance unavailable: insufficient NIFTY 50 daily OHLC data.")
+
 # Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
 st.markdown("### Leading sectors vs NIFTY 50")
 st.caption("Top 3 sectors ranked by relative performance versus NIFTY 50 over the latest 5 trading sessions. Cards are ranked by weekly outperformance; 1-month relative performance is shown for confirmation.")
