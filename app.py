@@ -24,6 +24,29 @@ import re
 from urllib.parse import urlencode
 
 st.set_page_config(page_title="Market Intelligence Terminal", page_icon="📈", layout="wide")
+
+# Refresh the dashboard page during NSE cash-market hours. Market-data functions
+# retain their own cache TTLs (typically 5 minutes), so this does not promise live ticks.
+components.html("""
+<script>
+(() => {
+  const scheduleNextRefresh = () => {
+    const now = new Date();
+    const day = now.getDay();
+    const minutes = now.getHours() * 60 + now.getMinutes();
+    const isWeekday = day >= 1 && day <= 5;
+    const isMarketHours = minutes >= (9 * 60 + 15) && minutes < (15 * 60 + 30);
+    if (isWeekday && isMarketHours) {
+      window.setTimeout(() => {
+        try { window.parent.location.reload(); }
+        catch (_) { window.location.reload(); }
+      }, 5 * 60 * 1000);
+    }
+  };
+  scheduleNextRefresh();
+})();
+</script>
+""", height=0, width=0)
 st.markdown("""
 <style>
 .block-container{padding-top:1rem;padding-bottom:2rem}
