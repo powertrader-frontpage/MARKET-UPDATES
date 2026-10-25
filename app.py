@@ -1556,17 +1556,16 @@ else:
     st.plotly_chart(heatmap_fig, use_container_width=True, config={"displaylogo": False}, key="nifty50_only_treemap")
 st.divider()
 
-def make_expander_grid(labels, columns_per_row=3):
-    """Create compact, row-wise expander navigation while preserving each expander context."""
+def make_expander_grid(labels, columns_per_row=1):
+    """Render full-width expanders so opened sections never get trapped in narrow columns."""
     containers = []
-    for row_start in range(0, len(labels), columns_per_row):
-        row_cols = st.columns(columns_per_row, gap="small")
-        for col, label in zip(row_cols, labels[row_start:row_start + columns_per_row]):
-            with col:
-                containers.append(st.expander(label, expanded=False))
+    # Keep one full-width expander per row. Multi-column expanders squeeze wide charts,
+    # tables and forms on phones and force horizontal scrolling.
+    for label in labels:
+        containers.append(st.expander(label, expanded=False))
     return containers
 
-tabs = make_expander_grid(["Overview · market snapshot", "Live charts", "Technical analysis", "Sector rotation", "Global markets", "FII/DII & news", "Derivatives", "History & sources", "NIFTY historical returns"], columns_per_row=3)
+tabs = make_expander_grid(["Overview · market snapshot", "Live charts", "Technical analysis", "Sector rotation", "Global markets", "FII/DII & news", "Derivatives", "History & sources", "NIFTY historical returns"])
 with tabs[0]:
     st.subheader("Market snapshot and historical source data")
     rows = []
@@ -1905,7 +1904,7 @@ extra_tabs = make_expander_grid([
     "13 Regime & trend strength", "14 Options analytics", "15 Risk & position sizing",
     "16 Strategy backtest", "17 Market breadth", "18 Events & gap risk",
     "19 Trade journal", "20 Data quality", "21 Cross-asset performance", "22 Technical signals"
-], columns_per_row=3)
+])
 
 with extra_tabs[0]:
     st.caption("Market regime and trend strength are displayed in the main dashboard above.")
