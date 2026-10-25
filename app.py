@@ -738,8 +738,42 @@ with sentiment_factors:
 
 # At-a-glance regime panel is intentionally placed above the navigation tabs.
 st.subheader("Market regime & trend strength")
-overview_regime_name = st.selectbox("Regime instrument", list(INDEXES.keys()), index=0, key="overview_regime_symbol")
-overview_regime_df = market_data[overview_regime_name]
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_nifty500_symbols() -> tuple[list[str], str | None]:
+    """Fetch the official NIFTY 500 constituent list; return NSE Yahoo Finance tickers."""
+    url = "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv"
+    try:
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        response.raise_for_status()
+        frame = pd.read_csv(pd.io.common.BytesIO(response.content))
+        if "Symbol" not in frame.columns:
+            return [], "The NIFTY 500 constituent file did not contain a Symbol column."
+        symbols = sorted({
+            str(value).strip().upper() + ".NS"
+            for value in frame["Symbol"].dropna()
+            if str(value).strip()
+        })
+        return symbols, None
+    except Exception as exc:
+        return [], f"NIFTY 500 constituent list unavailable ({exc.__class__.__name__})."
+
+nifty500_symbols, nifty500_symbols_error = get_nifty500_symbols()
+regime_options = list(INDEXES.keys())
+if nifty500_symbols:
+    regime_options += [ticker.removesuffix(".NS") for ticker in nifty500_symbols]
+overview_regime_name = st.selectbox(
+    "Regime instrument",
+    regime_options,
+    index=0,
+    key="overview_regime_symbol",
+    help="Includes the standard indices and the current official NIFTY 500 constituent list."
+)
+if overview_regime_name in market_data:
+    overview_regime_df = market_data[overview_regime_name]
+else:
+    overview_regime_df, overview_regime_error = get_history(overview_regime_name + ".NS", period, "1d")
+    if overview_regime_df.empty:
+        st.warning(f"History unavailable for {overview_regime_name}: {overview_regime_error or nifty500_symbols_error or 'No source data returned.'}")
 if overview_regime_df.empty or len(overview_regime_df) < 30:
     st.warning("Insufficient returned OHLC history to assess regime. No regime label generated.")
 else:
