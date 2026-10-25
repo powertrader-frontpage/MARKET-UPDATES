@@ -2959,7 +2959,11 @@ def fyers_screeners_config(app_id: str, access_token: str):
         )
         payload = response.json()
         if not response.ok or payload.get("s") != "ok":
-            return {}, str(payload.get("message") or f"FYERS screener config request failed (HTTP {response.status_code}).")
+            code = payload.get("code", payload.get("messageCode", "not supplied"))
+            message = str(payload.get("message") or f"HTTP {response.status_code}")
+            if "permission" in message.lower() or response.status_code in (401, 403):
+                message = message + " Check that the token belongs to the configured App ID and ask FYERS support whether Screeners API access is enabled for this app/account. Existing quote/chart access does not guarantee Screeners API access. No substitute fundamentals are shown."
+            return {}, f"FYERS screener config request failed (HTTP {response.status_code}; code {code}): {message}"
         return payload.get("data", {}), None
     except Exception as exc:
         return {}, f"FYERS screener config unavailable ({exc.__class__.__name__})."
@@ -2979,7 +2983,11 @@ def fyers_run_standard_screener(app_id: str, access_token: str, screener_id: str
         )
         payload = response.json()
         if not response.ok or payload.get("s") != "ok":
-            return pd.DataFrame(), None, None, str(payload.get("message") or f"FYERS screener query failed (HTTP {response.status_code}).")
+            code = payload.get("code", payload.get("messageCode", "not supplied"))
+            message = str(payload.get("message") or f"HTTP {response.status_code}")
+            if "permission" in message.lower() or response.status_code in (401, 403):
+                message += " Check that the token belongs to the configured App ID and ask FYERS support to confirm Screeners API access."
+            return pd.DataFrame(), None, None, f"FYERS screener query failed (HTTP {response.status_code}; code {code}): {message}"
         data = payload.get("data", {})
         header = data.get("header", [])
         body = data.get("body", [])
