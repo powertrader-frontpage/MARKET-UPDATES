@@ -889,7 +889,7 @@ else:
 
 # Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
 st.markdown("### Leading sectors vs NIFTY 50")
-st.caption("Top 4 sectors outperforming NIFTY 50 over the latest 5 trading sessions. Green indicates positive relative strength; 1-month relative performance is shown for confirmation.")
+st.caption("Top 3 sectors ranked by relative performance versus NIFTY 50 over the latest 5 trading sessions. Cards are ranked by weekly outperformance; 1-month relative performance is shown for confirmation.")
 leading_sector_rows = []
 with st.spinner("Checking weekly sector momentum…"):
     weekly_nifty_df, weekly_nifty_err = get_history("^NSEI", "3mo", "1d")
