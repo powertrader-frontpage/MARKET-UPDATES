@@ -983,8 +983,8 @@ if leading_sector_rows:
 else:
     st.info("Weekly sector momentum is temporarily unavailable because usable 3-month daily history was not returned.")
 
-st.markdown("### Liquidity & order-block watchlist")
-st.caption("Price/volume-based proxies from daily candles · not exchange order-book depth or institutional order-flow data. Source: Yahoo Finance; verify timestamps.")
+st.markdown("""<div style="font-size:clamp(28px,4vw,42px);font-weight:850;letter-spacing:-1.2px;line-height:1.15;margin:8px 0 6px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Liquidity Board</div>""", unsafe_allow_html=True)
+st.caption("Ranked daily-candle setups · green = bullish, red = bearish. Public data may be delayed.")
 with st.expander("Scan bullish/bearish setups and liquidity sweeps", expanded=False):
     ob_lookback = st.selectbox("Structure lookback", ["20 sessions", "40 sessions", "60 sessions"], index=0, key="ob_lookback")
     ob_volume_filter = st.toggle("Require above-average volume for sweep confirmation (1.2× 20-day average)", value=False, key="ob_volume_filter")
@@ -1075,19 +1075,43 @@ with st.expander("Scan bullish/bearish setups and liquidity sweeps", expanded=Fa
         bullish = ob_results[ob_results["Bias"] == "Bullish"].sort_values("Daily change (%)", ascending=False).head(3)
         bearish = ob_results[ob_results["Bias"] == "Bearish"].sort_values("Daily change (%)", ascending=True).head(3)
         with bull:
-            st.markdown("#### ↗ Bullish setups")
+            st.markdown("""<div style="font-size:20px;font-weight:750;color:#20dda0;margin:8px 0 12px;">↗ Strongest bullish setups</div>""", unsafe_allow_html=True)
             if bullish.empty:
                 st.info("No bullish setups detected.")
             else:
                 for rank, (_, item) in enumerate(bullish.iterrows(), 1):
-                    st.markdown(f"**{rank}. {item['Symbol']}** · {item['Daily change (%)']:+.2f}%  \n{item['Setup']} · Volume {item['Volume / 20D avg']:.2f}×" if pd.notna(item["Volume / 20D avg"]) else f"**{rank}. {item['Symbol']}** · {item['Daily change (%)']:+.2f}%  \n{item['Setup']} · Volume unavailable")
+                    vol_label = f"{item['Volume / 20D avg']:.2f}× 20D avg volume" if pd.notna(item["Volume / 20D avg"]) else "Volume unavailable"
+                    st.markdown(
+                        f'<div style="background:#0d1219;border:1px solid #24313d;border-left:4px solid #20dda0;border-radius:18px;padding:14px 16px;margin:0 0 10px 0;">'
+                        f'<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">'
+                        f'<span style="font-size:17px;font-weight:750;color:#f3f6fa;">{rank}. {item["Symbol"]}</span>'
+                        f'<span style="font-size:17px;font-weight:750;color:#20dda0;">{item["Daily change (%)"]:+.2f}%</span></div>'
+                        f'<div style="color:#c5d0dc;font-size:13px;margin-top:8px;">{item["Setup"]}</div>'
+                        f'<div style="color:#7eeac1;font-size:12px;margin-top:5px;">✓ {vol_label}</div></div>',
+                        unsafe_allow_html=True,
+                    )
         with bear:
-            st.markdown("#### ↘ Bearish setups")
+            st.markdown("""<div style="font-size:20px;font-weight:750;color:#ff647c;margin:8px 0 12px;">↘ Strongest bearish setups</div>""", unsafe_allow_html=True)
             if bearish.empty:
                 st.info("No bearish setups detected.")
             else:
                 for rank, (_, item) in enumerate(bearish.iterrows(), 1):
-                    st.markdown(f"**{rank}. {item['Symbol']}** · {item['Daily change (%)']:+.2f}%  \n{item['Setup']} · Volume {item['Volume / 20D avg']:.2f}×" if pd.notna(item["Volume / 20D avg"]) else f"**{rank}. {item['Symbol']}** · {item['Daily change (%)']:+.2f}%  \n{item['Setup']} · Volume unavailable")
+                    vol_label = f"{item['Volume / 20D avg']:.2f}× 20D avg volume" if pd.notna(item["Volume / 20D avg"]) else "Volume unavailable"
+                    st.markdown(
+                        f'<div style="background:#0d1219;border:1px solid #24313d;border-left:4px solid #ff647c;border-radius:18px;padding:14px 16px;margin:0 0 10px 0;">'
+                        f'<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">'
+                        f'<span style="font-size:17px;font-weight:750;color:#f3f6fa;">{rank}. {item["Symbol"]}</span>'
+                        f'<span style="font-size:17px;font-weight:750;color:#ff647c;">{item["Daily change (%)"]:+.2f}%</span></div>'
+                        f'<div style="color:#c5d0dc;font-size:13px;margin-top:8px;">{item["Setup"]}</div>'
+                        f'<div style="color:#ff9aaa;font-size:12px;margin-top:5px;">✓ {vol_label}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+        st.markdown("""<div style="font-size:clamp(26px,3.5vw,36px);font-weight:850;letter-spacing:-1px;margin:20px 0 10px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Order Block Charts</div>""", unsafe_allow_html=True)
+        zone_cols = st.columns(2)
+        with zone_cols[0]:
+            st.markdown("""<div style="background:#0d1219;border:1px solid #24313d;border-radius:16px;padding:13px 15px;margin-bottom:8px;"><span style="color:#20dda0;font-weight:750;">✓ Demand zones</span><div style="color:#c5d0dc;font-size:13px;margin-top:5px;">Potential support areas from bullish displacement candles</div></div>""", unsafe_allow_html=True)
+        with zone_cols[1]:
+            st.markdown("""<div style="background:#0d1219;border:1px solid #24313d;border-radius:16px;padding:13px 15px;margin-bottom:8px;"><span style="color:#ff647c;font-weight:750;">✓ Supply zones</span><div style="color:#c5d0dc;font-size:13px;margin-top:5px;">Potential resistance areas from bearish displacement candles</div></div>""", unsafe_allow_html=True)
         st.dataframe(ob_results, use_container_width=True, hide_index=True)
         st.download_button("Download liquidity scan (CSV)", ob_results.to_csv(index=False).encode("utf-8"), "liquidity_order_block_watchlist.csv", "text/csv", key="ob_scan_download")
         st.warning("Order blocks and liquidity sweeps here are simplified OHLCV heuristics, not confirmed institutional orders, market depth or guaranteed reversal signals. Data may be delayed. Use a stop-loss and verify prices with your broker.")
