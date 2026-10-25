@@ -887,46 +887,53 @@ else:
         trend_fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified", xaxis_title="Source candle date", yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0))
         st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
 
-# Leading sectors: rank sectors by relative performance versus NIFTY 50.
-# Use the same selected lookback and only display sectors with valid source data.
+# Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
 st.markdown("### Leading sectors vs NIFTY 50")
-st.caption("Top 4 sectors outperforming NIFTY 50 over the selected lookback. Green indicates positive relative strength, not a guarantee of future returns.")
+st.caption("Top 4 sectors outperforming NIFTY 50 over the latest 5 trading sessions. Green indicates positive relative strength; 1-month relative performance is shown for confirmation.")
 leading_sector_rows = []
-with st.spinner("Checking sector momentum…"):
-    for sector, ticker in SECTOR_TICKERS.items():
-        sector_df, sector_err = get_history(ticker, period, "1d")
-        if not sector_df.empty and len(sector_df) >= 2:
-            sector_close = sector_df["Close"].dropna()
-            nifty_close = market_data["NIFTY 50"]["Close"].dropna()
-            if len(sector_close) >= 2 and len(nifty_close) >= 2 and sector_close.iloc[0] and nifty_close.iloc[0]:
-                sector_return = (float(sector_close.iloc[-1]) / float(sector_close.iloc[0]) - 1) * 100
-                nifty_return = (float(nifty_close.iloc[-1]) / float(nifty_close.iloc[0]) - 1) * 100
-                relative_return = sector_return - nifty_return
-                if pd.notna(relative_return):
-                    leading_sector_rows.append({
-                        "Sector": sector,
-                        "Sector return (%)": sector_return,
-                        "NIFTY return (%)": nifty_return,
-                        "Outperformance (pp)": relative_return,
-                    })
+with st.spinner("Checking weekly sector momentum…"):
+    weekly_nifty_df, weekly_nifty_err = get_history("^NSEI", "3mo", "1d")
+    weekly_nifty_close = weekly_nifty_df["Close"].dropna() if not weekly_nifty_df.empty else pd.Series(dtype=float)
+    if len(weekly_nifty_close) >= 6:
+        nifty_week_return = (float(weekly_nifty_close.iloc[-1]) / float(weekly_nifty_close.iloc[-6]) - 1) * 100
+        nifty_month_return = (float(weekly_nifty_close.iloc[-1]) / float(weekly_nifty_close.iloc[-22]) - 1) * 100 if len(weekly_nifty_close) >= 22 else np.nan
+        for sector, ticker in SECTOR_TICKERS.items():
+            sector_df, sector_err = get_history(ticker, "3mo", "1d")
+            if not sector_df.empty:
+                sector_close = sector_df["Close"].dropna()
+                if len(sector_close) >= 6 and len(weekly_nifty_close) >= 6:
+                    sector_week_return = (float(sector_close.iloc[-1]) / float(sector_close.iloc[-6]) - 1) * 100
+                    sector_month_return = (float(sector_close.iloc[-1]) / float(sector_close.iloc[-22]) - 1) * 100 if len(sector_close) >= 22 else np.nan
+                    relative_week = sector_week_return - nifty_week_return
+                    relative_month = sector_month_return - nifty_month_return if pd.notna(sector_month_return) and pd.notna(nifty_month_return) else np.nan
+                    if pd.notna(relative_week):
+                        leading_sector_rows.append({
+                            "Sector": sector,
+                            "Sector 1W (%)": sector_week_return,
+                            "NIFTY 1W (%)": nifty_week_return,
+                            "1W outperformance (pp)": relative_week,
+                            "1M outperformance (pp)": relative_month,
+                        })
 if leading_sector_rows:
     leading_df = pd.DataFrame(leading_sector_rows)
-    leaders = leading_df[leading_df["Outperformance (pp)"] > 0].sort_values("Outperformance (pp)", ascending=False).head(4).copy()
+    leaders = leading_df[leading_df["1W outperformance (pp)"] > 0].sort_values("1W outperformance (pp)", ascending=False).head(4).copy()
     if leaders.empty:
-        st.info("No sector is outperforming NIFTY 50 over the selected lookback.")
+        st.info("No sector is outperforming NIFTY 50 over the latest 5 trading sessions.")
     else:
         leader_cols = st.columns(len(leaders))
         for leader_col, (_, leader) in zip(leader_cols, leaders.iterrows()):
+            month_confirmation = f'{leader["1M outperformance (pp)"]:+.2f} pp' if pd.notna(leader["1M outperformance (pp)"]) else "N/A"
             leader_col.markdown(
-                f'<div style="border:1px solid #166534;border-left:4px solid #22c55e;border-radius:12px;padding:12px 14px;min-height:105px;background:rgba(34,197,94,0.08);">'
+                f'<div style="border:1px solid #166534;border-left:4px solid #22c55e;border-radius:12px;padding:12px 14px;min-height:118px;background:rgba(34,197,94,0.08);">'
                 f'<div style="font-size:13px;color:#86efac;margin-bottom:8px;">{leader["Sector"]}</div>'
-                f'<div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:#22c55e;">+{leader["Outperformance (pp)"]:.2f} pp</div>'
-                f'<div style="font-size:12px;color:#a7f3d0;">Sector {leader["Sector return (%)"]:+.2f}% · NIFTY {leader["NIFTY return (%)"]:+.2f}%</div>'
+                f'<div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:#22c55e;">+{leader["1W outperformance (pp)"]:.2f} pp</div>'
+                f'<div style="font-size:12px;color:#a7f3d0;">1W: sector {leader["Sector 1W (%)"]:+.2f}% · NIFTY {leader["NIFTY 1W (%)"]:+.2f}%</div>'
+                f'<div style="font-size:12px;color:#a7f3d0;">1M relative strength: {month_confirmation}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
 else:
-    st.info("Sector momentum is temporarily unavailable because usable sector/NIFTY history was not returned.")
+    st.info("Weekly sector momentum is temporarily unavailable because usable 3-month daily history was not returned.")
 
 st.markdown("### NIFTY 50 stock heatmap")
 st.caption("NIFTY 50 constituents only · Tile size is equal-weighted in this view · Green = positive daily change, red = negative daily change")
