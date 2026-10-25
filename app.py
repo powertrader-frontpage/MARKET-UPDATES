@@ -1135,27 +1135,23 @@ st.markdown("#### NIFTY 50 · Support & Resistance")
 nifty_sr_df = market_data.get("NIFTY 50", pd.DataFrame())
 if nifty_sr_df.empty:
     nifty_sr_df, nifty_sr_error = get_history("^NSEI", "1mo", "1d")
-if not nifty_sr_df.empty and {"High", "Low", "Close"}.issubset(nifty_sr_df.columns) and len(nifty_sr_df) >= 1:
+sr_prev = None
+if not nifty_sr_df.empty and {"High", "Low", "Close"}.issubset(nifty_sr_df.columns):
     sr_history = nifty_sr_df.dropna(subset=["High", "Low", "Close"]).copy()
     if "Date" in sr_history.columns:
         sr_history["Date"] = pd.to_datetime(sr_history["Date"], errors="coerce")
         sr_history = sr_history.dropna(subset=["Date"]).sort_values("Date")
-        # If the newest row is today's candle, treat it as potentially incomplete and use
-        # the preceding session. On non-trading days, use the most recent available session.
-        if not sr_history.empty:
-            latest_sr_date = sr_history.iloc[-1]["Date"]
-            latest_sr_day = latest_sr_date.date()
-            today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-            if latest_sr_day >= today_ist and len(sr_history) >= 2:
-                sr_prev = sr_history.iloc[-2]
-            else:
-                sr_prev = sr_history.iloc[-1]
+    if not sr_history.empty:
+        latest_sr_day = sr_history.iloc[-1]["Date"].date() if "Date" in sr_history.columns else None
+        today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        # A row dated today may still be forming; use the preceding session when available.
+        # On weekends/holidays, use the most recent available completed session.
+        if latest_sr_day is not None and latest_sr_day >= today_ist and len(sr_history) >= 2:
+            sr_prev = sr_history.iloc[-2]
         else:
-            sr_prev = None
-    else:
-        sr_prev = sr_history.iloc[-2] if len(sr_history) >= 2 else sr_history.iloc[-1]
-    if sr_prev is not None:
-        sr_high, sr_low, sr_close = float(sr_prev["High"]), float(sr_prev["Low"]), float(sr_prev["Close"])
+            sr_prev = sr_history.iloc[-1]
+if sr_prev is not None:
+    sr_high, sr_low, sr_close = float(sr_prev["High"]), float(sr_prev["Low"]), float(sr_prev["Close"])
     sr_pivot = (sr_high + sr_low + sr_close) / 3.0
     sr_levels = {
         "R2": sr_pivot + (sr_high - sr_low),
@@ -1173,10 +1169,10 @@ if not nifty_sr_df.empty and {"High", "Low", "Close"}.issubset(nifty_sr_df.colum
             f'<div style="font-size:16px;font-weight:650;color:{sr_colors[sr_name]};">{sr_levels[sr_name]:,.2f}</div></div>',
             unsafe_allow_html=True,
         )
-    sr_date = sr_prev["Date"].strftime("%d %b %Y") if "Date" in sr_prev.index and pd.notna(sr_prev["Date"]) else "previous completed daily candle"
-    st.caption(f"Classic pivot levels calculated from {sr_date} OHLC · Informational only; levels update when a new completed daily candle is available.")
+    sr_date = sr_prev["Date"].strftime("%d %b %Y") if "Date" in sr_prev.index and pd.notna(sr_prev["Date"]) else "latest available daily candle"
+    st.caption(f"Classic pivot levels calculated from {sr_date} OHLC · Informational only; source: returned NIFTY 50 daily history.")
 else:
-    st.caption("Support/resistance unavailable: insufficient NIFTY 50 daily OHLC data.")
+    st.caption("Support/resistance unavailable: insufficient valid NIFTY 50 daily OHLC data.")
 
 # Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
 st.markdown("### Leading sectors vs NIFTY 50")
