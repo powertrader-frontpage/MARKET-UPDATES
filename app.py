@@ -2948,5 +2948,137 @@ with st.expander("Important: Public Yahoo Finance and market-data limitations", 
     st.markdown("[Yahoo Finance data coverage and delays](https://help.yahoo.com/kb/SLN2310.html) · [TradingView widgets and data coverage](https://www.tradingview.com/widget/)")
 
 
+# Fundamental research screener: use FYERS' current screener catalogue rather than hard-coded IDs.
+@st.cache_data(ttl=3600, show_spinner=False)
+def fyers_screeners_config(app_id: str, access_token: str):
+    try:
+        response = requests.get(
+            "https://api-t1.fyers.in/api/v3/screeners/config",
+            headers={"Authorization": f"{app_id}:{access_token}"},
+            timeout=20,
+        )
+        payload = response.json()
+        if not response.ok or payload.get("s") != "ok":
+            return {}, str(payload.get("message") or f"FYERS screener config request failed (HTTP {response.status_code}).")
+        return payload.get("data", {}), None
+    except Exception as exc:
+        return {}, f"FYERS screener config unavailable ({exc.__class__.__name__})."
+
+def fyers_run_standard_screener(app_id: str, access_token: str, screener_id: str, universe_id: str, field_ids: list[str], order_by: str, order: str):
+    try:
+        params = {"screener": screener_id, "universe": universe_id, "order": order}
+        if field_ids:
+            params["fields"] = ",".join(field_ids[:9])
+        if order_by:
+            params["order_by"] = order_by
+        response = requests.get(
+            "https://api-t1.fyers.in/api/v3/screeners/query",
+            params=params,
+            headers={"Authorization": f"{app_id}:{access_token}"},
+            timeout=25,
+        )
+        payload = response.json()
+        if not response.ok or payload.get("s") != "ok":
+            return pd.DataFrame(), None, None, str(payload.get("message") or f"FYERS screener query failed (HTTP {response.status_code}).")
+        data = payload.get("data", {})
+        header = data.get("header", [])
+        body = data.get("body", [])
+        columns = [str(col.get("name") or col.get("id") or f"Field {i+1}") for i, col in enumerate(header)]
+        rows = [row for row in body if isinstance(row, (list, tuple))]
+        frame = pd.DataFrame(rows, columns=columns[:len(rows[0])] if rows else columns)
+        stamp = data.get("last_update_time")
+        stamp_text = datetime.fromtimestamp(float(stamp), ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") if stamp else "Not supplied by FYERS"
+        return frame, stamp_text, data.get("error"), None
+    except Exception as exc:
+        return pd.DataFrame(), None, None, f"FYERS screener request failed ({exc.__class__.__name__})."
+
+with st.expander("32 · Fundamental research — Small-cap & Mid-cap turnaround", expanded=False):
+    st.subheader("Small-cap and Mid-cap Turnaround Screener")
+    st.write("Screens for improving business fundamentals using the currently available FYERS screener catalogue. Results and fields depend on FYERS API coverage and your account permissions.")
+    fyers_cfg = fyers_credentials()
+    fyers_token = st.session_state.get("fyers_access_token")
+    if not fyers_cfg or not fyers_token:
+        st.warning("Connect FYERS using the sidebar's “FYERS live data” section first. This screen does not substitute sample data when FYERS is disconnected.")
+    else:
+        app_id = fyers_cfg[0]
+        cfg_data, cfg_error = fyers_screeners_config(app_id, fyers_token)
+        if cfg_error:
+            st.error(cfg_error)
+        else:
+            screener_catalogue = cfg_data.get("screeners", [])
+            fundamentals = [item for item in screener_catalogue if "fundamental" in str(item.get("category", "")).lower() or any(word in (str(item.get("name", "")) + " " + str(item.get("description", ""))).lower() for word in ["fundamental", "turnaround", "profit growth", "sales growth", "cash flow", "low debt", "valuation"])]
+            if not fundamentals:
+                st.warning("FYERS did not return a clearly identified fundamental screener in its current catalogue. No substitute results are shown.")
+            else:
+                universe_items = cfg_data.get("universes", [])
+                def _matches_cap_universe(item, cap):
+                    label = (str(item.get("name", "")) + " " + str(item.get("category", ""))).lower()
+                    if cap == "Mid-cap":
+                        return "midcap" in label or "mid cap" in label
+                    if cap == "Small-cap":
+                        return "smallcap" in label or "small cap" in label
+                    return "midcap" in label or "mid cap" in label or "smallcap" in label or "small cap" in label
+                cap_options = ["Both", "Mid-cap", "Small-cap"]
+                cap_choice = st.selectbox("Market-cap segment", cap_options, index=0, key="fundamental_cap_segment")
+                screener_options = {f"{x.get('name', x.get('id', 'Screener'))} · {x.get('category', 'FYERS')}": x for x in fundamentals}
+                chosen_label = st.selectbox("FYERS fundamental screener", list(screener_options), key="fundamental_screener_choice")
+                chosen_screener = screener_options[chosen_label]
+                st.caption("Turnaround research focus: prioritise improving quarterly/annual sales and profit, stronger margins, manageable debt and positive cash flow when those fields are available. FYERS predefined screens may not implement every criterion simultaneously.")
+                universes = [u for u in universe_items if _matches_cap_universe(u, cap_choice)]
+                if not universes:
+                    st.warning(f"FYERS' current universe catalogue does not explicitly identify a {cap_choice.lower()} universe. To avoid mislabelling stocks, this run is disabled. Check FYERS screener config or select a supported universe in a future update.")
+                else:
+                    universe_labels = {f"{u.get('name', u.get('id'))} · {u.get('category', 'Universe')}": u for u in universes}
+                    selected_universe_label = st.selectbox("Universe returned by FYERS", list(universe_labels), key="fundamental_cap_universe")
+                    selected_universe = universe_labels[selected_universe_label]
+                    available_columns = cfg_data.get("columns", [])
+                    priority_terms = ["growth", "profit", "margin", "cash flow", "solvency", "liquidity", "valuation", "quarterly", "balance sheet", "returns"]
+                    preferred_columns = [c for c in available_columns if any(term in (str(c.get("category", "")) + " " + str(c.get("name", ""))).lower() for term in priority_terms)]
+                    # The endpoint supports at most ten fields including its always-present symbol column.
+                    field_labels = {f"{c.get('name', c.get('id'))} · {c.get('category', 'FYERS')}": c for c in preferred_columns if c.get("id")}
+                    defaults = list(field_labels)[:9]
+                    chosen_fields_labels = st.multiselect("Available FYERS fields (up to 9 plus symbol)", list(field_labels), default=defaults[:9], max_selections=9, key="fundamental_fields")
+                    chosen_fields = [field_labels[label].get("id") for label in chosen_fields_labels]
+                    order_candidates = [c for c in available_columns if c.get("id") and any(term in (str(c.get("category", "")) + " " + str(c.get("name", ""))).lower() for term in ["growth", "profit", "margin", "cash flow", "returns"])]
+                    order_labels = {"Default FYERS ordering": ""}
+                    order_labels.update({f"{c.get('name', c.get('id'))} · {c.get('category', '')}": c.get("id") for c in order_candidates})
+                    order_label = st.selectbox("Sort results by", list(order_labels), key="fundamental_sort_field")
+                    sort_direction = st.selectbox("Sort direction", ["Descending", "Ascending"], key="fundamental_sort_direction")
+                    if st.button("Run FYERS turnaround screen", type="primary", key="run_fyers_turnaround_screen"):
+                        with st.spinner("Fetching screener results from FYERS…"):
+                            result_df, result_stamp, result_note, result_error = fyers_run_standard_screener(
+                                app_id, fyers_token, str(chosen_screener.get("id", "")),
+                                str(selected_universe.get("id", "")), chosen_fields,
+                                order_labels[order_label], "desc" if sort_direction == "Descending" else "asc"
+                            )
+                        if result_error:
+                            st.error(result_error)
+                        else:
+                            st.session_state["fyers_turnaround_result"] = result_df
+                            st.session_state["fyers_turnaround_meta"] = {
+                                "source": "FYERS Screeners API",
+                                "timestamp": result_stamp or "Not supplied by FYERS",
+                                "screener": chosen_screener.get("name", chosen_screener.get("id", "FYERS screener")),
+                                "universe": selected_universe.get("name", selected_universe.get("id", "FYERS universe")),
+                                "note": result_note or "",
+                            }
+                    result_df = st.session_state.get("fyers_turnaround_result")
+                    result_meta = st.session_state.get("fyers_turnaround_meta", {})
+                    if isinstance(result_df, pd.DataFrame) and not result_df.empty and result_meta.get("source") == "FYERS Screeners API":
+                        st.caption(f"Source: {result_meta.get('source')} · Data timestamp: {result_meta.get('timestamp')} · Screener: {result_meta.get('screener')} · Universe: {result_meta.get('universe')}")
+                        if result_meta.get("note"):
+                            st.warning("FYERS response note: " + str(result_meta["note"]))
+                        display_df = result_df.copy()
+                        display_df = display_df.replace({None: np.nan, "": np.nan})
+                        st.dataframe(display_df, use_container_width=True, hide_index=True, height=480)
+                        st.download_button("Download turnaround results as CSV", display_df.to_csv(index=False).encode("utf-8"), file_name="fyers_turnaround_screen.csv", mime="text/csv", key="download_fyers_turnaround_csv")
+                        missing_counts = int(display_df.isna().sum().sum())
+                        if missing_counts:
+                            st.info(f"{missing_counts} metric cell(s) are missing in this result. Missing values are left blank; they are not treated as zero.")
+                    elif "fyers_turnaround_result" in st.session_state:
+                        st.info("The last FYERS result is empty or unavailable. Try another FYERS screener or universe.")
+                    st.caption("Missing-data policy: only fields returned by FYERS are displayed; absent values stay blank, and no missing fundamental metric is estimated or silently filled. Segment classification is only used when FYERS provides a matching universe.")
+
+
 if refresh:
     st.cache_data.clear()
