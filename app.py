@@ -1615,6 +1615,35 @@ with st.expander("Scan small-cap / mid-cap turnaround stocks", expanded=False):
     if st.session_state.get("auto_turnaround_scan_warning"):
         st.warning(st.session_state["auto_turnaround_scan_warning"])
     if isinstance(scan_df, pd.DataFrame) and not scan_df.empty:
+        scan_df = scan_df.copy()
+        # Rank new discoveries first, then rank the rest by a transparent fundamentals-quality score.
+        status_series = scan_df.get("Status", pd.Series("Previously detected", index=scan_df.index)).astype(str)
+        scan_df["_new_priority"] = status_series.eq("🆕 NEW").astype(int)
+        score = pd.to_numeric(scan_df.get("Turnaround signals", pd.Series(0, index=scan_df.index)), errors="coerce").fillna(0) * 3
+        sales = pd.to_numeric(scan_df.get("Sales growth YoY %", pd.Series(np.nan, index=scan_df.index)), errors="coerce")
+        profit = pd.to_numeric(scan_df.get("Profit growth YoY %", pd.Series(np.nan, index=scan_df.index)), errors="coerce")
+        roe = pd.to_numeric(scan_df.get("ROE %", pd.Series(np.nan, index=scan_df.index)), errors="coerce")
+        debt = pd.to_numeric(scan_df.get("Debt/equity", pd.Series(np.nan, index=scan_df.index)), errors="coerce")
+        pe = pd.to_numeric(scan_df.get("Trailing P/E", pd.Series(np.nan, index=scan_df.index)), errors="coerce")
+        cash = pd.to_numeric(scan_df.get("Operating cash flow (annual, ₹)", pd.Series(np.nan, index=scan_df.index)), errors="coerce")
+        margin_better = scan_df.get("Margin improved QoQ", pd.Series(False, index=scan_df.index)).map(lambda x: str(x).lower() == "true")
+        score += sales.ge(10).fillna(False).astype(int) * 2
+        score += sales.ge(25).fillna(False).astype(int)
+        score += profit.ge(15).fillna(False).astype(int) * 2
+        score += profit.ge(30).fillna(False).astype(int)
+        score += margin_better.astype(int) * 2
+        score += roe.ge(12).fillna(False).astype(int)
+        score += debt.le(100).fillna(False).astype(int)
+        score += pe.gt(0).fillna(False).astype(int) * pe.le(30).fillna(False).astype(int)
+        score += cash.gt(0).fillna(False).astype(int)
+        scan_df["Research rank score"] = score.astype(int)
+        scan_df = scan_df.sort_values(
+            ["_new_priority", "Research rank score", "Sales growth YoY %", "Profit growth YoY %"],
+            ascending=[False, False, False, False],
+            na_position="last",
+            kind="stable",
+        ).drop(columns=["_new_priority"]).reset_index(drop=True)
+        scan_df.insert(0, "Rank", range(1, len(scan_df) + 1))
         new_count = int((scan_df.get("Status", pd.Series(dtype=str)) == "🆕 NEW").sum()) if "Status" in scan_df.columns else 0
         if new_count:
             st.success(f"🆕 {new_count} NEW turnaround stock(s) since your previous comparable scan.")
@@ -1632,7 +1661,7 @@ with st.expander("Scan small-cap / mid-cap turnaround stocks", expanded=False):
         else:
             st.dataframe(scan_df, use_container_width=True, hide_index=True, height=520)
         st.download_button("Download turnaround watchlist CSV", scan_df.to_csv(index=False).encode("utf-8"), file_name="small_midcap_turnaround_watchlist.csv", mime="text/csv", key="download_auto_turnaround_csv")
-        st.caption("🟩 Bright-green rows marked 🆕 NEW are newly qualifying stocks versus the previous comparable scan. Missing metrics remain blank. Profit growth across a negative comparison base is not calculated; loss-to-profit is flagged separately. Debt, cash flow and valuation are not yet part of the turnaround score.")
+        st.caption("Ranking: newly detected 🆕 NEW stocks appear first; remaining stocks are ordered by a transparent research score using turnaround signals, sales/profit growth, margin improvement and available ROE, debt/equity, P/E and operating cash flow. Missing metrics are not treated as passing. This is a research ranking, not a buy recommendation.")
     elif "auto_turnaround_scan_time" in st.session_state:
         st.info("No candidates met the current rules, or the data provider returned insufficient quarterly data. This is not proof that no turnaround stocks exist.")
     else:
