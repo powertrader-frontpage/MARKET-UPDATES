@@ -916,7 +916,21 @@ with st.spinner("Checking weekly sector momentum…"):
                         })
 if leading_sector_rows:
     leading_df = pd.DataFrame(leading_sector_rows)
-    leaders = leading_df[leading_df["1W outperformance (pp)"] > 0].sort_values("1W outperformance (pp)", ascending=False).head(4).copy()
+    ranked_sectors = leading_df.sort_values("1W outperformance (pp)", ascending=False).copy()
+    leaders = ranked_sectors[ranked_sectors["1W outperformance (pp)"] > 0].head(3).copy()
+    current_top_names = leaders["Sector"].tolist()
+    previous_top_names = st.session_state.get("previous_top_3_sectors")
+    if previous_top_names is not None:
+        entered = [name for name in current_top_names if name not in previous_top_names]
+        exited = [name for name in previous_top_names if name not in current_top_names]
+        if entered or exited:
+            alert_parts = []
+            if entered:
+                alert_parts.append("New sector(s) entering top 3: " + ", ".join(entered))
+            if exited:
+                alert_parts.append("Sector(s) leaving top 3: " + ", ".join(exited))
+            st.warning("🔔 Sector leadership changed · " + " · ".join(alert_parts))
+    st.session_state["previous_top_3_sectors"] = current_top_names
     if leaders.empty:
         st.info("No sector is outperforming NIFTY 50 over the latest 5 trading sessions.")
     else:
