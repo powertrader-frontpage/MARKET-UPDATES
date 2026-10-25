@@ -1068,6 +1068,34 @@ else:
         trend_fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified", xaxis_title="Source candle date", yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0))
         with trend_col:
             st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
+            # Compact classic-pivot support/resistance levels for NIFTY 50.
+            # Levels use the latest available daily candle's High, Low and Close; informational only.
+            nifty_sr_df, nifty_sr_error = get_history("^NSEI", "1mo", "1d")
+            if not nifty_sr_df.empty and {"High", "Low", "Close"}.issubset(nifty_sr_df.columns):
+                nifty_sr_valid = nifty_sr_df.dropna(subset=["High", "Low", "Close"])
+                if not nifty_sr_valid.empty:
+                    sr_bar = nifty_sr_valid.iloc[-1]
+                    sr_high, sr_low, sr_close = float(sr_bar["High"]), float(sr_bar["Low"]), float(sr_bar["Close"])
+                    sr_pivot = (sr_high + sr_low + sr_close) / 3
+                    sr_levels = [
+                        ("S2", sr_pivot - (sr_high - sr_low), "#ef4444"),
+                        ("S1", 2 * sr_pivot - sr_high, "#f97316"),
+                        ("Pivot", sr_pivot, "#f59e0b"),
+                        ("R1", 2 * sr_pivot - sr_low, "#22c55e"),
+                        ("R2", sr_pivot + (sr_high - sr_low), "#16a34a"),
+                    ]
+                    sr_html = '<div style="border:1px solid #343a46;border-radius:9px;padding:8px 9px;margin-top:4px;">'
+                    sr_html += '<div style="font-size:12px;color:#aeb6c2;margin-bottom:6px;">NIFTY 50 · Support / Resistance <span style="font-size:10px;">(classic pivots)</span></div>'
+                    sr_html += '<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;">'
+                    for sr_name, sr_value, sr_color in sr_levels:
+                        sr_html += f'<div style="text-align:center;min-width:0;"><div style="font-size:11px;color:{sr_color};font-weight:700;">{sr_name}</div><div style="font-size:12px;white-space:nowrap;">{sr_value:,.0f}</div></div>'
+                    sr_html += '</div></div>'
+                    st.markdown(sr_html, unsafe_allow_html=True)
+                    st.caption(f"Reference candle: {sr_bar['Date'].strftime('%d %b %Y') if pd.notna(sr_bar.get('Date')) else 'date unavailable'} · Informational levels, not a forecast.")
+                else:
+                    st.caption("NIFTY support/resistance unavailable: no valid daily OHLC candle.")
+            else:
+                st.caption("NIFTY support/resistance unavailable: daily OHLC data not returned.")
         with fear_col:
             fear_score = np.nan
             fear_components = []
