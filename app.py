@@ -868,8 +868,14 @@ if sentiment_details:
             color = "#f59e0b"
         return [f"color: {color}; font-weight: 600" if col == "Latest change" else "" for col in row.index]
 
-    styled_sentiment = sentiment_df.style.applymap(_sentiment_cell_style, subset=["Signal"]).apply(_sentiment_change_style, axis=1)
-    st.dataframe(styled_sentiment, use_container_width=True, hide_index=True)
+    # Split all factors into two balanced tables, five rows on each side.
+    sentiment_left, sentiment_right = st.columns(2, gap="small")
+    for target_col, start_idx in [(sentiment_left, 0), (sentiment_right, 5)]:
+        with target_col:
+            subset = sentiment_df.iloc[start_idx:start_idx + 5].copy()
+            if not subset.empty:
+                styled_subset = subset.style.applymap(_sentiment_cell_style, subset=["Signal"]).apply(_sentiment_change_style, axis=1)
+                st.dataframe(styled_subset, use_container_width=True, hide_index=True)
 else:
     st.warning("No usable global cue data returned. No direction is guessed.")
 # Unavailable-factor details are retained in sentiment_errors but not displayed.
