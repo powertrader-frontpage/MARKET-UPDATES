@@ -1049,8 +1049,10 @@ else:
         regime_cols[3].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {weekly_ema_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY · Weekly EMA 200 gap</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{weekly_ema_color};">{weekly_gap_text}</div><div style="font-size:12px;color:#aeb6c2;">Close {weekly_close_text} · EMA {weekly_ema_text}</div><div style="font-size:12px;color:{weekly_ema_color};margin-top:4px;">{weekly_subtext}</div></div>', unsafe_allow_html=True)
         nifty_pcr_text = f"{nifty_pcr:.2f}" if pd.notna(nifty_pcr) else "—"
         regime_cols[4].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {nifty_pcr_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY 50 · PCR (OI)</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{nifty_pcr_color};">{nifty_pcr_text}</div><div style="font-size:12px;color:{nifty_pcr_color};margin-top:4px;">{nifty_pcr_status}</div><div style="font-size:11px;color:#aeb6c2;margin-top:4px;">Source: FYERS · {nifty_pcr_source_time}</div></div>', unsafe_allow_html=True)
-        # Calculation/source explanation retained in code but hidden from the main dashboard view.
+        # Compact Fear & Greed proxy beside the existing price trend chart.
+        # This is an explicitly labelled dashboard-derived proxy, not an official NSE index.
         st.markdown("#### Price trend")
+        trend_col, fear_col = st.columns([2, 1], gap="small")
         trend_fig = go.Figure()
         trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["Close"], name="Close", mode="lines", line=dict(color="#60a5fa", width=2)))
         if "EMA 20" in overview_rc:
@@ -1058,7 +1060,68 @@ else:
         if "EMA 50" in overview_rc:
             trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 50"], name="EMA 50", mode="lines", line=dict(color="#a78bfa", width=1.5)))
         trend_fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified", xaxis_title="Source candle date", yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0))
-        st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
+        with trend_col:
+            st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
+        with fear_col:
+            fear_score = np.nan
+            fear_components = []
+            recent_rc = overview_rc.dropna(subset=["Close"]).copy()
+            if len(recent_rc) >= 20:
+                # RSI contribution: RSI 50 maps to neutral; 0..100 maps to the same scale.
+                rsi_series = recent_rc["RSI 14"] if "RSI 14" in recent_rc.columns else pd.Series(dtype=float)
+                if not rsi_series.dropna().empty:
+                    fear_components.append((float(np.clip(rsi_series.dropna().iloc[-1], 0, 100)), 0.35))
+                # Trend contribution: close vs EMA 20 and EMA 50, mapped around neutral.
+                trend_parts = []
+                for ema_col in ["EMA 20", "EMA 50"]:
+                    if ema_col in recent_rc.columns and pd.notna(recent_rc[ema_col].iloc[-1]) and recent_rc[ema_col].iloc[-1] != 0:
+                        gap_pct = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc[ema_col].iloc[-1]) - 1) * 100
+                        trend_parts.append(float(np.clip(50 + gap_pct * 12, 0, 100)))
+                if trend_parts:
+                    fear_components.append((float(np.mean(trend_parts)), 0.40))
+                # Medium-term momentum: 20-session return mapped around neutral.
+                if len(recent_rc) >= 21 and recent_rc["Close"].iloc[-21] != 0:
+                    ret20 = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc["Close"].iloc[-21]) - 1) * 100
+                    fear_components.append((float(np.clip(50 + ret20 * 8, 0, 100)), 0.15))
+                # India VIX: higher volatility tilts the proxy toward fear.
+                vix_frame = market_data.get("India VIX", pd.DataFrame())
+                vix_snap = quote_snapshot(vix_frame) if not vix_frame.empty else None
+                if vix_snap:
+                    vix_value = float(vix_snap[0]["Close"])
+                    fear_components.append((float(np.clip(100 - vix_value * 3, 0, 100)), 0.10))
+                if fear_components:
+                    fear_weight = sum(weight for _, weight in fear_components)
+                    fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
+            if pd.notna(fear_score):
+                fear_score = int(round(float(np.clip(fear_score, 0, 100))))
+                fear_label = "Extreme Fear" if fear_score < 20 else "Fear" if fear_score < 40 else "Neutral" if fear_score < 60 else "Greed" if fear_score < 80 else "Extreme Greed"
+                fear_color = "#ef4444" if fear_score < 20 else "#f97316" if fear_score < 40 else "#f59e0b" if fear_score < 60 else "#84cc16" if fear_score < 80 else "#16a34a"
+                gauge_fig = go.Figure(go.Indicator(
+                    mode="gauge+number",
+                    value=fear_score,
+                    number={"font": {"size": 30, "color": fear_color}, "suffix": "/100"},
+                    title={"text": "Fear & Greed<br><span style='font-size:11px;color:#aeb6c2'>Market proxy</span>", "font": {"size": 15}},
+                    gauge={
+                        "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 20, 40, 60, 80, 100], "ticktext": ["0", "20", "40", "60", "80", "100"], "tickfont": {"size": 9}},
+                        "bar": {"color": fear_color, "thickness": 0.22},
+                        "bgcolor": "#11151d",
+                        "borderwidth": 0,
+                        "steps": [
+                            {"range": [0, 20], "color": "#7f1d1d"},
+                            {"range": [20, 40], "color": "#c2410c"},
+                            {"range": [40, 60], "color": "#b45309"},
+                            {"range": [60, 80], "color": "#4d7c0f"},
+                            {"range": [80, 100], "color": "#047857"},
+                        ],
+                        "threshold": {"line": {"color": "#e5e7eb", "width": 2}, "thickness": 0.8, "value": fear_score},
+                    },
+                ))
+                gauge_fig.update_layout(template="plotly_dark", height=250, margin=dict(l=8,r=8,t=48,b=8), paper_bgcolor="rgba(0,0,0,0)")
+                fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
+                fear_col.markdown(f'<div style="text-align:center;font-weight:700;color:{fear_color};font-size:16px;margin-top:-8px;">{fear_label}</div>', unsafe_allow_html=True)
+                fear_col.caption("Proxy score from RSI, EMA trend, 20-session momentum and India VIX. Not an official index or trading signal.")
+            else:
+                fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
 
 # Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
 st.markdown("### Leading sectors vs NIFTY 50")
