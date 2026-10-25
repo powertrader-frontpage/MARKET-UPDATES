@@ -1576,14 +1576,14 @@ page_names = [
     "History & sources",
     "NIFTY historical returns",
     "13 Regime & trend strength",
-    "14 Multi-timeframe trend",
-    "15 Volatility & risk",
-    "16 Breadth & participation",
-    "17 Relative strength",
-    "18 Options analytics",
-    "19 Seasonality",
-    "20 Event risk",
-    "21 Strategy lab",
+    "14 Options analytics",
+    "15 Risk & position sizing",
+    "16 Strategy backtest",
+    "17 Market breadth",
+    "18 Events & gap risk",
+    "19 Trade journal",
+    "20 Data quality",
+    "21 Cross-asset performance",
     "22 Technical signals"
 ]
 
@@ -1933,12 +1933,6 @@ if selected_page == page_names[8]:
     st.caption("For research and monitoring only. Verify exchange timestamps and official sources before trading. Public widgets and public-source data may be delayed, incomplete or unavailable; this dashboard is not an execution system or investment advice.")
     
     # Expanded research modules (13–22). Calculations use public-source data; personal journal data remains user-controlled.
-    extra_tabs = make_expander_grid([
-        "13 Regime & trend strength", "14 Options analytics", "15 Risk & position sizing",
-        "16 Strategy backtest", "17 Market breadth", "18 Events & gap risk",
-        "19 Trade journal", "20 Data quality", "21 Cross-asset performance", "22 Technical signals"
-    ])
-
 if selected_page == page_names[9]:
         st.caption("Market regime and trend strength are displayed in the main dashboard above.")
 
