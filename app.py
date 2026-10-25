@@ -1129,15 +1129,33 @@ else:
             else:
                 fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
 
-# Compact NIFTY 50 support/resistance reference using the previous completed daily candle.
+# Compact NIFTY 50 support/resistance reference using the latest completed daily candle.
 # Classic floor pivots are informational levels, not guaranteed turning points.
 st.markdown("#### NIFTY 50 · Support & Resistance")
 nifty_sr_df = market_data.get("NIFTY 50", pd.DataFrame())
 if nifty_sr_df.empty:
     nifty_sr_df, nifty_sr_error = get_history("^NSEI", "1mo", "1d")
-if not nifty_sr_df.empty and {"High", "Low", "Close"}.issubset(nifty_sr_df.columns) and len(nifty_sr_df) >= 2:
-    sr_prev = nifty_sr_df.dropna(subset=["High", "Low", "Close"]).iloc[-2]
-    sr_high, sr_low, sr_close = float(sr_prev["High"]), float(sr_prev["Low"]), float(sr_prev["Close"])
+if not nifty_sr_df.empty and {"High", "Low", "Close"}.issubset(nifty_sr_df.columns) and len(nifty_sr_df) >= 1:
+    sr_history = nifty_sr_df.dropna(subset=["High", "Low", "Close"]).copy()
+    if "Date" in sr_history.columns:
+        sr_history["Date"] = pd.to_datetime(sr_history["Date"], errors="coerce")
+        sr_history = sr_history.dropna(subset=["Date"]).sort_values("Date")
+        # If the newest row is today's candle, treat it as potentially incomplete and use
+        # the preceding session. On non-trading days, use the most recent available session.
+        if not sr_history.empty:
+            latest_sr_date = sr_history.iloc[-1]["Date"]
+            latest_sr_day = latest_sr_date.date()
+            today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+            if latest_sr_day >= today_ist and len(sr_history) >= 2:
+                sr_prev = sr_history.iloc[-2]
+            else:
+                sr_prev = sr_history.iloc[-1]
+        else:
+            sr_prev = None
+    else:
+        sr_prev = sr_history.iloc[-2] if len(sr_history) >= 2 else sr_history.iloc[-1]
+    if sr_prev is not None:
+        sr_high, sr_low, sr_close = float(sr_prev["High"]), float(sr_prev["Low"]), float(sr_prev["Close"])
     sr_pivot = (sr_high + sr_low + sr_close) / 3.0
     sr_levels = {
         "R2": sr_pivot + (sr_high - sr_low),
