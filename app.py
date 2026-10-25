@@ -1118,8 +1118,8 @@ else:
                 gauge_fig = go.Figure(go.Indicator(
                     mode="gauge+number",
                     value=fear_score,
-                    number={"font": {"size": 30, "color": fear_color}, "suffix": "/100"},
-                    title={"text": "Fear & Greed<br><span style='font-size:11px;color:#aeb6c2'>Market proxy</span>", "font": {"size": 15}},
+                    number={"font": {"size": 42, "color": fear_color}, "suffix": "/100"},
+                    title={"text": "Fear & Greed", "font": {"size": 18}},
                     gauge={
                         "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 20, 40, 60, 80, 100], "ticktext": ["0", "20", "40", "60", "80", "100"], "tickfont": {"size": 9}},
                         "bar": {"color": fear_color, "thickness": 0.22},
@@ -1137,8 +1137,8 @@ else:
                 ))
                 gauge_fig.update_layout(template="plotly_dark", height=250, margin=dict(l=8,r=8,t=48,b=8), paper_bgcolor="rgba(0,0,0,0)")
                 fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
-                fear_col.markdown(f'<div style="text-align:center;font-weight:700;color:{fear_color};font-size:16px;margin-top:-8px;">{fear_label}</div>', unsafe_allow_html=True)
-                fear_col.caption("Proxy score from RSI, EMA trend, 20-session momentum and India VIX. Not an official index or trading signal.")
+                fear_col.markdown(f'<div style="text-align:center;font-weight:800;color:{fear_color};font-size:26px;line-height:1.2;margin-top:-2px;padding:4px 0 8px;">{fear_label.upper()}</div>', unsafe_allow_html=True)
+
             else:
                 fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
 
