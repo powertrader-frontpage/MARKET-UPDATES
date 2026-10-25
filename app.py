@@ -953,44 +953,55 @@ else:
                 overview_regime = "Transition / mixed"
         # Return % is in percentage points; convert to decimal before annualizing.
         overview_vol = overview_rc["Return %"].rolling(20).std().iloc[-1] / 100 * np.sqrt(252)
-        # Weekly EMA 200 distance is always measured for NIFTY 50, regardless of the selected regime instrument.
+        # Weekly EMA 200 is calculated for the instrument selected in the regime selector.
+        # Standard indices use their Yahoo ticker; NIFTY 500 constituents use their .NS ticker.
         weekly_ema200 = np.nan
-        weekly_nifty_close = np.nan
-        weekly_nifty_timestamp = "Unavailable"
+        weekly_selected_close = np.nan
+        weekly_selected_timestamp = "Unavailable"
         weekly_ema_error = None
+        selected_yahoo_ticker = INDEXES.get(overview_regime_name, overview_regime_name + ".NS")
         try:
-            weekly_nifty = yf.download("^NSEI", period="10y", interval="1wk", auto_adjust=False, progress=False, threads=False)
-            if not weekly_nifty.empty:
-                if isinstance(weekly_nifty.columns, pd.MultiIndex):
-                    weekly_nifty.columns = weekly_nifty.columns.get_level_values(0)
-                weekly_nifty = weekly_nifty.rename_axis("Date").reset_index()
-                weekly_nifty.columns = [str(c).strip().title() for c in weekly_nifty.columns]
-                if "Close" in weekly_nifty.columns:
-                    weekly_nifty["Close"] = pd.to_numeric(weekly_nifty["Close"], errors="coerce")
-                    weekly_nifty = weekly_nifty.dropna(subset=["Close"]).sort_values("Date")
-                    if len(weekly_nifty) >= 200:
-                        weekly_nifty_close = float(weekly_nifty["Close"].iloc[-1])
-                        weekly_ema200 = float(weekly_nifty["Close"].ewm(span=200, adjust=False, min_periods=200).mean().iloc[-1])
-                        weekly_nifty_timestamp = pd.to_datetime(weekly_nifty["Date"].iloc[-1]).strftime("%d %b %Y")
+            weekly_selected = yf.download(selected_yahoo_ticker, period="10y", interval="1wk", auto_adjust=False, progress=False, threads=False)
+            if not weekly_selected.empty:
+                if isinstance(weekly_selected.columns, pd.MultiIndex):
+                    weekly_selected.columns = weekly_selected.columns.get_level_values(0)
+                weekly_selected = weekly_selected.rename_axis("Date").reset_index()
+                weekly_selected.columns = [str(c).strip().title() for c in weekly_selected.columns]
+                if "Close" in weekly_selected.columns:
+                    weekly_selected["Close"] = pd.to_numeric(weekly_selected["Close"], errors="coerce")
+                    weekly_selected = weekly_selected.dropna(subset=["Close"]).sort_values("Date")
+                    if len(weekly_selected) >= 200:
+                        weekly_selected_close = float(weekly_selected["Close"].iloc[-1])
+                        weekly_ema200 = float(weekly_selected["Close"].ewm(span=200, adjust=False, min_periods=200).mean().iloc[-1])
+                        weekly_selected_timestamp = pd.to_datetime(weekly_selected["Date"].iloc[-1]).strftime("%d %b %Y")
                     else:
-                        weekly_ema_error = "Fewer than 200 weekly closes returned"
+                        weekly_ema_error = f"Fewer than 200 weekly closes returned for {overview_regime_name}"
                 else:
                     weekly_ema_error = "Weekly Close column unavailable"
             else:
-                weekly_ema_error = "Yahoo Finance returned no weekly NIFTY data"
+                weekly_ema_error = f"No weekly data returned for {overview_regime_name}"
         except Exception as exc:
             weekly_ema_error = f"Weekly data unavailable ({exc.__class__.__name__})"
-        weekly_ema_gap_pct = ((weekly_nifty_close / weekly_ema200) - 1) * 100 if pd.notna(weekly_nifty_close) and pd.notna(weekly_ema200) and weekly_ema200 != 0 else np.nan
+        weekly_ema_gap_pct = ((weekly_selected_close / weekly_ema200) - 1) * 100 if pd.notna(weekly_selected_close) and pd.notna(weekly_ema200) and weekly_ema200 != 0 else np.nan
 
-        # NIFTY 50 PCR uses actual aggregate put/call open interest from FYERS; no guessed fallback.
+        # PCR is instrument-specific and only shown when FYERS returns a valid option chain.
+        selected_fyers_symbol = None
+        if overview_regime_name == "NIFTY 50":
+            selected_fyers_symbol = "NSE:NIFTY50-INDEX"
+        elif overview_regime_name == "BANK NIFTY":
+            selected_fyers_symbol = "NSE:NIFTYBANK-INDEX"
+        elif overview_regime_name in INDEXES:
+            selected_fyers_symbol = None  # Do not request an option chain for non-optionable indicators/commodities/FX.
+        else:
+            selected_fyers_symbol = "NSE:" + overview_regime_name.upper() + "-EQ"
         nifty_pcr = np.nan
-        nifty_pcr_status = "Connect FYERS for live option-chain PCR"
+        nifty_pcr_status = f"PCR unavailable for {overview_regime_name}"
         nifty_pcr_source_time = "Unavailable"
-        if st.session_state.get("fyers_access_token") and fyers_credentials():
+        if selected_fyers_symbol and st.session_state.get("fyers_access_token") and fyers_credentials():
             try:
                 pcr_app_id = fyers_credentials()[0]
                 pcr_token = st.session_state["fyers_access_token"]
-                pcr_chain, pcr_error = fyers_option_chain(pcr_app_id, pcr_token, "NSE:NIFTY50-INDEX", strikecount=10)
+                pcr_chain, pcr_error = fyers_option_chain(pcr_app_id, pcr_token, selected_fyers_symbol, strikecount=10)
                 if not pcr_error:
                     pcr_rows = pcr_chain.get("optionsChain") or pcr_chain.get("options_chain") or []
                     pcr_calls = [row for row in pcr_rows if str(row.get("option_type", "")).upper() == "CE"]
@@ -1003,14 +1014,16 @@ else:
                         pcr_put_oi = sum(float(row.get("oi") or 0) for row in pcr_puts)
                     if float(pcr_call_oi or 0) > 0:
                         nifty_pcr = float(pcr_put_oi or 0) / float(pcr_call_oi)
-                        nifty_pcr_status = "Bounce-back chances are high" if nifty_pcr < 0.6 else "Coming-down chances are high" if nifty_pcr > 1.4 else "Neutral PCR range"
+                        nifty_pcr_status = "Low put/call OI ratio" if nifty_pcr < 0.6 else "High put/call OI ratio" if nifty_pcr > 1.4 else "Neutral PCR range"
                         nifty_pcr_source_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y %H:%M IST")
                     else:
                         nifty_pcr_status = "PCR unavailable: call OI is zero or missing"
                 else:
-                    nifty_pcr_status = "FYERS option-chain unavailable"
+                    nifty_pcr_status = f"FYERS option chain unavailable for {overview_regime_name}"
             except Exception:
-                nifty_pcr_status = "FYERS option-chain unavailable"
+                nifty_pcr_status = f"FYERS option chain unavailable for {overview_regime_name}"
+        elif selected_fyers_symbol:
+            nifty_pcr_status = "Connect FYERS for option-chain PCR"
         if pd.notna(nifty_pcr) and nifty_pcr < 0.6:
             nifty_pcr_color = "#22c55e"
         elif pd.notna(nifty_pcr) and nifty_pcr > 1.4:
@@ -1048,13 +1061,13 @@ else:
         rsi_color = "#ef4444" if pd.notna(overview_rsi_value) and overview_rsi_value < 30 else "#22c55e" if pd.notna(overview_rsi_value) and overview_rsi_value > 70 else "#f59e0b" if pd.notna(overview_rsi_value) and (overview_rsi_value >= 60 or overview_rsi_value <= 40) else "#94a3b8"
         regime_cols[1].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {adx_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">ADX 14 · trend strength</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{adx_color};">{fmt(overview_adx_value)}</div><div style="font-size:12px;color:#aeb6c2;">{ "Strong trend" if pd.notna(overview_adx_value) and overview_adx_value >= 25 else "Trend building" if pd.notna(overview_adx_value) and overview_adx_value >= 20 else "Weak trend" }</div></div>', unsafe_allow_html=True)
         regime_cols[2].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {rsi_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">RSI 14 · momentum</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{rsi_color};">{fmt(overview_rsi_value)}</div><div style="font-size:12px;color:#aeb6c2;">{ "Oversold" if pd.notna(overview_rsi_value) and overview_rsi_value < 30 else "Overbought" if pd.notna(overview_rsi_value) and overview_rsi_value > 70 else "Bullish momentum" if pd.notna(overview_rsi_value) and overview_rsi_value >= 60 else "Bearish momentum" if pd.notna(overview_rsi_value) and overview_rsi_value <= 40 else "Neutral" }</div></div>', unsafe_allow_html=True)
-        weekly_close_text = f"{weekly_nifty_close:,.2f}" if pd.notna(weekly_nifty_close) else "—"
+        weekly_close_text = f"{weekly_selected_close:,.2f}" if pd.notna(weekly_selected_close) else "—"
         weekly_ema_text = f"{weekly_ema200:,.2f}" if pd.notna(weekly_ema200) else "—"
         weekly_gap_text = f"{weekly_ema_gap_pct:+.2f}%" if pd.notna(weekly_ema_gap_pct) else "—"
         weekly_subtext = weekly_ema_status if pd.notna(weekly_ema_gap_pct) else weekly_ema_error or weekly_ema_status
-        regime_cols[3].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {weekly_ema_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY · Weekly EMA 200 gap</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{weekly_ema_color};">{weekly_gap_text}</div><div style="font-size:12px;color:#aeb6c2;">Close {weekly_close_text} · EMA {weekly_ema_text}</div><div style="font-size:12px;color:{weekly_ema_color};margin-top:4px;">{weekly_subtext}</div></div>', unsafe_allow_html=True)
+        regime_cols[3].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {weekly_ema_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">{html.escape(overview_regime_name)} · Weekly EMA 200 gap</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{weekly_ema_color};">{weekly_gap_text}</div><div style="font-size:12px;color:#aeb6c2;">Close {weekly_close_text} · EMA {weekly_ema_text}</div><div style="font-size:12px;color:{weekly_ema_color};margin-top:4px;">{weekly_subtext}</div></div>', unsafe_allow_html=True)
         nifty_pcr_text = f"{nifty_pcr:.2f}" if pd.notna(nifty_pcr) else "—"
-        regime_cols[4].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {nifty_pcr_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY 50 · PCR (OI)</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{nifty_pcr_color};">{nifty_pcr_text}</div><div style="font-size:12px;color:{nifty_pcr_color};margin-top:4px;">{nifty_pcr_status}</div><div style="font-size:11px;color:#aeb6c2;margin-top:4px;">Source: FYERS · {nifty_pcr_source_time}</div></div>', unsafe_allow_html=True)
+        regime_cols[4].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {nifty_pcr_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">{html.escape(overview_regime_name)} · PCR (OI)</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{nifty_pcr_color};">{nifty_pcr_text}</div><div style="font-size:12px;color:{nifty_pcr_color};margin-top:4px;">{nifty_pcr_status}</div><div style="font-size:11px;color:#aeb6c2;margin-top:4px;">Source: FYERS · {nifty_pcr_source_time}</div></div>', unsafe_allow_html=True)
         # Compact Fear & Greed proxy beside the existing price trend chart.
         # This is an explicitly labelled dashboard-derived proxy, not an official NSE index.
         st.markdown("#### Price trend")
