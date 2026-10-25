@@ -2421,535 +2421,535 @@ if selected_page == page_names[18]:
         st.caption("Signals are mechanical rule checks on latest returned daily bars, not recommendations. No automated alerts or trade execution are enabled.")
     
     
-    # Additional research modules inspired by the user's reference dashboard.
-    research_tabs = [st.expander(label, expanded=False) for label in ["23 Industry intelligence", "24 Delivery & money-flow proxies", "25 Daily briefing"]]
-    
-    with research_tabs[0]:
-        st.subheader("23 · Industry intelligence and rotation")
-        st.write("Automatically fetches a broad large-cap stock universe from Yahoo Finance, with optional CSV override. Public data may be delayed or unavailable.")
-        industry_file = st.file_uploader("Optional: override with your own stock history CSV", type=["csv"], key="industry_history_csv")
-        auto_industry = st.button("↻ Fetch latest industry data", key="auto_industry_fetch")
-        if True:  # Auto-fetch by default; cached for six hours. CSV remains an optional override.
-            try:
-                ind = pd.read_csv(industry_file) if industry_file is not None else get_auto_universe(period="2y")
-                ind.columns = [str(c).strip() for c in ind.columns]
-                required = {"Date", "Symbol", "Industry", "Close"}
-                if not required.issubset(ind.columns):
-                    st.error("Required columns: Date, Symbol, Industry, Close.")
-                else:
-                    ind["Date"] = pd.to_datetime(ind["Date"], errors="coerce")
-                    ind["Close"] = pd.to_numeric(ind["Close"], errors="coerce")
-                    ind = ind.dropna(subset=["Date", "Symbol", "Industry", "Close"])
-                    ind = ind.sort_values(["Symbol", "Date"]).drop_duplicates(["Symbol", "Date"], keep="last")
-                    ind["Return 1M %"] = ind.groupby("Symbol")["Close"].transform(lambda x: (x / x.shift(21) - 1) * 100)
-                    ind["Return 3M %"] = ind.groupby("Symbol")["Close"].transform(lambda x: (x / x.shift(63) - 1) * 100)
-                    ind["SMA50"] = ind.groupby("Symbol")["Close"].transform(lambda x: x.rolling(50, min_periods=50).mean())
-                    ind["SMA200"] = ind.groupby("Symbol")["Close"].transform(lambda x: x.rolling(200, min_periods=200).mean())
-                    latest_date = ind["Date"].max()
-                    latest = ind[ind["Date"] == latest_date].copy()
-                    agg = latest.groupby("Industry").agg(
-                        Stocks=("Symbol", "nunique"),
-                        Mean_1M=("Return 1M %", "mean"),
-                        Mean_3M=("Return 3M %", "mean"),
-                        Median_1M=("Return 1M %", "median"),
-                        Valid_1M=("Return 1M %", "count"),
-                        Valid_3M=("Return 3M %", "count"),
-                    ).reset_index()
-                    breadth = latest.assign(
-                        Above50=latest["Close"] > latest["SMA50"],
-                        Above200=latest["Close"] > latest["SMA200"],
-                    ).groupby("Industry").agg(
-                        Above_50DMA_pct=("Above50", lambda x: x.dropna().mean() * 100 if x.notna().any() else np.nan),
-                        Above_200DMA_pct=("Above200", lambda x: x.dropna().mean() * 100 if x.notna().any() else np.nan),
-                    ).reset_index()
-                    agg = agg.merge(breadth, on="Industry", how="left").sort_values("Mean_1M", ascending=False)
-                    st.caption(f"Latest data date: {latest_date:%Y-%m-%d}. Returns are equal-weighted across available stocks, not market-cap weighted.")
-                    display = agg.rename(columns={"Mean_1M":"Average 1M return %","Mean_3M":"Average 3M return %","Median_1M":"Median 1M return %","Valid_1M":"Stocks with 1M history","Valid_3M":"Stocks with 3M history"})
-                    st.dataframe(display.style.format({"Average 1M return %":"{:.2f}","Average 3M return %":"{:.2f}","Median 1M return %":"{:.2f}","Above_50DMA_pct":"{:.1f}","Above_200DMA_pct":"{:.1f}"}), use_container_width=True, hide_index=True)
-                    plot_df = agg.dropna(subset=["Mean_1M"]).head(15)
-                    if not plot_df.empty:
-                        fig = px.bar(plot_df.sort_values("Mean_1M"), x="Mean_1M", y="Industry", orientation="h", color="Mean_1M", template="plotly_dark", title="Top industries by equal-weighted 1-month return")
-                        fig.update_layout(height=max(360, 28 * len(plot_df)), xaxis_title="Return (%)")
-                        st.plotly_chart(fig, use_container_width=True)
-                    st.download_button("Download industry rankings", agg.to_csv(index=False).encode("utf-8"), file_name="industry_intelligence.csv", mime="text/csv")
-            except Exception as exc:
-                st.error(f"Could not calculate industry analytics: {type(exc).__name__}: {exc}")
-        else:
-            st.info("Automatic history was unavailable from Yahoo Finance. No industry values are substituted; retry later or optionally upload your own genuine CSV.")
-        st.caption("Automatic universe: selected large-cap NSE-listed stocks. Industry labels are broad groupings, not official index constituents. Source: Yahoo Finance via yfinance; verify freshness and coverage.")
-    
-    with research_tabs[1]:
-        st.subheader("24 · Delivery activity and money-flow proxies")
-        st.write("The dashboard does not scrape NSE reports. NSE publishes downloadable delivery reports, but no authorized free machine-readable API is configured here.")
-        st.warning("Automatic delivery percentage and exchange turnover are unavailable until a permitted data feed is connected. The app will not invent delivery data or ask you to upload files.")
-        st.markdown("[Open official NSE All Reports](https://www.nseindia.com/all-reports) · Look for “Full Bhavcopy and Security Deliverable data” or “Security-wise Delivery Positions”.")
-        st.markdown("**What remains automatic:** price history, market breadth, industry performance, technical indicators, stock deep-dive, strategy backtests, and public news headlines.")
-        st.caption("Delivery percentage, participant money flow, and institutional delivery signals require genuine source fields. Price × volume is not presented as exchange turnover or delivery activity.")
-    
-    with research_tabs[2]:
-        st.subheader("25 · Daily market briefing")
-        st.write("Generated from data already retrieved by the dashboard. It does not invent news headlines or claim to know why a market moved.")
-        nifty_df = market_data.get("NIFTY 50", pd.DataFrame())
-        if not nifty_df.empty:
-            ni = indicators(nifty_df)
-            nl = ni.iloc[-1]
-            prev_close = float(ni.iloc[-2]["Close"]) if len(ni) > 1 else np.nan
-            ret = (float(nl["Close"]) / prev_close - 1) * 100 if pd.notna(prev_close) and prev_close else np.nan
-            a,b,c,d = st.columns(4)
-            a.metric("NIFTY 50 latest returned close", fmt(nl["Close"]), f"{fmt(ret)}% vs previous bar" if pd.notna(ret) else None)
-            b.metric("RSI 14", fmt(nl.get("RSI 14")))
-            c.metric("EMA 20", fmt(nl.get("EMA 20")))
-            d.metric("EMA 50", fmt(nl.get("EMA 50")))
-            close, e20, e50 = nl["Close"], nl.get("EMA 20", np.nan), nl.get("EMA 50", np.nan)
-            regime_text = ("bullish EMA alignment" if close > e20 > e50 else "bearish EMA alignment" if close < e20 < e50 else "mixed EMA alignment") if pd.notna(e20) and pd.notna(e50) else "insufficient moving-average history"
-            st.markdown(f"**Technical regime:** {regime_text}. This is a rule-based description, not a forecast.")
-            brief_rows=[]
-            for nm,df in market_data.items():
-                snap=quote_snapshot(df)
-                if snap:
-                    last,change,pct=snap
-                    brief_rows.append({"Instrument":nm,"Latest returned close":last["Close"],"Change vs previous bar":change,"Change %":pct,"Source candle (IST)":last["Date"].strftime("%Y-%m-%d %H:%M IST"),"Frequency":"Daily","Source":"Yahoo Finance via yfinance"})
-            st.dataframe(pd.DataFrame(brief_rows),use_container_width=True,hide_index=True)
-            st.markdown("#### Known limitations")
-            st.write("- This is a daily-bar summary, not a live intraday signal.")
-            st.write("- Market moves are not attributed to geopolitical or economic news without verified event sources.")
-            st.write("- FII/DII flows, derivatives positioning and delivery activity are unavailable unless separately sourced or uploaded.")
-            st.download_button("Download daily briefing data",pd.DataFrame(brief_rows).to_csv(index=False).encode("utf-8"),file_name="daily_market_briefing_data.csv",mime="text/csv")
-        else:
-            st.warning("No market history returned. A briefing cannot be generated until a real source returns data.")
-    
-    
-    # Additional modules completing the major workflows shown in the reference screenshots.
-    advanced_tabs = [st.expander(label, expanded=False) for label in [
-        "26 Macro & event monitor",
-        "27 Breadth & stock scanner",
-        "28 Derivatives lab",
-        "29 Stock deep-dive",
-        "30 Strategy backtest",
-        "31 Data quality"
-    ]]
-    
-    with advanced_tabs[0]:
-        st.subheader("26 · Automatic macro & geopolitical event monitor")
-        st.write("Public news headlines are fetched automatically and linked to their publishers. Headlines are not proof of causation and are not used to fabricate market-impact statistics.")
-        topic=st.selectbox("Headline category",["India macro & RBI","Global macro & central banks","Geopolitics and energy","Markets and policy"],key="auto_event_topic")
-        queries={"India macro & RBI":"India RBI inflation GDP economy","Global macro & central banks":"Federal Reserve ECB Bank of Japan inflation rates economy","Geopolitics and energy":"geopolitics oil energy markets conflict","Markets and policy":"India markets policy regulation economy"}
-        with st.spinner("Fetching public headline feed…"):
-            ev,ev_error=get_news_rss(queries[topic],20)
-        if ev_error: st.warning(ev_error)
-        elif not ev.empty:
-            st.dataframe(ev,use_container_width=True,hide_index=True,column_config={"Source link":st.column_config.LinkColumn("Open source")})
-            st.download_button("Download headline log",ev.to_csv(index=False).encode("utf-8"),"macro_geopolitical_headlines.csv","text/csv")
-        st.markdown("#### Live macro market proxies")
-        macro_rows=[]
-        for name,ticker in [("NIFTY 50","^NSEI"),("BANK NIFTY","^NSEBANK"),("India VIX","^INDIAVIX"),("Brent Crude","BZ=F"),("USD/INR","INR=X"),("Gold","GC=F")]:
-            if name in market_data and not market_data[name].empty:
-                df=market_data[name]
+# Additional research modules inspired by the user's reference dashboard.
+research_tabs = [st.expander(label, expanded=False) for label in ["23 Industry intelligence", "24 Delivery & money-flow proxies", "25 Daily briefing"]]
+
+with research_tabs[0]:
+    st.subheader("23 · Industry intelligence and rotation")
+    st.write("Automatically fetches a broad large-cap stock universe from Yahoo Finance, with optional CSV override. Public data may be delayed or unavailable.")
+    industry_file = st.file_uploader("Optional: override with your own stock history CSV", type=["csv"], key="industry_history_csv")
+    auto_industry = st.button("↻ Fetch latest industry data", key="auto_industry_fetch")
+    if True:  # Auto-fetch by default; cached for six hours. CSV remains an optional override.
+        try:
+            ind = pd.read_csv(industry_file) if industry_file is not None else get_auto_universe(period="2y")
+            ind.columns = [str(c).strip() for c in ind.columns]
+            required = {"Date", "Symbol", "Industry", "Close"}
+            if not required.issubset(ind.columns):
+                st.error("Required columns: Date, Symbol, Industry, Close.")
             else:
-                df,_=get_history(ticker,period,"1d")
-            if not df.empty:
-                snap=quote_snapshot(df)
-                if snap:
-                    last,change,pct=snap
-                    macro_rows.append({"Instrument":name,"Latest returned close":last["Close"],"Change %":pct,"Source candle":last["Date"].strftime("%Y-%m-%d %H:%M IST"),"Source":"Yahoo Finance via yfinance"})
-            else: macro_rows.append({"Instrument":name,"Latest returned close":np.nan,"Change %":np.nan,"Source candle":"Unavailable","Source":"No data returned"})
-        st.dataframe(pd.DataFrame(macro_rows),use_container_width=True,hide_index=True)
-        st.caption("Macro proxies are public market history, not official economic indicators. RBI rates, inflation releases, FII/DII flows and event impact are not inferred from prices.")
-        st.markdown("[Official sources: NSE reports](https://www.nseindia.com/all-reports) · [RBI](https://www.rbi.org.in/) · [MOSPI](https://mospi.gov.in/) · [SEBI](https://www.sebi.gov.in/)")
-    
-    with advanced_tabs[1]:
-        st.subheader("27 · Automatic market breadth and technical stock scanner")
-        st.write("Automatically fetches a fixed large-cap OHLCV universe by default. Optional CSV override is available, but not required.")
-        breadth_file = st.file_uploader("Optional: override with your own OHLCV CSV", type=["csv"], key="breadth_universe")
-        auto_breadth = st.button("↻ Fetch latest stock universe", key="auto_breadth_fetch")
-        st.caption("Automatic history is fetched from Yahoo Finance. Public source coverage, delays and availability can vary.")
-        if True:  # Auto-fetch by default; cached for six hours. CSV remains an optional override.
-            try:
-                univ = pd.read_csv(breadth_file) if breadth_file is not None else get_auto_universe(period="2y")
-                univ.columns = [str(c).strip() for c in univ.columns]
-                if not {"Date", "Symbol", "Close"}.issubset(univ.columns):
-                    st.error("Required columns: Date, Symbol, Close.")
-                else:
-                    univ["Date"] = pd.to_datetime(univ["Date"], errors="coerce")
-                    for c in ["Close", "Open", "High", "Low", "Volume"]:
-                        if c in univ: univ[c] = pd.to_numeric(univ[c], errors="coerce")
-                    univ = univ.dropna(subset=["Date", "Symbol", "Close"]).sort_values(["Symbol", "Date"]).drop_duplicates(["Symbol", "Date"], keep="last")
-                    results = []
-                    for sym, sdf in univ.groupby("Symbol"):
-                        sdf = sdf.copy()
-                        close = sdf["Close"]
-                        sdf["SMA20"] = close.rolling(20, min_periods=20).mean()
-                        sdf["SMA50"] = close.rolling(50, min_periods=50).mean()
-                        sdf["SMA200"] = close.rolling(200, min_periods=200).mean()
-                        sdf["EMA20"] = close.ewm(span=20, adjust=False, min_periods=20).mean()
-                        delta = close.diff()
-                        gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False, min_periods=14).mean()
-                        loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False, min_periods=14).mean()
-                        rs = gain / loss.replace(0, np.nan)
-                        sdf["RSI14"] = 100 - 100/(1+rs)
-                        sdf.loc[(loss == 0) & gain.notna(), "RSI14"] = 100
-                        last = sdf.iloc[-1]
-                        prior = sdf.iloc[-2] if len(sdf) > 1 else None
-                        results.append({
-                            "Symbol": sym, "Industry": last.get("Industry", ""),
-                            "Date": last["Date"], "Close": last["Close"],
-                            "1D %": ((last["Close"]/prior["Close"]-1)*100 if prior is not None and prior["Close"] else np.nan),
-                            "SMA20": last["SMA20"], "SMA50": last["SMA50"], "SMA200": last["SMA200"],
-                            "RSI14": last["RSI14"],
-                            "Above SMA20": bool(last["Close"] > last["SMA20"]) if pd.notna(last["SMA20"]) else None,
-                            "Above SMA50": bool(last["Close"] > last["SMA50"]) if pd.notna(last["SMA50"]) else None,
-                            "Above SMA200": bool(last["Close"] > last["SMA200"]) if pd.notna(last["SMA200"]) else None,
-                            "EMA trend": ("Bullish" if last["Close"] > last["EMA20"] else "Bearish") if pd.notna(last["EMA20"]) else "Insufficient history",
-                        })
-                    scan = pd.DataFrame(results)
-                    valid200 = scan["Above SMA200"].dropna()
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Symbols uploaded", f"{scan['Symbol'].nunique():,}")
-                    m2.metric("Above 50DMA", f"{100*scan['Above SMA50'].dropna().mean():.1f}%" if scan["Above SMA50"].notna().any() else "Unavailable")
-                    m3.metric("Above 200DMA", f"{100*valid200.mean():.1f}%" if len(valid200) else "Insufficient history")
-                    m4.metric("Breadth sample", f"{len(valid200):,} with 200DMA" )
-                    st.markdown("#### Filters")
-                    f1, f2, f3 = st.columns(3)
-                    trend_filter = f1.selectbox("Trend", ["All", "Bullish", "Bearish", "Insufficient history"], key="scanner_trend")
-                    rsi_filter = f2.selectbox("RSI 14", ["All", "Below 30", "30–50", "50–70", "Above 70"], key="scanner_rsi")
-                    dma_filter = f3.selectbox("200DMA", ["All", "Above", "Below", "Insufficient history"], key="scanner_dma")
-                    filtered = scan.copy()
-                    if trend_filter != "All": filtered = filtered[filtered["EMA trend"] == trend_filter]
-                    if rsi_filter == "Below 30": filtered = filtered[filtered["RSI14"] < 30]
-                    elif rsi_filter == "30–50": filtered = filtered[filtered["RSI14"].between(30, 50, inclusive="left")]
-                    elif rsi_filter == "50–70": filtered = filtered[filtered["RSI14"].between(50, 70, inclusive="left")]
-                    elif rsi_filter == "Above 70": filtered = filtered[filtered["RSI14"] >= 70]
-                    if dma_filter == "Above": filtered = filtered[filtered["Above SMA200"] == True]
-                    elif dma_filter == "Below": filtered = filtered[filtered["Above SMA200"] == False]
-                    elif dma_filter == "Insufficient history": filtered = filtered[filtered["Above SMA200"].isna()]
-                    st.dataframe(filtered.sort_values("1D %", ascending=False), use_container_width=True, hide_index=True)
-                    if "Industry" in scan and scan["Industry"].astype(str).str.len().gt(0).any():
-                        ind_breadth = scan.dropna(subset=["Above SMA200"]).groupby("Industry").agg(Stocks=("Symbol","nunique"), Above200Pct=("Above SMA200",lambda x:100*x.mean())).reset_index().sort_values("Above200Pct",ascending=False)
-                        st.markdown("#### Industry breadth")
-                        st.dataframe(ind_breadth.style.format({"Above200Pct":"{:.1f}%"}), use_container_width=True, hide_index=True)
-                    st.download_button("Download scanner results", filtered.to_csv(index=False).encode("utf-8"), "technical_scanner_results.csv", "text/csv")
-            except Exception as exc:
-                st.error(f"Could not calculate breadth/scanner: {type(exc).__name__}: {exc}")
+                ind["Date"] = pd.to_datetime(ind["Date"], errors="coerce")
+                ind["Close"] = pd.to_numeric(ind["Close"], errors="coerce")
+                ind = ind.dropna(subset=["Date", "Symbol", "Industry", "Close"])
+                ind = ind.sort_values(["Symbol", "Date"]).drop_duplicates(["Symbol", "Date"], keep="last")
+                ind["Return 1M %"] = ind.groupby("Symbol")["Close"].transform(lambda x: (x / x.shift(21) - 1) * 100)
+                ind["Return 3M %"] = ind.groupby("Symbol")["Close"].transform(lambda x: (x / x.shift(63) - 1) * 100)
+                ind["SMA50"] = ind.groupby("Symbol")["Close"].transform(lambda x: x.rolling(50, min_periods=50).mean())
+                ind["SMA200"] = ind.groupby("Symbol")["Close"].transform(lambda x: x.rolling(200, min_periods=200).mean())
+                latest_date = ind["Date"].max()
+                latest = ind[ind["Date"] == latest_date].copy()
+                agg = latest.groupby("Industry").agg(
+                    Stocks=("Symbol", "nunique"),
+                    Mean_1M=("Return 1M %", "mean"),
+                    Mean_3M=("Return 3M %", "mean"),
+                    Median_1M=("Return 1M %", "median"),
+                    Valid_1M=("Return 1M %", "count"),
+                    Valid_3M=("Return 3M %", "count"),
+                ).reset_index()
+                breadth = latest.assign(
+                    Above50=latest["Close"] > latest["SMA50"],
+                    Above200=latest["Close"] > latest["SMA200"],
+                ).groupby("Industry").agg(
+                    Above_50DMA_pct=("Above50", lambda x: x.dropna().mean() * 100 if x.notna().any() else np.nan),
+                    Above_200DMA_pct=("Above200", lambda x: x.dropna().mean() * 100 if x.notna().any() else np.nan),
+                ).reset_index()
+                agg = agg.merge(breadth, on="Industry", how="left").sort_values("Mean_1M", ascending=False)
+                st.caption(f"Latest data date: {latest_date:%Y-%m-%d}. Returns are equal-weighted across available stocks, not market-cap weighted.")
+                display = agg.rename(columns={"Mean_1M":"Average 1M return %","Mean_3M":"Average 3M return %","Median_1M":"Median 1M return %","Valid_1M":"Stocks with 1M history","Valid_3M":"Stocks with 3M history"})
+                st.dataframe(display.style.format({"Average 1M return %":"{:.2f}","Average 3M return %":"{:.2f}","Median 1M return %":"{:.2f}","Above_50DMA_pct":"{:.1f}","Above_200DMA_pct":"{:.1f}"}), use_container_width=True, hide_index=True)
+                plot_df = agg.dropna(subset=["Mean_1M"]).head(15)
+                if not plot_df.empty:
+                    fig = px.bar(plot_df.sort_values("Mean_1M"), x="Mean_1M", y="Industry", orientation="h", color="Mean_1M", template="plotly_dark", title="Top industries by equal-weighted 1-month return")
+                    fig.update_layout(height=max(360, 28 * len(plot_df)), xaxis_title="Return (%)")
+                    st.plotly_chart(fig, use_container_width=True)
+                st.download_button("Download industry rankings", agg.to_csv(index=False).encode("utf-8"), file_name="industry_intelligence.csv", mime="text/csv")
+        except Exception as exc:
+            st.error(f"Could not calculate industry analytics: {type(exc).__name__}: {exc}")
+    else:
+        st.info("Automatic history was unavailable from Yahoo Finance. No industry values are substituted; retry later or optionally upload your own genuine CSV.")
+    st.caption("Automatic universe: selected large-cap NSE-listed stocks. Industry labels are broad groupings, not official index constituents. Source: Yahoo Finance via yfinance; verify freshness and coverage.")
+
+with research_tabs[1]:
+    st.subheader("24 · Delivery activity and money-flow proxies")
+    st.write("The dashboard does not scrape NSE reports. NSE publishes downloadable delivery reports, but no authorized free machine-readable API is configured here.")
+    st.warning("Automatic delivery percentage and exchange turnover are unavailable until a permitted data feed is connected. The app will not invent delivery data or ask you to upload files.")
+    st.markdown("[Open official NSE All Reports](https://www.nseindia.com/all-reports) · Look for “Full Bhavcopy and Security Deliverable data” or “Security-wise Delivery Positions”.")
+    st.markdown("**What remains automatic:** price history, market breadth, industry performance, technical indicators, stock deep-dive, strategy backtests, and public news headlines.")
+    st.caption("Delivery percentage, participant money flow, and institutional delivery signals require genuine source fields. Price × volume is not presented as exchange turnover or delivery activity.")
+
+with research_tabs[2]:
+    st.subheader("25 · Daily market briefing")
+    st.write("Generated from data already retrieved by the dashboard. It does not invent news headlines or claim to know why a market moved.")
+    nifty_df = market_data.get("NIFTY 50", pd.DataFrame())
+    if not nifty_df.empty:
+        ni = indicators(nifty_df)
+        nl = ni.iloc[-1]
+        prev_close = float(ni.iloc[-2]["Close"]) if len(ni) > 1 else np.nan
+        ret = (float(nl["Close"]) / prev_close - 1) * 100 if pd.notna(prev_close) and prev_close else np.nan
+        a,b,c,d = st.columns(4)
+        a.metric("NIFTY 50 latest returned close", fmt(nl["Close"]), f"{fmt(ret)}% vs previous bar" if pd.notna(ret) else None)
+        b.metric("RSI 14", fmt(nl.get("RSI 14")))
+        c.metric("EMA 20", fmt(nl.get("EMA 20")))
+        d.metric("EMA 50", fmt(nl.get("EMA 50")))
+        close, e20, e50 = nl["Close"], nl.get("EMA 20", np.nan), nl.get("EMA 50", np.nan)
+        regime_text = ("bullish EMA alignment" if close > e20 > e50 else "bearish EMA alignment" if close < e20 < e50 else "mixed EMA alignment") if pd.notna(e20) and pd.notna(e50) else "insufficient moving-average history"
+        st.markdown(f"**Technical regime:** {regime_text}. This is a rule-based description, not a forecast.")
+        brief_rows=[]
+        for nm,df in market_data.items():
+            snap=quote_snapshot(df)
+            if snap:
+                last,change,pct=snap
+                brief_rows.append({"Instrument":nm,"Latest returned close":last["Close"],"Change vs previous bar":change,"Change %":pct,"Source candle (IST)":last["Date"].strftime("%Y-%m-%d %H:%M IST"),"Frequency":"Daily","Source":"Yahoo Finance via yfinance"})
+        st.dataframe(pd.DataFrame(brief_rows),use_container_width=True,hide_index=True)
+        st.markdown("#### Known limitations")
+        st.write("- This is a daily-bar summary, not a live intraday signal.")
+        st.write("- Market moves are not attributed to geopolitical or economic news without verified event sources.")
+        st.write("- FII/DII flows, derivatives positioning and delivery activity are unavailable unless separately sourced or uploaded.")
+        st.download_button("Download daily briefing data",pd.DataFrame(brief_rows).to_csv(index=False).encode("utf-8"),file_name="daily_market_briefing_data.csv",mime="text/csv")
+    else:
+        st.warning("No market history returned. A briefing cannot be generated until a real source returns data.")
+
+
+# Additional modules completing the major workflows shown in the reference screenshots.
+advanced_tabs = [st.expander(label, expanded=False) for label in [
+    "26 Macro & event monitor",
+    "27 Breadth & stock scanner",
+    "28 Derivatives lab",
+    "29 Stock deep-dive",
+    "30 Strategy backtest",
+    "31 Data quality"
+]]
+
+with advanced_tabs[0]:
+    st.subheader("26 · Automatic macro & geopolitical event monitor")
+    st.write("Public news headlines are fetched automatically and linked to their publishers. Headlines are not proof of causation and are not used to fabricate market-impact statistics.")
+    topic=st.selectbox("Headline category",["India macro & RBI","Global macro & central banks","Geopolitics and energy","Markets and policy"],key="auto_event_topic")
+    queries={"India macro & RBI":"India RBI inflation GDP economy","Global macro & central banks":"Federal Reserve ECB Bank of Japan inflation rates economy","Geopolitics and energy":"geopolitics oil energy markets conflict","Markets and policy":"India markets policy regulation economy"}
+    with st.spinner("Fetching public headline feed…"):
+        ev,ev_error=get_news_rss(queries[topic],20)
+    if ev_error: st.warning(ev_error)
+    elif not ev.empty:
+        st.dataframe(ev,use_container_width=True,hide_index=True,column_config={"Source link":st.column_config.LinkColumn("Open source")})
+        st.download_button("Download headline log",ev.to_csv(index=False).encode("utf-8"),"macro_geopolitical_headlines.csv","text/csv")
+    st.markdown("#### Live macro market proxies")
+    macro_rows=[]
+    for name,ticker in [("NIFTY 50","^NSEI"),("BANK NIFTY","^NSEBANK"),("India VIX","^INDIAVIX"),("Brent Crude","BZ=F"),("USD/INR","INR=X"),("Gold","GC=F")]:
+        if name in market_data and not market_data[name].empty:
+            df=market_data[name]
         else:
-            st.info("Automatic stock history is unavailable from the public source. No breadth values are fabricated; retry later.")
-    
-    with advanced_tabs[2]:
-        st.subheader("28 · Derivatives lab")
-        st.write("This module does not scrape NSE or fabricate derivatives data.")
-        st.info("Options analytics now use the authenticated FYERS Option Chain API when connected. Futures-chain OI and participant-level FII/DII positioning are separate data sets and may remain unavailable.")
-        st.markdown("[Official NSE option chain](https://www.nseindia.com/option-chain) · [NSE derivatives reports](https://www.nseindia.com/all-reports-derivatives)")
-        st.caption("Read-only FYERS market-data access is used for option-chain analysis; this module does not place orders. FII/DII participant positioning is not inferred from option-chain data.")
-    
-    with advanced_tabs[3]:
-        st.subheader("29 · Automatic stock deep-dive")
-        deep_univ=get_auto_universe(period="2y")
-        if deep_univ.empty:
-            st.warning("Stock deep-dive unavailable because public OHLCV history could not be retrieved.")
+            df,_=get_history(ticker,period,"1d")
+        if not df.empty:
+            snap=quote_snapshot(df)
+            if snap:
+                last,change,pct=snap
+                macro_rows.append({"Instrument":name,"Latest returned close":last["Close"],"Change %":pct,"Source candle":last["Date"].strftime("%Y-%m-%d %H:%M IST"),"Source":"Yahoo Finance via yfinance"})
+        else: macro_rows.append({"Instrument":name,"Latest returned close":np.nan,"Change %":np.nan,"Source candle":"Unavailable","Source":"No data returned"})
+    st.dataframe(pd.DataFrame(macro_rows),use_container_width=True,hide_index=True)
+    st.caption("Macro proxies are public market history, not official economic indicators. RBI rates, inflation releases, FII/DII flows and event impact are not inferred from prices.")
+    st.markdown("[Official sources: NSE reports](https://www.nseindia.com/all-reports) · [RBI](https://www.rbi.org.in/) · [MOSPI](https://mospi.gov.in/) · [SEBI](https://www.sebi.gov.in/)")
+
+with advanced_tabs[1]:
+    st.subheader("27 · Automatic market breadth and technical stock scanner")
+    st.write("Automatically fetches a fixed large-cap OHLCV universe by default. Optional CSV override is available, but not required.")
+    breadth_file = st.file_uploader("Optional: override with your own OHLCV CSV", type=["csv"], key="breadth_universe")
+    auto_breadth = st.button("↻ Fetch latest stock universe", key="auto_breadth_fetch")
+    st.caption("Automatic history is fetched from Yahoo Finance. Public source coverage, delays and availability can vary.")
+    if True:  # Auto-fetch by default; cached for six hours. CSV remains an optional override.
+        try:
+            univ = pd.read_csv(breadth_file) if breadth_file is not None else get_auto_universe(period="2y")
+            univ.columns = [str(c).strip() for c in univ.columns]
+            if not {"Date", "Symbol", "Close"}.issubset(univ.columns):
+                st.error("Required columns: Date, Symbol, Close.")
+            else:
+                univ["Date"] = pd.to_datetime(univ["Date"], errors="coerce")
+                for c in ["Close", "Open", "High", "Low", "Volume"]:
+                    if c in univ: univ[c] = pd.to_numeric(univ[c], errors="coerce")
+                univ = univ.dropna(subset=["Date", "Symbol", "Close"]).sort_values(["Symbol", "Date"]).drop_duplicates(["Symbol", "Date"], keep="last")
+                results = []
+                for sym, sdf in univ.groupby("Symbol"):
+                    sdf = sdf.copy()
+                    close = sdf["Close"]
+                    sdf["SMA20"] = close.rolling(20, min_periods=20).mean()
+                    sdf["SMA50"] = close.rolling(50, min_periods=50).mean()
+                    sdf["SMA200"] = close.rolling(200, min_periods=200).mean()
+                    sdf["EMA20"] = close.ewm(span=20, adjust=False, min_periods=20).mean()
+                    delta = close.diff()
+                    gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False, min_periods=14).mean()
+                    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False, min_periods=14).mean()
+                    rs = gain / loss.replace(0, np.nan)
+                    sdf["RSI14"] = 100 - 100/(1+rs)
+                    sdf.loc[(loss == 0) & gain.notna(), "RSI14"] = 100
+                    last = sdf.iloc[-1]
+                    prior = sdf.iloc[-2] if len(sdf) > 1 else None
+                    results.append({
+                        "Symbol": sym, "Industry": last.get("Industry", ""),
+                        "Date": last["Date"], "Close": last["Close"],
+                        "1D %": ((last["Close"]/prior["Close"]-1)*100 if prior is not None and prior["Close"] else np.nan),
+                        "SMA20": last["SMA20"], "SMA50": last["SMA50"], "SMA200": last["SMA200"],
+                        "RSI14": last["RSI14"],
+                        "Above SMA20": bool(last["Close"] > last["SMA20"]) if pd.notna(last["SMA20"]) else None,
+                        "Above SMA50": bool(last["Close"] > last["SMA50"]) if pd.notna(last["SMA50"]) else None,
+                        "Above SMA200": bool(last["Close"] > last["SMA200"]) if pd.notna(last["SMA200"]) else None,
+                        "EMA trend": ("Bullish" if last["Close"] > last["EMA20"] else "Bearish") if pd.notna(last["EMA20"]) else "Insufficient history",
+                    })
+                scan = pd.DataFrame(results)
+                valid200 = scan["Above SMA200"].dropna()
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Symbols uploaded", f"{scan['Symbol'].nunique():,}")
+                m2.metric("Above 50DMA", f"{100*scan['Above SMA50'].dropna().mean():.1f}%" if scan["Above SMA50"].notna().any() else "Unavailable")
+                m3.metric("Above 200DMA", f"{100*valid200.mean():.1f}%" if len(valid200) else "Insufficient history")
+                m4.metric("Breadth sample", f"{len(valid200):,} with 200DMA" )
+                st.markdown("#### Filters")
+                f1, f2, f3 = st.columns(3)
+                trend_filter = f1.selectbox("Trend", ["All", "Bullish", "Bearish", "Insufficient history"], key="scanner_trend")
+                rsi_filter = f2.selectbox("RSI 14", ["All", "Below 30", "30–50", "50–70", "Above 70"], key="scanner_rsi")
+                dma_filter = f3.selectbox("200DMA", ["All", "Above", "Below", "Insufficient history"], key="scanner_dma")
+                filtered = scan.copy()
+                if trend_filter != "All": filtered = filtered[filtered["EMA trend"] == trend_filter]
+                if rsi_filter == "Below 30": filtered = filtered[filtered["RSI14"] < 30]
+                elif rsi_filter == "30–50": filtered = filtered[filtered["RSI14"].between(30, 50, inclusive="left")]
+                elif rsi_filter == "50–70": filtered = filtered[filtered["RSI14"].between(50, 70, inclusive="left")]
+                elif rsi_filter == "Above 70": filtered = filtered[filtered["RSI14"] >= 70]
+                if dma_filter == "Above": filtered = filtered[filtered["Above SMA200"] == True]
+                elif dma_filter == "Below": filtered = filtered[filtered["Above SMA200"] == False]
+                elif dma_filter == "Insufficient history": filtered = filtered[filtered["Above SMA200"].isna()]
+                st.dataframe(filtered.sort_values("1D %", ascending=False), use_container_width=True, hide_index=True)
+                if "Industry" in scan and scan["Industry"].astype(str).str.len().gt(0).any():
+                    ind_breadth = scan.dropna(subset=["Above SMA200"]).groupby("Industry").agg(Stocks=("Symbol","nunique"), Above200Pct=("Above SMA200",lambda x:100*x.mean())).reset_index().sort_values("Above200Pct",ascending=False)
+                    st.markdown("#### Industry breadth")
+                    st.dataframe(ind_breadth.style.format({"Above200Pct":"{:.1f}%"}), use_container_width=True, hide_index=True)
+                st.download_button("Download scanner results", filtered.to_csv(index=False).encode("utf-8"), "technical_scanner_results.csv", "text/csv")
+        except Exception as exc:
+            st.error(f"Could not calculate breadth/scanner: {type(exc).__name__}: {exc}")
+    else:
+        st.info("Automatic stock history is unavailable from the public source. No breadth values are fabricated; retry later.")
+
+with advanced_tabs[2]:
+    st.subheader("28 · Derivatives lab")
+    st.write("This module does not scrape NSE or fabricate derivatives data.")
+    st.info("Options analytics now use the authenticated FYERS Option Chain API when connected. Futures-chain OI and participant-level FII/DII positioning are separate data sets and may remain unavailable.")
+    st.markdown("[Official NSE option chain](https://www.nseindia.com/option-chain) · [NSE derivatives reports](https://www.nseindia.com/all-reports-derivatives)")
+    st.caption("Read-only FYERS market-data access is used for option-chain analysis; this module does not place orders. FII/DII participant positioning is not inferred from option-chain data.")
+
+with advanced_tabs[3]:
+    st.subheader("29 · Automatic stock deep-dive")
+    deep_univ=get_auto_universe(period="2y")
+    if deep_univ.empty:
+        st.warning("Stock deep-dive unavailable because public OHLCV history could not be retrieved.")
+    else:
+        symbols=sorted(deep_univ["Symbol"].dropna().unique())
+        symbol=st.selectbox("Stock from automatic research universe",symbols,key="deep_auto_symbol")
+        sdf=deep_univ[deep_univ["Symbol"]==symbol].copy().sort_values("Date")
+        calc=indicators(sdf)
+        fig=go.Figure(go.Candlestick(x=calc["Date"],open=calc["Open"],high=calc["High"],low=calc["Low"],close=calc["Close"],name=symbol))
+        for col in ["SMA 20","SMA 50","SMA 200","EMA 20","EMA 50"]:
+            if col in calc and calc[col].notna().any(): fig.add_trace(go.Scatter(x=calc["Date"],y=calc[col],name=col,mode="lines"))
+        fig.update_layout(template="plotly_dark",height=560,xaxis_rangeslider_visible=False,title=f"{symbol} · daily historical candles")
+        st.plotly_chart(fig,use_container_width=True)
+        last=calc.iloc[-1]
+        a,b,c,d=st.columns(4)
+        a.metric("Latest close",fmt(last["Close"])); b.metric("RSI 14",fmt(last.get("RSI 14"))); c.metric("ATR 14",fmt(last.get("ATR 14"))); d.metric("Latest source date",last["Date"].strftime("%Y-%m-%d"))
+        st.caption(f"Source: Yahoo Finance via yfinance · {len(calc)} returned bars · Latest candle is not guaranteed live.")
+        st.dataframe(calc.tail(30),use_container_width=True,hide_index=True)
+        st.download_button("Download stock history and indicators",calc.to_csv(index=False).encode("utf-8"),f"{symbol.lower()}_deep_dive.csv","text/csv")
+
+with advanced_tabs[4]:
+    st.subheader("30 · Automatic strategy backtest")
+    st.write("Long-only SMA crossover test using the dashboard's retrieved daily OHLCV history. Includes an assumed transaction cost; does not model slippage, taxes, corporate actions or intraday execution.")
+    bt_univ=get_auto_universe(period="5y")
+    if bt_univ.empty:
+        st.warning("Backtest unavailable because public historical data could not be retrieved.")
+    else:
+        bt_symbol=st.selectbox("Stock",sorted(bt_univ["Symbol"].dropna().unique()),key="bt_auto_symbol")
+        bt=bt_univ[bt_univ["Symbol"]==bt_symbol].copy().sort_values("Date").dropna(subset=["Close"])
+        fast=st.slider("Fast SMA",2,100,20,key="bt_auto_fast")
+        slow=st.slider("Slow SMA",5,250,50,key="bt_auto_slow")
+        cost_bps=st.number_input("Transaction cost per position change (basis points)",min_value=0.0,max_value=200.0,value=5.0,step=1.0,key="bt_auto_cost")
+        if fast>=slow: st.warning("Fast SMA must be shorter than slow SMA.")
+        elif len(bt)<=slow: st.warning(f"Need more than {slow} returned daily observations; current rows: {len(bt)}.")
         else:
-            symbols=sorted(deep_univ["Symbol"].dropna().unique())
-            symbol=st.selectbox("Stock from automatic research universe",symbols,key="deep_auto_symbol")
-            sdf=deep_univ[deep_univ["Symbol"]==symbol].copy().sort_values("Date")
-            calc=indicators(sdf)
-            fig=go.Figure(go.Candlestick(x=calc["Date"],open=calc["Open"],high=calc["High"],low=calc["Low"],close=calc["Close"],name=symbol))
-            for col in ["SMA 20","SMA 50","SMA 200","EMA 20","EMA 50"]:
-                if col in calc and calc[col].notna().any(): fig.add_trace(go.Scatter(x=calc["Date"],y=calc[col],name=col,mode="lines"))
-            fig.update_layout(template="plotly_dark",height=560,xaxis_rangeslider_visible=False,title=f"{symbol} · daily historical candles")
-            st.plotly_chart(fig,use_container_width=True)
-            last=calc.iloc[-1]
+            bt["SMA_fast"]=bt["Close"].rolling(fast,min_periods=fast).mean()
+            bt["SMA_slow"]=bt["Close"].rolling(slow,min_periods=slow).mean()
+            bt["Signal"]=(bt["SMA_fast"]>bt["SMA_slow"]).astype(int)
+            bt["Position"]=bt["Signal"].shift(1).fillna(0)
+            bt["Market return"]=bt["Close"].pct_change().fillna(0)
+            bt["Turnover"]=bt["Position"].diff().abs().fillna(bt["Position"].abs())
+            bt["Strategy return"]=bt["Position"]*bt["Market return"]-bt["Turnover"]*(cost_bps/10000)
+            bt["Equity curve"]=(1+bt["Strategy return"]).cumprod()
+            bt["Buy & hold"]=(1+bt["Market return"]).cumprod()
+            bt["Drawdown"]=bt["Equity curve"]/bt["Equity curve"].cummax()-1
+            total=(bt["Equity curve"].iloc[-1]-1)*100; bh=(bt["Buy & hold"].iloc[-1]-1)*100; dd=bt["Drawdown"].min()*100
+            vol=bt["Strategy return"].std(); sharpe=(bt["Strategy return"].mean()/vol*np.sqrt(252)) if pd.notna(vol) and vol>0 else np.nan
             a,b,c,d=st.columns(4)
-            a.metric("Latest close",fmt(last["Close"])); b.metric("RSI 14",fmt(last.get("RSI 14"))); c.metric("ATR 14",fmt(last.get("ATR 14"))); d.metric("Latest source date",last["Date"].strftime("%Y-%m-%d"))
-            st.caption(f"Source: Yahoo Finance via yfinance · {len(calc)} returned bars · Latest candle is not guaranteed live.")
-            st.dataframe(calc.tail(30),use_container_width=True,hide_index=True)
-            st.download_button("Download stock history and indicators",calc.to_csv(index=False).encode("utf-8"),f"{symbol.lower()}_deep_dive.csv","text/csv")
-    
-    with advanced_tabs[4]:
-        st.subheader("30 · Automatic strategy backtest")
-        st.write("Long-only SMA crossover test using the dashboard's retrieved daily OHLCV history. Includes an assumed transaction cost; does not model slippage, taxes, corporate actions or intraday execution.")
-        bt_univ=get_auto_universe(period="5y")
-        if bt_univ.empty:
-            st.warning("Backtest unavailable because public historical data could not be retrieved.")
+            a.metric("Strategy return",f"{total:.2f}%"); b.metric("Buy & hold",f"{bh:.2f}%"); c.metric("Max drawdown",f"{dd:.2f}%"); d.metric("Annualised Sharpe (rough)",fmt(sharpe))
+            fig=go.Figure(); fig.add_trace(go.Scatter(x=bt["Date"],y=bt["Equity curve"],name="SMA strategy")); fig.add_trace(go.Scatter(x=bt["Date"],y=bt["Buy & hold"],name="Buy & hold"))
+            fig.update_layout(template="plotly_dark",height=420,title="Growth of ₹1 (approximate costs applied)")
+            st.plotly_chart(fig,use_container_width=True)
+            st.caption(f"Source: Yahoo Finance · {len(bt)} daily bars · last candle {bt['Date'].max():%Y-%m-%d}. Illustrative research only, not a recommendation.")
+            st.dataframe(bt.tail(30),use_container_width=True,hide_index=True)
+            st.download_button("Download automatic backtest results",bt.to_csv(index=False).encode("utf-8"),f"{bt_symbol.lower()}_sma_backtest.csv","text/csv")
+
+with advanced_tabs[5]:
+    st.subheader("31 · Data quality and source audit")
+    st.write("Audit source coverage, timestamps, missing rows and indicator readiness for the public market series currently loaded.")
+    quality_rows = []
+    for name, ticker in INDEXES.items():
+        df = market_data.get(name, pd.DataFrame())
+        err = market_errors.get(name)
+        if df.empty:
+            quality_rows.append({"Instrument":name,"Ticker":ticker,"Rows":0,"Latest source candle":"Unavailable","Age (days)":np.nan,"Duplicate timestamps":0,"OHLC complete %":np.nan,"Status":err or "No data"})
         else:
-            bt_symbol=st.selectbox("Stock",sorted(bt_univ["Symbol"].dropna().unique()),key="bt_auto_symbol")
-            bt=bt_univ[bt_univ["Symbol"]==bt_symbol].copy().sort_values("Date").dropna(subset=["Close"])
-            fast=st.slider("Fast SMA",2,100,20,key="bt_auto_fast")
-            slow=st.slider("Slow SMA",5,250,50,key="bt_auto_slow")
-            cost_bps=st.number_input("Transaction cost per position change (basis points)",min_value=0.0,max_value=200.0,value=5.0,step=1.0,key="bt_auto_cost")
-            if fast>=slow: st.warning("Fast SMA must be shorter than slow SMA.")
-            elif len(bt)<=slow: st.warning(f"Need more than {slow} returned daily observations; current rows: {len(bt)}.")
+            date_max = df["Date"].max()
+            age = (pd.Timestamp.now(tz="Asia/Kolkata") - date_max).total_seconds()/86400 if date_max.tzinfo else (pd.Timestamp.now(tz="Asia/Kolkata").tz_localize(None)-date_max).total_seconds()/86400
+            cols = [c for c in ["Open","High","Low","Close"] if c in df.columns]
+            complete = df[cols].notna().all(axis=1).mean()*100 if cols else np.nan
+            dupes = int(df["Date"].duplicated().sum())
+            status = "OK (daily source bar)" if age < 4 else "Potentially stale — verify source" 
+            if complete < 99.9: status += "; incomplete OHLC"
+            quality_rows.append({"Instrument":name,"Ticker":ticker,"Rows":len(df),"Latest source candle":date_max.strftime("%Y-%m-%d %H:%M %Z"),"Age (days)":age,"Duplicate timestamps":dupes,"OHLC complete %":complete,"Status":status})
+    qdf = pd.DataFrame(quality_rows)
+    st.dataframe(qdf.style.format({"Age (days)":"{:.2f}","OHLC complete %":"{:.1f}"}),use_container_width=True,hide_index=True)
+    st.download_button("Download source audit",qdf.to_csv(index=False).encode("utf-8"),"market_data_quality_audit.csv","text/csv")
+    st.markdown("#### What this dashboard does not claim")
+    st.write("- Yahoo Finance data is best-effort, not guaranteed live exchange data.")
+    st.write("- TradingView embedded charts are a separate provider and may have exchange-specific delays.")
+    st.write("- Public daily price history does not provide real option-chain OI, implied volatility, max pain, FII/DII flows or verified geopolitical causes.")
+    st.write("- Calculations are only as sound as the dates, adjustments, universe membership and source rows supplied.")
+
+
+# FYERS chart workspace: all NSE cash-market equity symbols from FYERS Symbol Master.
+if "fyers_access_token" in st.session_state and fyers_credentials():
+    st.divider()
+    st.subheader("FYERS stock charts")
+    st.caption("Choose any symbol from FYERS' NSE capital-market symbol master. Candles are from FYERS Historical Data; the current quote is fetched separately. This is not a continuously updating WebSocket chart.")
+    symbols_list, symbols_error = fyers_nse_equity_symbols()
+    if symbols_error:
+        st.warning(symbols_error)
+    elif not symbols_list:
+        st.warning("The FYERS symbol master returned no NSE equity symbols.")
+    else:
+        symbol_labels = {f"{name or symbol} · {symbol}": symbol for symbol, name in symbols_list}
+        selected_label = st.selectbox("Search/select NSE stock", list(symbol_labels.keys()), index=0, key="fyers_chart_symbol")
+        col_res, col_period = st.columns(2)
+        with col_res:
+            chart_resolution = st.selectbox("Candle interval", ["1", "5", "15", "30", "60", "120", "240", "1D", "1W"], index=2, key="fyers_chart_resolution", format_func=lambda value: {"1":"1 minute","5":"5 minutes","15":"15 minutes","30":"30 minutes","60":"1 hour","120":"2 hours","240":"4 hours","1D":"1 day","1W":"1 week"}[value])
+        with col_period:
+            chart_days_label = st.selectbox("History window", ["5 days", "1 month", "3 months", "6 months", "1 year", "2 years", "5 years"], index=2, key="fyers_chart_days")
+        chart_days = {"5 days": 5, "1 month": 31, "3 months": 92, "6 months": 183, "1 year": 365, "2 years": 730, "5 years": 1825}[chart_days_label]
+        if chart_resolution in {"1", "5"} and chart_days > 5:
+            st.warning("For 1-minute and 5-minute candles, the chart automatically limits history to the most recent 5 calendar days to avoid oversized or unsupported requests.")
+            chart_days = 5
+        st.markdown("**Chart tools**")
+        ind1, ind2, ind3, ind4, ind5 = st.columns(5)
+        with ind1:
+            show_ema21 = st.checkbox("EMA 21", value=True, key="fyers_ema21")
+        with ind2:
+            show_ema50 = st.checkbox("EMA 50", value=False, key="fyers_ema50")
+        with ind3:
+            show_ema200 = st.checkbox("EMA 200", value=False, key="fyers_ema200")
+        with ind4:
+            show_rsi = st.checkbox("RSI", value=False, key="fyers_rsi")
+        with ind5:
+            show_stoch_rsi = st.checkbox("Stochastic RSI", value=False, key="fyers_stoch_rsi")
+        show_volume = st.checkbox("Volume", value=False, key="fyers_volume")
+        st.caption("After the chart loads, use the Plotly toolbar to draw lines, rectangles, circles, and annotations. These drawings are temporary and reset when the chart is rebuilt.")
+        if st.button("Load / refresh FYERS chart", key="fyers_load_chart"):
+            chart_symbol = symbol_labels[selected_label]
+            with st.spinner(f"Fetching FYERS candles for {chart_symbol}..."):
+                candles, candle_error = fyers_history(fyers_credentials()[0], st.session_state["fyers_access_token"], chart_symbol, chart_resolution, chart_days)
+            if candle_error:
+                st.warning(f"Chart data unavailable: {candle_error}")
             else:
-                bt["SMA_fast"]=bt["Close"].rolling(fast,min_periods=fast).mean()
-                bt["SMA_slow"]=bt["Close"].rolling(slow,min_periods=slow).mean()
-                bt["Signal"]=(bt["SMA_fast"]>bt["SMA_slow"]).astype(int)
-                bt["Position"]=bt["Signal"].shift(1).fillna(0)
-                bt["Market return"]=bt["Close"].pct_change().fillna(0)
-                bt["Turnover"]=bt["Position"].diff().abs().fillna(bt["Position"].abs())
-                bt["Strategy return"]=bt["Position"]*bt["Market return"]-bt["Turnover"]*(cost_bps/10000)
-                bt["Equity curve"]=(1+bt["Strategy return"]).cumprod()
-                bt["Buy & hold"]=(1+bt["Market return"]).cumprod()
-                bt["Drawdown"]=bt["Equity curve"]/bt["Equity curve"].cummax()-1
-                total=(bt["Equity curve"].iloc[-1]-1)*100; bh=(bt["Buy & hold"].iloc[-1]-1)*100; dd=bt["Drawdown"].min()*100
-                vol=bt["Strategy return"].std(); sharpe=(bt["Strategy return"].mean()/vol*np.sqrt(252)) if pd.notna(vol) and vol>0 else np.nan
-                a,b,c,d=st.columns(4)
-                a.metric("Strategy return",f"{total:.2f}%"); b.metric("Buy & hold",f"{bh:.2f}%"); c.metric("Max drawdown",f"{dd:.2f}%"); d.metric("Annualised Sharpe (rough)",fmt(sharpe))
-                fig=go.Figure(); fig.add_trace(go.Scatter(x=bt["Date"],y=bt["Equity curve"],name="SMA strategy")); fig.add_trace(go.Scatter(x=bt["Date"],y=bt["Buy & hold"],name="Buy & hold"))
-                fig.update_layout(template="plotly_dark",height=420,title="Growth of ₹1 (approximate costs applied)")
-                st.plotly_chart(fig,use_container_width=True)
-                st.caption(f"Source: Yahoo Finance · {len(bt)} daily bars · last candle {bt['Date'].max():%Y-%m-%d}. Illustrative research only, not a recommendation.")
-                st.dataframe(bt.tail(30),use_container_width=True,hide_index=True)
-                st.download_button("Download automatic backtest results",bt.to_csv(index=False).encode("utf-8"),f"{bt_symbol.lower()}_sma_backtest.csv","text/csv")
-    
-    with advanced_tabs[5]:
-        st.subheader("31 · Data quality and source audit")
-        st.write("Audit source coverage, timestamps, missing rows and indicator readiness for the public market series currently loaded.")
-        quality_rows = []
-        for name, ticker in INDEXES.items():
-            df = market_data.get(name, pd.DataFrame())
-            err = market_errors.get(name)
-            if df.empty:
-                quality_rows.append({"Instrument":name,"Ticker":ticker,"Rows":0,"Latest source candle":"Unavailable","Age (days)":np.nan,"Duplicate timestamps":0,"OHLC complete %":np.nan,"Status":err or "No data"})
-            else:
-                date_max = df["Date"].max()
-                age = (pd.Timestamp.now(tz="Asia/Kolkata") - date_max).total_seconds()/86400 if date_max.tzinfo else (pd.Timestamp.now(tz="Asia/Kolkata").tz_localize(None)-date_max).total_seconds()/86400
-                cols = [c for c in ["Open","High","Low","Close"] if c in df.columns]
-                complete = df[cols].notna().all(axis=1).mean()*100 if cols else np.nan
-                dupes = int(df["Date"].duplicated().sum())
-                status = "OK (daily source bar)" if age < 4 else "Potentially stale — verify source" 
-                if complete < 99.9: status += "; incomplete OHLC"
-                quality_rows.append({"Instrument":name,"Ticker":ticker,"Rows":len(df),"Latest source candle":date_max.strftime("%Y-%m-%d %H:%M %Z"),"Age (days)":age,"Duplicate timestamps":dupes,"OHLC complete %":complete,"Status":status})
-        qdf = pd.DataFrame(quality_rows)
-        st.dataframe(qdf.style.format({"Age (days)":"{:.2f}","OHLC complete %":"{:.1f}"}),use_container_width=True,hide_index=True)
-        st.download_button("Download source audit",qdf.to_csv(index=False).encode("utf-8"),"market_data_quality_audit.csv","text/csv")
-        st.markdown("#### What this dashboard does not claim")
-        st.write("- Yahoo Finance data is best-effort, not guaranteed live exchange data.")
-        st.write("- TradingView embedded charts are a separate provider and may have exchange-specific delays.")
-        st.write("- Public daily price history does not provide real option-chain OI, implied volatility, max pain, FII/DII flows or verified geopolitical causes.")
-        st.write("- Calculations are only as sound as the dates, adjustments, universe membership and source rows supplied.")
-    
-    
-    # FYERS chart workspace: all NSE cash-market equity symbols from FYERS Symbol Master.
-    if "fyers_access_token" in st.session_state and fyers_credentials():
-        st.divider()
-        st.subheader("FYERS stock charts")
-        st.caption("Choose any symbol from FYERS' NSE capital-market symbol master. Candles are from FYERS Historical Data; the current quote is fetched separately. This is not a continuously updating WebSocket chart.")
-        symbols_list, symbols_error = fyers_nse_equity_symbols()
-        if symbols_error:
-            st.warning(symbols_error)
-        elif not symbols_list:
-            st.warning("The FYERS symbol master returned no NSE equity symbols.")
-        else:
-            symbol_labels = {f"{name or symbol} · {symbol}": symbol for symbol, name in symbols_list}
-            selected_label = st.selectbox("Search/select NSE stock", list(symbol_labels.keys()), index=0, key="fyers_chart_symbol")
-            col_res, col_period = st.columns(2)
-            with col_res:
-                chart_resolution = st.selectbox("Candle interval", ["1", "5", "15", "30", "60", "120", "240", "1D", "1W"], index=2, key="fyers_chart_resolution", format_func=lambda value: {"1":"1 minute","5":"5 minutes","15":"15 minutes","30":"30 minutes","60":"1 hour","120":"2 hours","240":"4 hours","1D":"1 day","1W":"1 week"}[value])
-            with col_period:
-                chart_days_label = st.selectbox("History window", ["5 days", "1 month", "3 months", "6 months", "1 year", "2 years", "5 years"], index=2, key="fyers_chart_days")
-            chart_days = {"5 days": 5, "1 month": 31, "3 months": 92, "6 months": 183, "1 year": 365, "2 years": 730, "5 years": 1825}[chart_days_label]
-            if chart_resolution in {"1", "5"} and chart_days > 5:
-                st.warning("For 1-minute and 5-minute candles, the chart automatically limits history to the most recent 5 calendar days to avoid oversized or unsupported requests.")
-                chart_days = 5
-            st.markdown("**Chart tools**")
-            ind1, ind2, ind3, ind4, ind5 = st.columns(5)
-            with ind1:
-                show_ema21 = st.checkbox("EMA 21", value=True, key="fyers_ema21")
-            with ind2:
-                show_ema50 = st.checkbox("EMA 50", value=False, key="fyers_ema50")
-            with ind3:
-                show_ema200 = st.checkbox("EMA 200", value=False, key="fyers_ema200")
-            with ind4:
-                show_rsi = st.checkbox("RSI", value=False, key="fyers_rsi")
-            with ind5:
-                show_stoch_rsi = st.checkbox("Stochastic RSI", value=False, key="fyers_stoch_rsi")
-            show_volume = st.checkbox("Volume", value=False, key="fyers_volume")
-            st.caption("After the chart loads, use the Plotly toolbar to draw lines, rectangles, circles, and annotations. These drawings are temporary and reset when the chart is rebuilt.")
-            if st.button("Load / refresh FYERS chart", key="fyers_load_chart"):
-                chart_symbol = symbol_labels[selected_label]
-                with st.spinner(f"Fetching FYERS candles for {chart_symbol}..."):
-                    candles, candle_error = fyers_history(fyers_credentials()[0], st.session_state["fyers_access_token"], chart_symbol, chart_resolution, chart_days)
-                if candle_error:
-                    st.warning(f"Chart data unavailable: {candle_error}")
+                candles = candles.copy()
+                candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
+                candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
+                if candles.empty:
+                    st.warning("FYERS returned no valid OHLC candles for this selection.")
                 else:
-                    candles = candles.copy()
-                    candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
-                    candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
-                    if candles.empty:
-                        st.warning("FYERS returned no valid OHLC candles for this selection.")
-                    else:
-                        st.session_state["fyers_chart_data"] = candles.to_json(date_format="iso", orient="split")
-                        st.session_state["fyers_chart_symbol_loaded"] = chart_symbol
-                        st.session_state["fyers_chart_resolution_loaded"] = chart_resolution
-                        st.session_state["fyers_chart_loaded_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
-                        st.session_state.pop("fyers_chart_error", None)
-    
-            # Start a single FYERS Data Socket for the currently selected chart symbol.
-            st.markdown("**Live market stream**")
-            live_symbol = symbol_labels[selected_label]
-            stream_symbol = st.session_state.get("fyers_stream_symbol")
-            stream_active = bool(st.session_state.get("fyers_stream_active"))
-            live_col1, live_col2 = st.columns(2)
-            with live_col1:
-                if not stream_active and st.button("▶ Start live updates", key="fyers_start_stream"):
-                    try:
-                        import queue
-                        import threading
-                        from fyers_apiv3.FyersWebsocket import data_ws
-    
-                        tick_queue = queue.Queue(maxsize=2000)
-                        app_id = fyers_credentials()[0]
-                        access_token = st.session_state["fyers_access_token"]
-                        def _push_tick(message):
-                            if isinstance(message, dict) and message.get("symbol") and message.get("ltp") is not None:
-                                try:
-                                    tick_queue.put_nowait(dict(message, received_at=datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()))
-                                except Exception:
-                                    pass
-                        def _socket_error(message):
+                    st.session_state["fyers_chart_data"] = candles.to_json(date_format="iso", orient="split")
+                    st.session_state["fyers_chart_symbol_loaded"] = chart_symbol
+                    st.session_state["fyers_chart_resolution_loaded"] = chart_resolution
+                    st.session_state["fyers_chart_loaded_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
+                    st.session_state.pop("fyers_chart_error", None)
+
+        # Start a single FYERS Data Socket for the currently selected chart symbol.
+        st.markdown("**Live market stream**")
+        live_symbol = symbol_labels[selected_label]
+        stream_symbol = st.session_state.get("fyers_stream_symbol")
+        stream_active = bool(st.session_state.get("fyers_stream_active"))
+        live_col1, live_col2 = st.columns(2)
+        with live_col1:
+            if not stream_active and st.button("▶ Start live updates", key="fyers_start_stream"):
+                try:
+                    import queue
+                    import threading
+                    from fyers_apiv3.FyersWebsocket import data_ws
+
+                    tick_queue = queue.Queue(maxsize=2000)
+                    app_id = fyers_credentials()[0]
+                    access_token = st.session_state["fyers_access_token"]
+                    def _push_tick(message):
+                        if isinstance(message, dict) and message.get("symbol") and message.get("ltp") is not None:
                             try:
-                                tick_queue.put_nowait({"_error": str(message), "received_at": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()})
+                                tick_queue.put_nowait(dict(message, received_at=datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()))
                             except Exception:
                                 pass
-                        socket_holder = {"socket": None}
-                        def _on_connect():
-                            connected_socket = socket_holder.get("socket")
-                            if connected_socket:
-                                connected_socket.subscribe(symbols=[live_symbol], data_type="SymbolUpdate")
-                                connected_socket.keep_running()
-                        socket_ref = data_ws.FyersDataSocket(
-                            access_token=f"{app_id}:{access_token}",
-                            log_path="",
-                            litemode=False,
-                            write_to_file=False,
-                            reconnect=True,
-                            reconnect_retry=10,
-                            on_connect=_on_connect,
-                            on_close=_socket_error,
-                            on_error=_socket_error,
-                            on_message=_push_tick,
-                        )
-                        socket_holder["socket"] = socket_ref
-                        st.session_state["fyers_tick_queue"] = tick_queue
-                        st.session_state["fyers_socket_ref"] = socket_ref
-                        st.session_state["fyers_stream_symbol"] = live_symbol
-                        st.session_state["fyers_stream_active"] = True
-                        thread = threading.Thread(target=socket_ref.connect, daemon=True)
-                        st.session_state["fyers_socket_thread"] = thread
-                        thread.start()
-                        st.success(f"Started FYERS live stream for {live_symbol}.")
-                    except Exception as exc:
-                        st.session_state["fyers_stream_active"] = False
-                        st.error(f"Could not start FYERS live stream ({exc.__class__.__name__}). Check app deployment and FYERS session.")
-            with live_col2:
-                if stream_active and st.button("■ Stop live updates", key="fyers_stop_stream"):
-                    try:
-                        socket_ref = st.session_state.get("fyers_socket_ref")
-                        if socket_ref:
-                            socket_ref.close_connection()
-                    except Exception:
-                        pass
-                    st.session_state["fyers_stream_active"] = False
-                    st.session_state.pop("fyers_socket_ref", None)
-                    st.session_state.pop("fyers_socket_thread", None)
-                    st.session_state.pop("fyers_tick_queue", None)
-                    st.session_state.pop("fyers_live_tick", None)
-                    st.rerun()
-    
-            @st.fragment(run_every=2)
-            def _fyers_live_chart_fragment():
-                import queue as _queue
-                tick_queue = st.session_state.get("fyers_tick_queue")
-                if tick_queue is not None:
-                    while True:
+                    def _socket_error(message):
                         try:
-                            tick = tick_queue.get_nowait()
-                        except _queue.Empty:
-                            break
-                        if tick.get("_error"):
-                            st.session_state["fyers_stream_error"] = tick["_error"]
-                        elif tick.get("symbol") == st.session_state.get("fyers_stream_symbol"):
-                            st.session_state["fyers_live_tick"] = tick
-                            st.session_state["fyers_stream_error"] = None
-    
-                tick = st.session_state.get("fyers_live_tick")
-                if tick and tick.get("symbol") == st.session_state.get("fyers_stream_symbol"):
-                    tick_time = tick.get("exch_feed_time") or tick.get("last_traded_time")
+                            tick_queue.put_nowait({"_error": str(message), "received_at": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()})
+                        except Exception:
+                            pass
+                    socket_holder = {"socket": None}
+                    def _on_connect():
+                        connected_socket = socket_holder.get("socket")
+                        if connected_socket:
+                            connected_socket.subscribe(symbols=[live_symbol], data_type="SymbolUpdate")
+                            connected_socket.keep_running()
+                    socket_ref = data_ws.FyersDataSocket(
+                        access_token=f"{app_id}:{access_token}",
+                        log_path="",
+                        litemode=False,
+                        write_to_file=False,
+                        reconnect=True,
+                        reconnect_retry=10,
+                        on_connect=_on_connect,
+                        on_close=_socket_error,
+                        on_error=_socket_error,
+                        on_message=_push_tick,
+                    )
+                    socket_holder["socket"] = socket_ref
+                    st.session_state["fyers_tick_queue"] = tick_queue
+                    st.session_state["fyers_socket_ref"] = socket_ref
+                    st.session_state["fyers_stream_symbol"] = live_symbol
+                    st.session_state["fyers_stream_active"] = True
+                    thread = threading.Thread(target=socket_ref.connect, daemon=True)
+                    st.session_state["fyers_socket_thread"] = thread
+                    thread.start()
+                    st.success(f"Started FYERS live stream for {live_symbol}.")
+                except Exception as exc:
+                    st.session_state["fyers_stream_active"] = False
+                    st.error(f"Could not start FYERS live stream ({exc.__class__.__name__}). Check app deployment and FYERS session.")
+        with live_col2:
+            if stream_active and st.button("■ Stop live updates", key="fyers_stop_stream"):
+                try:
+                    socket_ref = st.session_state.get("fyers_socket_ref")
+                    if socket_ref:
+                        socket_ref.close_connection()
+                except Exception:
+                    pass
+                st.session_state["fyers_stream_active"] = False
+                st.session_state.pop("fyers_socket_ref", None)
+                st.session_state.pop("fyers_socket_thread", None)
+                st.session_state.pop("fyers_tick_queue", None)
+                st.session_state.pop("fyers_live_tick", None)
+                st.rerun()
+
+        @st.fragment(run_every=2)
+        def _fyers_live_chart_fragment():
+            import queue as _queue
+            tick_queue = st.session_state.get("fyers_tick_queue")
+            if tick_queue is not None:
+                while True:
                     try:
-                        tick_time_text = datetime.fromtimestamp(float(tick_time), ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") if tick_time else tick.get("received_at", "time unavailable")
-                    except Exception:
-                        tick_time_text = tick.get("received_at", "time unavailable")
-                    m1, m2, m3 = st.columns(3)
-                    with m1:
-                        st.metric("FYERS live LTP", f"{float(tick['ltp']):,.2f}", f"{float(tick.get('chp', 0)):+.2f}%" if tick.get("chp") is not None else None)
-                    with m2:
-                        st.metric("Day high", f"{float(tick['high_price']):,.2f}" if tick.get("high_price") is not None else "—")
-                    with m3:
-                        st.metric("Day low", f"{float(tick['low_price']):,.2f}" if tick.get("low_price") is not None else "—")
-                    st.caption(f"WebSocket feed time: {tick_time_text} · Last received by app: {tick.get('received_at', 'unknown')}")
-                elif st.session_state.get("fyers_stream_error"):
-                    st.warning("FYERS stream message: " + str(st.session_state["fyers_stream_error"])[:300])
-                elif st.session_state.get("fyers_stream_active"):
-                    st.info("Connecting to FYERS Data Socket; waiting for the first market update.")
-                else:
-                    st.caption("Live stream is stopped. Start it during market hours to receive updates.")
-    
-                chart_json = st.session_state.get("fyers_chart_data")
-                if chart_json:
-                    chart_symbol_loaded = st.session_state.get("fyers_chart_symbol_loaded", live_symbol)
-                    candles = pd.read_json(chart_json, orient="split")
-                    candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
-                    candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
-                    if not candles.empty:
-                        tick = st.session_state.get("fyers_live_tick")
-                        current_ltp = tick.get("ltp") if tick and tick.get("symbol") == chart_symbol_loaded else None
-                        fig = go.Figure(data=[go.Candlestick(x=candles["Date"], open=candles["Open"], high=candles["High"], low=candles["Low"], close=candles["Close"], name=chart_symbol_loaded)])
-                        for span, enabled in [(21, show_ema21), (50, show_ema50), (200, show_ema200)]:
-                            if enabled:
-                                ema_values = candles["Close"].ewm(span=span, adjust=False).mean()
-                                fig.add_trace(go.Scatter(x=candles["Date"], y=ema_values, name="EMA " + str(span), mode="lines", line=dict(width=1.4)))
-                        if show_volume and "Volume" in candles:
-                            volume_fig = go.Figure(go.Bar(x=candles["Date"], y=candles["Volume"], name="Volume"))
-                            volume_fig.update_layout(title="Volume", template="plotly_dark", height=220, margin=dict(l=20,r=20,t=40,b=20), xaxis_title="Time (IST)")
-                            st.plotly_chart(volume_fig, use_container_width=True, config={"displaylogo": False}, key="fyers_volume_plot")
-                        if current_ltp is not None:
-                            fig.add_hline(y=float(current_ltp), line_dash="dot", annotation_text=f"Live FYERS LTP: {float(current_ltp):,.2f}")
-                        fig.update_layout(title=f"{chart_symbol_loaded} · FYERS candles", xaxis_title="Time (IST)", yaxis_title="Price", xaxis_rangeslider_visible=False, height=650, hovermode="x unified", margin=dict(l=20, r=20, t=60, b=20))
-                        fig.update_xaxes(type="date", tickformat="%d %b %H:%M" if st.session_state.get("fyers_chart_resolution_loaded") != "1D" else "%d %b %Y", showspikes=True, spikemode="across", spikesnap="cursor")
-                        fig.update_yaxes(fixedrange=False)
-                        st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False, "modeBarButtonsToAdd": ["drawline", "drawopenpath", "drawclosedpath", "drawcircle", "drawrect", "eraseshape"]}, key="fyers_live_chart_plot")
-                        st.caption(f"Historical candles: FYERS · fetched: {st.session_state.get('fyers_chart_loaded_at', 'unknown')} · live quote overlay refreshes every 2 seconds while connected.")
-                        delta = candles["Close"].diff()
-                        gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                        loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                        rs = gain / loss.replace(0, np.nan)
-                        rsi = (100 - (100 / (1 + rs))).fillna(50)
-                        if show_rsi:
-                            rsi_fig = go.Figure(go.Scatter(x=candles["Date"], y=rsi, name="RSI 14", line=dict(width=1.5)))
-                            rsi_fig.add_hline(y=70, line_dash="dash")
-                            rsi_fig.add_hline(y=30, line_dash="dash")
-                            rsi_fig.update_layout(title="RSI (14)", template="plotly_dark", height=240, margin=dict(l=20,r=20,t=45,b=20), yaxis=dict(range=[0,100]), xaxis_title="Time (IST)")
-                            st.plotly_chart(rsi_fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_rsi_plot")
-                        if show_stoch_rsi:
-                            rsi_low = rsi.rolling(14, min_periods=14).min()
-                            rsi_high = rsi.rolling(14, min_periods=14).max()
-                            stoch = ((rsi-rsi_low)/(rsi_high-rsi_low).replace(0, np.nan))*100
-                            stoch_k = stoch.rolling(3, min_periods=3).mean()
-                            stoch_d = stoch_k.rolling(3, min_periods=3).mean()
-                            sf = go.Figure()
-                            sf.add_trace(go.Scatter(x=candles["Date"], y=stoch_k, name="Stoch RSI %K"))
-                            sf.add_trace(go.Scatter(x=candles["Date"], y=stoch_d, name="Stoch RSI %D"))
-                            sf.add_hline(y=80, line_dash="dash")
-                            sf.add_hline(y=20, line_dash="dash")
-                            sf.update_layout(title="Stochastic RSI (14,14,3,3)", template="plotly_dark", height=240, margin=dict(l=20,r=20,t=45,b=20), yaxis=dict(range=[0,100]), xaxis_title="Time (IST)")
-                            st.plotly_chart(sf, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_stoch_rsi_plot")
-    
-            _fyers_live_chart_fragment()
-    
-            if st.session_state.get("fyers_stream_active") and st.session_state.get("fyers_stream_symbol") != live_symbol:
-                st.warning("The active stream is subscribed to a different symbol. Stop it, then start again for the selected chart symbol.")
-            st.info("FYERS WebSocket updates the live quote overlay and redraws the displayed chart every 2 seconds. Historical candles remain the last fetched candle set; the latest price line is live. Stream is read-only and does not place orders.")
-    with st.expander("Important: Public Yahoo Finance and market-data limitations", expanded=False):
-        st.warning("Yahoo Finance data accessed through yfinance is best-effort and intended for personal use. Intraday values may be delayed, stale or unavailable; this is not a guaranteed real-time trading feed.")
-        st.write("TradingView embeds, where used elsewhere in the app, have their own exchange coverage and delay rules. Always check the source candle timestamp and verify important prices with your broker or official exchange before trading.")
-        st.markdown("[Yahoo Finance data coverage and delays](https://help.yahoo.com/kb/SLN2310.html) · [TradingView widgets and data coverage](https://www.tradingview.com/widget/)")
+                        tick = tick_queue.get_nowait()
+                    except _queue.Empty:
+                        break
+                    if tick.get("_error"):
+                        st.session_state["fyers_stream_error"] = tick["_error"]
+                    elif tick.get("symbol") == st.session_state.get("fyers_stream_symbol"):
+                        st.session_state["fyers_live_tick"] = tick
+                        st.session_state["fyers_stream_error"] = None
+
+            tick = st.session_state.get("fyers_live_tick")
+            if tick and tick.get("symbol") == st.session_state.get("fyers_stream_symbol"):
+                tick_time = tick.get("exch_feed_time") or tick.get("last_traded_time")
+                try:
+                    tick_time_text = datetime.fromtimestamp(float(tick_time), ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") if tick_time else tick.get("received_at", "time unavailable")
+                except Exception:
+                    tick_time_text = tick.get("received_at", "time unavailable")
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    st.metric("FYERS live LTP", f"{float(tick['ltp']):,.2f}", f"{float(tick.get('chp', 0)):+.2f}%" if tick.get("chp") is not None else None)
+                with m2:
+                    st.metric("Day high", f"{float(tick['high_price']):,.2f}" if tick.get("high_price") is not None else "—")
+                with m3:
+                    st.metric("Day low", f"{float(tick['low_price']):,.2f}" if tick.get("low_price") is not None else "—")
+                st.caption(f"WebSocket feed time: {tick_time_text} · Last received by app: {tick.get('received_at', 'unknown')}")
+            elif st.session_state.get("fyers_stream_error"):
+                st.warning("FYERS stream message: " + str(st.session_state["fyers_stream_error"])[:300])
+            elif st.session_state.get("fyers_stream_active"):
+                st.info("Connecting to FYERS Data Socket; waiting for the first market update.")
+            else:
+                st.caption("Live stream is stopped. Start it during market hours to receive updates.")
+
+            chart_json = st.session_state.get("fyers_chart_data")
+            if chart_json:
+                chart_symbol_loaded = st.session_state.get("fyers_chart_symbol_loaded", live_symbol)
+                candles = pd.read_json(chart_json, orient="split")
+                candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
+                candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
+                if not candles.empty:
+                    tick = st.session_state.get("fyers_live_tick")
+                    current_ltp = tick.get("ltp") if tick and tick.get("symbol") == chart_symbol_loaded else None
+                    fig = go.Figure(data=[go.Candlestick(x=candles["Date"], open=candles["Open"], high=candles["High"], low=candles["Low"], close=candles["Close"], name=chart_symbol_loaded)])
+                    for span, enabled in [(21, show_ema21), (50, show_ema50), (200, show_ema200)]:
+                        if enabled:
+                            ema_values = candles["Close"].ewm(span=span, adjust=False).mean()
+                            fig.add_trace(go.Scatter(x=candles["Date"], y=ema_values, name="EMA " + str(span), mode="lines", line=dict(width=1.4)))
+                    if show_volume and "Volume" in candles:
+                        volume_fig = go.Figure(go.Bar(x=candles["Date"], y=candles["Volume"], name="Volume"))
+                        volume_fig.update_layout(title="Volume", template="plotly_dark", height=220, margin=dict(l=20,r=20,t=40,b=20), xaxis_title="Time (IST)")
+                        st.plotly_chart(volume_fig, use_container_width=True, config={"displaylogo": False}, key="fyers_volume_plot")
+                    if current_ltp is not None:
+                        fig.add_hline(y=float(current_ltp), line_dash="dot", annotation_text=f"Live FYERS LTP: {float(current_ltp):,.2f}")
+                    fig.update_layout(title=f"{chart_symbol_loaded} · FYERS candles", xaxis_title="Time (IST)", yaxis_title="Price", xaxis_rangeslider_visible=False, height=650, hovermode="x unified", margin=dict(l=20, r=20, t=60, b=20))
+                    fig.update_xaxes(type="date", tickformat="%d %b %H:%M" if st.session_state.get("fyers_chart_resolution_loaded") != "1D" else "%d %b %Y", showspikes=True, spikemode="across", spikesnap="cursor")
+                    fig.update_yaxes(fixedrange=False)
+                    st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False, "modeBarButtonsToAdd": ["drawline", "drawopenpath", "drawclosedpath", "drawcircle", "drawrect", "eraseshape"]}, key="fyers_live_chart_plot")
+                    st.caption(f"Historical candles: FYERS · fetched: {st.session_state.get('fyers_chart_loaded_at', 'unknown')} · live quote overlay refreshes every 2 seconds while connected.")
+                    delta = candles["Close"].diff()
+                    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                    rs = gain / loss.replace(0, np.nan)
+                    rsi = (100 - (100 / (1 + rs))).fillna(50)
+                    if show_rsi:
+                        rsi_fig = go.Figure(go.Scatter(x=candles["Date"], y=rsi, name="RSI 14", line=dict(width=1.5)))
+                        rsi_fig.add_hline(y=70, line_dash="dash")
+                        rsi_fig.add_hline(y=30, line_dash="dash")
+                        rsi_fig.update_layout(title="RSI (14)", template="plotly_dark", height=240, margin=dict(l=20,r=20,t=45,b=20), yaxis=dict(range=[0,100]), xaxis_title="Time (IST)")
+                        st.plotly_chart(rsi_fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_rsi_plot")
+                    if show_stoch_rsi:
+                        rsi_low = rsi.rolling(14, min_periods=14).min()
+                        rsi_high = rsi.rolling(14, min_periods=14).max()
+                        stoch = ((rsi-rsi_low)/(rsi_high-rsi_low).replace(0, np.nan))*100
+                        stoch_k = stoch.rolling(3, min_periods=3).mean()
+                        stoch_d = stoch_k.rolling(3, min_periods=3).mean()
+                        sf = go.Figure()
+                        sf.add_trace(go.Scatter(x=candles["Date"], y=stoch_k, name="Stoch RSI %K"))
+                        sf.add_trace(go.Scatter(x=candles["Date"], y=stoch_d, name="Stoch RSI %D"))
+                        sf.add_hline(y=80, line_dash="dash")
+                        sf.add_hline(y=20, line_dash="dash")
+                        sf.update_layout(title="Stochastic RSI (14,14,3,3)", template="plotly_dark", height=240, margin=dict(l=20,r=20,t=45,b=20), yaxis=dict(range=[0,100]), xaxis_title="Time (IST)")
+                        st.plotly_chart(sf, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_stoch_rsi_plot")
+
+        _fyers_live_chart_fragment()
+
+        if st.session_state.get("fyers_stream_active") and st.session_state.get("fyers_stream_symbol") != live_symbol:
+            st.warning("The active stream is subscribed to a different symbol. Stop it, then start again for the selected chart symbol.")
+        st.info("FYERS WebSocket updates the live quote overlay and redraws the displayed chart every 2 seconds. Historical candles remain the last fetched candle set; the latest price line is live. Stream is read-only and does not place orders.")
+with st.expander("Important: Public Yahoo Finance and market-data limitations", expanded=False):
+    st.warning("Yahoo Finance data accessed through yfinance is best-effort and intended for personal use. Intraday values may be delayed, stale or unavailable; this is not a guaranteed real-time trading feed.")
+    st.write("TradingView embeds, where used elsewhere in the app, have their own exchange coverage and delay rules. Always check the source candle timestamp and verify important prices with your broker or official exchange before trading.")
+    st.markdown("[Yahoo Finance data coverage and delays](https://help.yahoo.com/kb/SLN2310.html) · [TradingView widgets and data coverage](https://www.tradingview.com/widget/)")
 
 
 if refresh:
