@@ -2326,7 +2326,11 @@ with extra_tabs[4]:
             last["Above SMA50"]=last["Close"]>last["SMA50"]
             last["Above SMA200"]=last["Close"]>last["SMA200"]
             st.caption(f"Latest source date: {latest_date:%Y-%m-%d} · {last['Symbol'].nunique()} symbols returned · Yahoo Finance daily history, cached for up to 6 hours.")
-            st.dataframe(last[["Date","Symbol","Industry","Close","SMA20","SMA50","SMA200","Above SMA20","Above SMA50","Above SMA200"]].sort_values("Symbol"),use_container_width=True,hide_index=True)
+            breadth_view = last[["Date","Symbol","Industry","Close","SMA20","SMA50","SMA200","Above SMA20","Above SMA50","Above SMA200"]].sort_values("Symbol")
+            def breadth_bool_color(value):
+                if pd.isna(value): return ""
+                return "background-color: #dcfce7; color: #166534; font-weight: 600" if bool(value) else "background-color: #fee2e2; color: #991b1b; font-weight: 600"
+            st.dataframe(breadth_view.style.applymap(breadth_bool_color, subset=["Above SMA20","Above SMA50","Above SMA200"]),use_container_width=True,hide_index=True)
             ind=last.dropna(subset=["Above SMA200"]).groupby("Industry").agg(Symbols=("Symbol","nunique"),Above200Pct=("Above SMA200",lambda x:100*x.mean())).reset_index().sort_values("Above200Pct",ascending=False)
             if not ind.empty:
                 st.markdown("#### Breadth by mapped industry")
