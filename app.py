@@ -1537,9 +1537,10 @@ def run_turnaround_scan(segments: tuple[str, ...]):
         result = result.sort_values(["_sort", "Sales growth YoY %"], ascending=[False, False], na_position="last").drop(columns=["_sort"])
     return result, universe_error
 
-with st.expander("32 · Automatic small-cap & mid-cap turnaround scanner", expanded=True):
-    st.subheader("Automatic Turnaround Watchlist")
-    st.write("Scans current Nifty Midcap 150 and Nifty Smallcap 250 constituents for improving sales, profit recovery and operating margins. New constituents can enter when the index lists update. This is a research screen, not a buy signal.")
+st.markdown("""<div style="font-size:clamp(28px,4vw,42px);font-weight:850;letter-spacing:-1.2px;line-height:1.15;margin:8px 0 6px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Turnaround Board</div>""", unsafe_allow_html=True)
+st.caption("Small-cap + mid-cap candidates · improving sales, profit recovery and operating margins. Public data may be delayed or incomplete.")
+with st.expander("Scan small-cap / mid-cap turnaround stocks", expanded=False):
+    st.write("Scans current Nifty Midcap 150 and Nifty Smallcap 250 constituents. Newly qualifying stocks can appear when the source data updates. Research watchlist only, not a buy signal.")
     segment_choice = st.multiselect("Segments to scan", ["Mid-cap", "Small-cap"], default=["Mid-cap", "Small-cap"], key="turnaround_segments")
     st.caption("Fundamentals: Yahoo Finance quarterly income statements · Constituents: Nifty Indices CSV lists · Cached for up to 6 hours. Initial scans may take a few minutes.")
     if st.button("Scan / refresh turnaround stocks", type="primary", key="run_auto_turnaround_scan", disabled=not segment_choice):
