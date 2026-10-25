@@ -983,6 +983,116 @@ if leading_sector_rows:
 else:
     st.info("Weekly sector momentum is temporarily unavailable because usable 3-month daily history was not returned.")
 
+st.markdown("### Liquidity & order-block watchlist")
+st.caption("Price/volume-based proxies from daily candles · not exchange order-book depth or institutional order-flow data. Source: Yahoo Finance; verify timestamps.")
+with st.expander("Scan bullish/bearish setups and liquidity sweeps", expanded=False):
+    ob_lookback = st.selectbox("Structure lookback", ["20 sessions", "40 sessions", "60 sessions"], index=0, key="ob_lookback")
+    ob_volume_filter = st.toggle("Require above-average volume for sweep confirmation (1.2× 20-day average)", value=False, key="ob_volume_filter")
+    ob_scan = st.button("Scan NIFTY 50 liquid stocks", key="ob_scan_button", type="primary")
+    if ob_scan:
+        ob_days = int(ob_lookback.split()[0])
+        ob_symbols = [
+            "SBIN.NS", "AXISBANK.NS", "TITAN.NS", "INFY.NS", "WIPRO.NS",
+            "HCLTECH.NS", "HDFCBANK.NS", "ICICIBANK.NS", "RELIANCE.NS", "TCS.NS",
+            "LT.NS", "BHARTIARTL.NS", "BAJFINANCE.NS", "TRENT.NS", "BEL.NS",
+            "SUNPHARMA.NS", "MARUTI.NS", "TATAMOTORS.NS", "NTPC.NS", "ADANIPORTS.NS"
+        ]
+        ob_rows = []
+        with st.spinner("Scanning daily candles and volume…"):
+            for ob_symbol in ob_symbols:
+                ob_df, ob_error = get_history(ob_symbol, "6mo", "1d")
+                if ob_df.empty or len(ob_df) < max(ob_days + 2, 25) or not {"Open","High","Low","Close","Volume"}.issubset(ob_df.columns):
+                    continue
+                ob_df = ob_df.dropna(subset=["Open","High","Low","Close"]).copy()
+                last = ob_df.iloc[-1]
+                prior = ob_df.iloc[-ob_days-1:-1]
+                if prior.empty:
+                    continue
+                prev_high = float(prior["High"].max())
+                prev_low = float(prior["Low"].min())
+                close = float(last["Close"])
+                open_ = float(last["Open"])
+                high = float(last["High"])
+                low = float(last["Low"])
+                prev_close = float(ob_df["Close"].iloc[-2])
+                day_change = (close / prev_close - 1) * 100 if prev_close else np.nan
+                avg_vol = pd.to_numeric(ob_df["Volume"].iloc[-21:-1], errors="coerce").mean()
+                last_vol = pd.to_numeric(last.get("Volume"), errors="coerce")
+                volume_ratio = float(last_vol / avg_vol) if pd.notna(last_vol) and pd.notna(avg_vol) and avg_vol > 0 else np.nan
+                sweep_low = low < prev_low and close > prev_low
+                sweep_high = high > prev_high and close < prev_high
+                volume_ok = (pd.notna(volume_ratio) and volume_ratio >= 1.2) if ob_volume_filter else True
+                # Heuristic demand/supply zones: last opposing candle before a 3-candle displacement.
+                recent = ob_df.tail(8).reset_index(drop=True)
+                demand_zone = None
+                supply_zone = None
+                for j in range(len(recent)-2, 0, -1):
+                    candle = recent.iloc[j]
+                    next_candle = recent.iloc[j+1]
+                    if float(candle["Close"]) < float(candle["Open"]) and float(next_candle["Close"]) > float(candle["High"]):
+                        demand_zone = (float(candle["Low"]), float(max(candle["Open"], candle["Close"])))
+                        break
+                for j in range(len(recent)-2, 0, -1):
+                    candle = recent.iloc[j]
+                    next_candle = recent.iloc[j+1]
+                    if float(candle["Close"]) > float(candle["Open"]) and float(next_candle["Close"]) < float(candle["Low"]):
+                        supply_zone = (float(min(candle["Open"], candle["Close"])), float(candle["High"]))
+                        break
+                if sweep_low and volume_ok:
+                    bias, reason = "Bullish", "Sell-side liquidity sweep"
+                elif sweep_high and volume_ok:
+                    bias, reason = "Bearish", "Buy-side liquidity sweep"
+                elif close > prev_high and day_change > 0:
+                    bias, reason = "Bullish", f"Breakout above {ob_days}-session high"
+                elif close < prev_low and day_change < 0:
+                    bias, reason = "Bearish", f"Breakdown below {ob_days}-session low"
+                elif close > open_ and day_change > 0:
+                    bias, reason = "Bullish", "Positive daily candle"
+                elif close < open_ and day_change < 0:
+                    bias, reason = "Bearish", "Negative daily candle"
+                else:
+                    bias, reason = "Mixed", "No clear daily direction"
+                ob_rows.append({
+                    "Symbol": ob_symbol.removesuffix(".NS"),
+                    "Bias": bias,
+                    "Daily change (%)": day_change,
+                    "Volume / 20D avg": volume_ratio,
+                    "Liquidity event": "Sweep low · bullish reversal proxy" if sweep_low else "Sweep high · bearish reversal proxy" if sweep_high else "None detected",
+                    "Setup": reason,
+                    "Demand zone (approx.)": f"{demand_zone[0]:.2f}–{demand_zone[1]:.2f}" if demand_zone else "Not detected",
+                    "Supply zone (approx.)": f"{supply_zone[0]:.2f}–{supply_zone[1]:.2f}" if supply_zone else "Not detected",
+                    "Latest candle": last["Date"].strftime("%d %b %Y"),
+                })
+        ob_results = pd.DataFrame(ob_rows)
+        if ob_results.empty:
+            st.warning("No usable OHLCV data returned. Try again later; no sample values are substituted.")
+        else:
+            ob_results = ob_results.sort_values("Daily change (%)", ascending=False, na_position="last")
+            st.session_state["ob_scan_results"] = ob_results
+    if "ob_scan_results" in st.session_state:
+        ob_results = st.session_state["ob_scan_results"]
+        bull, bear = st.columns(2)
+        bullish = ob_results[ob_results["Bias"] == "Bullish"].sort_values("Daily change (%)", ascending=False).head(3)
+        bearish = ob_results[ob_results["Bias"] == "Bearish"].sort_values("Daily change (%)", ascending=True).head(3)
+        with bull:
+            st.markdown("#### ↗ Bullish setups")
+            if bullish.empty:
+                st.info("No bullish setups detected.")
+            else:
+                for rank, (_, item) in enumerate(bullish.iterrows(), 1):
+                    st.markdown(f"**{rank}. {item['Symbol']}** · {item['Daily change (%)']:+.2f}%  \n{item['Setup']} · Volume {item['Volume / 20D avg']:.2f}×" if pd.notna(item["Volume / 20D avg"]) else f"**{rank}. {item['Symbol']}** · {item['Daily change (%)']:+.2f}%  \n{item['Setup']} · Volume unavailable")
+        with bear:
+            st.markdown("#### ↘ Bearish setups")
+            if bearish.empty:
+                st.info("No bearish setups detected.")
+            else:
+                for rank, (_, item) in enumerate(bearish.iterrows(), 1):
+                    st.markdown(f"**{rank}. {item['Symbol']}** · {item['Daily change (%)']:+.2f}%  \n{item['Setup']} · Volume {item['Volume / 20D avg']:.2f}×" if pd.notna(item["Volume / 20D avg"]) else f"**{rank}. {item['Symbol']}** · {item['Daily change (%)']:+.2f}%  \n{item['Setup']} · Volume unavailable")
+        st.dataframe(ob_results, use_container_width=True, hide_index=True)
+        st.download_button("Download liquidity scan (CSV)", ob_results.to_csv(index=False).encode("utf-8"), "liquidity_order_block_watchlist.csv", "text/csv", key="ob_scan_download")
+        st.warning("Order blocks and liquidity sweeps here are simplified OHLCV heuristics, not confirmed institutional orders, market depth or guaranteed reversal signals. Data may be delayed. Use a stop-loss and verify prices with your broker.")
+
+
 st.markdown("### Small-cap fundamental research screener")
 st.caption("Research watchlist only · public Yahoo Finance fundamentals may be delayed, incomplete or incorrectly mapped. Verify all figures against NSE filings and annual reports before acting.")
 with st.expander("Build / refresh a small-cap watchlist", expanded=False):
@@ -1115,115 +1225,6 @@ NIFTY50_HEATMAP_SYMBOLS = [
     "TATACONSUM.NS", "TATAMOTORS.NS", "TATASTEEL.NS", "TCS.NS", "TECHM.NS",
     "TITAN.NS", "TRENT.NS", "ULTRACEMCO.NS", "WIPRO.NS", "TMPV.NS"
 ]
-st.markdown("### Liquidity & order-block watchlist")
-st.caption("Price/volume-based proxies from daily candles · not exchange order-book depth or institutional order-flow data. Source: Yahoo Finance; verify timestamps.")
-with st.expander("Scan bullish/bearish setups and liquidity sweeps", expanded=False):
-    ob_lookback = st.selectbox("Structure lookback", ["20 sessions", "40 sessions", "60 sessions"], index=0, key="ob_lookback")
-    ob_volume_filter = st.checkbox("Require above-average volume for sweep confirmation", value=False, key="ob_volume_filter")
-    ob_scan = st.button("Scan NIFTY 50 liquid stocks", key="ob_scan_button", type="primary")
-    if ob_scan:
-        ob_days = int(ob_lookback.split()[0])
-        ob_symbols = [
-            "SBIN.NS", "AXISBANK.NS", "TITAN.NS", "INFY.NS", "WIPRO.NS",
-            "HCLTECH.NS", "HDFCBANK.NS", "ICICIBANK.NS", "RELIANCE.NS", "TCS.NS",
-            "LT.NS", "BHARTIARTL.NS", "BAJFINANCE.NS", "TRENT.NS", "BEL.NS",
-            "SUNPHARMA.NS", "MARUTI.NS", "TATAMOTORS.NS", "NTPC.NS", "ADANIPORTS.NS"
-        ]
-        ob_rows = []
-        with st.spinner("Scanning daily candles and volume…"):
-            for ob_symbol in ob_symbols:
-                ob_df, ob_error = get_history(ob_symbol, "6mo", "1d")
-                if ob_df.empty or len(ob_df) < max(ob_days + 2, 25) or not {"Open","High","Low","Close","Volume"}.issubset(ob_df.columns):
-                    continue
-                ob_df = ob_df.dropna(subset=["Open","High","Low","Close"]).copy()
-                last = ob_df.iloc[-1]
-                prior = ob_df.iloc[-ob_days-1:-1]
-                if prior.empty:
-                    continue
-                prev_high = float(prior["High"].max())
-                prev_low = float(prior["Low"].min())
-                close = float(last["Close"])
-                open_ = float(last["Open"])
-                high = float(last["High"])
-                low = float(last["Low"])
-                prev_close = float(ob_df["Close"].iloc[-2])
-                day_change = (close / prev_close - 1) * 100 if prev_close else np.nan
-                avg_vol = pd.to_numeric(ob_df["Volume"].iloc[-21:-1], errors="coerce").mean()
-                last_vol = pd.to_numeric(last.get("Volume"), errors="coerce")
-                volume_ratio = float(last_vol / avg_vol) if pd.notna(last_vol) and pd.notna(avg_vol) and avg_vol > 0 else np.nan
-                sweep_low = low < prev_low and close > prev_low
-                sweep_high = high > prev_high and close < prev_high
-                volume_ok = (pd.notna(volume_ratio) and volume_ratio >= 1.2) if ob_volume_filter else True
-                # Heuristic demand/supply zones: last opposing candle before a 3-candle displacement.
-                recent = ob_df.tail(8).reset_index(drop=True)
-                demand_zone = None
-                supply_zone = None
-                for j in range(len(recent)-2, 0, -1):
-                    candle = recent.iloc[j]
-                    next_candle = recent.iloc[j+1]
-                    if float(candle["Close"]) < float(candle["Open"]) and float(next_candle["Close"]) > float(candle["High"]):
-                        demand_zone = (float(candle["Low"]), float(max(candle["Open"], candle["Close"])))
-                        break
-                for j in range(len(recent)-2, 0, -1):
-                    candle = recent.iloc[j]
-                    next_candle = recent.iloc[j+1]
-                    if float(candle["Close"]) > float(candle["Open"]) and float(next_candle["Close"]) < float(candle["Low"]):
-                        supply_zone = (float(min(candle["Open"], candle["Close"])), float(candle["High"]))
-                        break
-                if sweep_low and volume_ok:
-                    bias, reason = "Bullish", "Sell-side liquidity sweep"
-                elif sweep_high and volume_ok:
-                    bias, reason = "Bearish", "Buy-side liquidity sweep"
-                elif close > prev_high and day_change > 0:
-                    bias, reason = "Bullish", f"Breakout above {ob_days}-session high"
-                elif close < prev_low and day_change < 0:
-                    bias, reason = "Bearish", f"Breakdown below {ob_days}-session low"
-                elif close > open_ and day_change > 0:
-                    bias, reason = "Bullish", "Positive daily candle"
-                elif close < open_ and day_change < 0:
-                    bias, reason = "Bearish", "Negative daily candle"
-                else:
-                    bias, reason = "Mixed", "No clear daily direction"
-                ob_rows.append({
-                    "Symbol": ob_symbol.removesuffix(".NS"),
-                    "Bias": bias,
-                    "Daily change (%)": day_change,
-                    "Volume / 20D avg": volume_ratio,
-                    "Liquidity event": "Sweep low · bullish reversal proxy" if sweep_low else "Sweep high · bearish reversal proxy" if sweep_high else "None detected",
-                    "Setup": reason,
-                    "Demand zone (approx.)": f"{demand_zone[0]:.2f}–{demand_zone[1]:.2f}" if demand_zone else "Not detected",
-                    "Supply zone (approx.)": f"{supply_zone[0]:.2f}–{supply_zone[1]:.2f}" if supply_zone else "Not detected",
-                    "Latest candle": last["Date"].strftime("%d %b %Y"),
-                })
-        ob_results = pd.DataFrame(ob_rows)
-        if ob_results.empty:
-            st.warning("No usable OHLCV data returned. Try again later; no sample values are substituted.")
-        else:
-            ob_results = ob_results.sort_values("Daily change (%)", ascending=False, na_position="last")
-            st.session_state["ob_scan_results"] = ob_results
-    if "ob_scan_results" in st.session_state:
-        ob_results = st.session_state["ob_scan_results"]
-        bull, bear = st.columns(2)
-        bullish = ob_results[ob_results["Bias"] == "Bullish"].sort_values("Daily change (%)", ascending=False).head(3)
-        bearish = ob_results[ob_results["Bias"] == "Bearish"].sort_values("Daily change (%)", ascending=True).head(3)
-        with bull:
-            st.markdown("#### ↗ Bullish setups")
-            if bullish.empty:
-                st.info("No bullish setups detected.")
-            else:
-                for rank, (_, item) in enumerate(bullish.iterrows(), 1):
-                    st.markdown(f"**{rank}. {item['Symbol']}** · {item['Daily change (%)']:+.2f}%  \n{item['Setup']} · Volume {item['Volume / 20D avg']:.2f}×" if pd.notna(item["Volume / 20D avg"]) else f"**{rank}. {item['Symbol']}** · {item['Daily change (%)']:+.2f}%  \n{item['Setup']} · Volume unavailable")
-        with bear:
-            st.markdown("#### ↘ Bearish setups")
-            if bearish.empty:
-                st.info("No bearish setups detected.")
-            else:
-                for rank, (_, item) in enumerate(bearish.iterrows(), 1):
-                    st.markdown(f"**{rank}. {item['Symbol']}** · {item['Daily change (%)']:+.2f}%  \n{item['Setup']} · Volume {item['Volume / 20D avg']:.2f}×" if pd.notna(item["Volume / 20D avg"]) else f"**{rank}. {item['Symbol']}** · {item['Daily change (%)']:+.2f}%  \n{item['Setup']} · Volume unavailable")
-        st.dataframe(ob_results, use_container_width=True, hide_index=True)
-        st.download_button("Download liquidity scan (CSV)", ob_results.to_csv(index=False).encode("utf-8"), "liquidity_order_block_watchlist.csv", "text/csv", key="ob_scan_download")
-        st.warning("Order blocks and liquidity sweeps here are simplified OHLCV heuristics, not confirmed institutional orders, market depth or guaranteed reversal signals. Data may be delayed. Use a stop-loss and verify prices with your broker.")
-
 @st.cache_data(ttl=300, show_spinner=False)
 def _nifty50_heatmap_data(symbols: tuple[str, ...]):
     raw = yf.download(list(symbols), period="5d", interval="1d", group_by="ticker", auto_adjust=False, progress=False, threads=True)
