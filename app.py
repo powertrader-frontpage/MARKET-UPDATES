@@ -1161,13 +1161,13 @@ with st.expander("Scan bullish/bearish setups and liquidity sweeps", expanded=Fa
                 for j in range(len(recent)-2, 0, -1):
                     candle = recent.iloc[j]
                     next_candle = recent.iloc[j+1]
-                    if float(candle["Close"]) < float(candle["Open"]) and float(next_candle["Close"]) > float(next_candle["High"] if "High" in next_candle else next_candle["Close"]):
+                    if float(candle["Close"]) < float(candle["Open"]) and float(next_candle["Close"]) > float(candle["High"]):
                         demand_zone = (float(candle["Low"]), float(max(candle["Open"], candle["Close"])))
                         break
                 for j in range(len(recent)-2, 0, -1):
                     candle = recent.iloc[j]
                     next_candle = recent.iloc[j+1]
-                    if float(candle["Close"]) > float(candle["Open"]) and float(next_candle["Close"]) < float(next_candle["Low"] if "Low" in next_candle else next_candle["Close"]):
+                    if float(candle["Close"]) > float(candle["Open"]) and float(next_candle["Close"]) < float(candle["Low"]):
                         supply_zone = (float(min(candle["Open"], candle["Close"])), float(candle["High"]))
                         break
                 if sweep_low and volume_ok:
