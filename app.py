@@ -1871,68 +1871,68 @@ if selected_page == page_names[8]:
             st.write("Returns are calculated from the daily closing prices returned by the public data source. The latest year is year-to-date when the calendar year is incomplete. Price returns exclude dividends and do not guarantee future performance.")
             st.caption(f"Source: Yahoo Finance via yfinance · Last returned daily bar: {hist['Date'].max():%d %b %Y} · app retrieval timestamp is not an exchange timestamp.")
     
-        with st.expander("Chartink scanners & alert inbox", expanded=False):
-            st.subheader("Chartink scanner workspace")
-            st.write("Use Chartink’s free stock screeners here, then bring a scan snapshot into this dashboard for review. Your current free account does not include Chartink Alerts or webhook delivery, so this inbox cannot receive automatic alert pushes until the Chartink plan supports alerts.")
-            st.markdown("[Open Chartink Stock Screener](https://chartink.com/screener/) · [Explore popular scans](https://chartink.com/screener/) · [Chartink alert feature details](https://chartink.com/articles/alerts/alerts-guide/)")
-            chartink_scan_url = st.text_input("Optional: paste the URL of your saved/public Chartink scan", placeholder="https://chartink.com/screener/your-scan-name", key="chartink_scan_url")
-            if chartink_scan_url.strip():
-                if chartink_scan_url.strip().startswith("https://chartink.com/"):
-                    st.link_button("Open my Chartink scan", chartink_scan_url.strip(), use_container_width=False)
-                else:
-                    st.warning("For safety, use a URL beginning with https://chartink.com/.")
-            st.markdown("#### Import a scan snapshot")
-            st.caption("Paste the JSON body of a Chartink webhook payload if you already have one, or paste a simple JSON object with stocks and trigger_prices. This is a manual import only; it does not connect to Chartink or poll for alerts.")
-            chartink_payload = st.text_area(
-                "Chartink payload JSON",
-                placeholder='{"stocks":"RELIANCE,TCS,INFY","trigger_prices":"1450,3800,1600","triggered_at":"10:30 am","scan_name":"Example scan","scan_url":"example-scan"}',
-                height=130,
-                key="chartink_payload_json",
-            )
-            if st.button("Parse scan snapshot", key="chartink_parse_payload"):
+with st.expander("Chartink scanners & alert inbox", expanded=False):
+    st.subheader("Chartink scanner workspace")
+    st.write("Use Chartink’s free stock screeners here, then bring a scan snapshot into this dashboard for review. Your current free account does not include Chartink Alerts or webhook delivery, so this inbox cannot receive automatic alert pushes until the Chartink plan supports alerts.")
+    st.markdown("[Open Chartink Stock Screener](https://chartink.com/screener/) · [Explore popular scans](https://chartink.com/screener/) · [Chartink alert feature details](https://chartink.com/articles/alerts/alerts-guide/)")
+    chartink_scan_url = st.text_input("Optional: paste the URL of your saved/public Chartink scan", placeholder="https://chartink.com/screener/your-scan-name", key="chartink_scan_url")
+    if chartink_scan_url.strip():
+        if chartink_scan_url.strip().startswith("https://chartink.com/"):
+            st.link_button("Open my Chartink scan", chartink_scan_url.strip(), use_container_width=False)
+        else:
+            st.warning("For safety, use a URL beginning with https://chartink.com/.")
+    st.markdown("#### Import a scan snapshot")
+    st.caption("Paste the JSON body of a Chartink webhook payload if you already have one, or paste a simple JSON object with stocks and trigger_prices. This is a manual import only; it does not connect to Chartink or poll for alerts.")
+    chartink_payload = st.text_area(
+        "Chartink payload JSON",
+        placeholder='{"stocks":"RELIANCE,TCS,INFY","trigger_prices":"1450,3800,1600","triggered_at":"10:30 am","scan_name":"Example scan","scan_url":"example-scan"}',
+        height=130,
+        key="chartink_payload_json",
+    )
+    if st.button("Parse scan snapshot", key="chartink_parse_payload"):
+        try:
+            payload = json.loads(chartink_payload)
+            if not isinstance(payload, dict):
+                raise ValueError("Expected a JSON object.")
+            stocks_raw = payload.get("stocks", payload.get("stock", ""))
+            prices_raw = payload.get("trigger_prices", payload.get("trigger_price", ""))
+            stocks = [str(x).strip() for x in stocks_raw] if isinstance(stocks_raw, list) else [x.strip() for x in str(stocks_raw).split(",") if x.strip()]
+            prices = [str(x).strip() for x in prices_raw] if isinstance(prices_raw, list) else [x.strip() for x in str(prices_raw).split(",") if x.strip()]
+            rows = []
+            for i, stock in enumerate(stocks):
+                price = prices[i] if i < len(prices) else ""
                 try:
-                    payload = json.loads(chartink_payload)
-                    if not isinstance(payload, dict):
-                        raise ValueError("Expected a JSON object.")
-                    stocks_raw = payload.get("stocks", payload.get("stock", ""))
-                    prices_raw = payload.get("trigger_prices", payload.get("trigger_price", ""))
-                    stocks = [str(x).strip() for x in stocks_raw] if isinstance(stocks_raw, list) else [x.strip() for x in str(stocks_raw).split(",") if x.strip()]
-                    prices = [str(x).strip() for x in prices_raw] if isinstance(prices_raw, list) else [x.strip() for x in str(prices_raw).split(",") if x.strip()]
-                    rows = []
-                    for i, stock in enumerate(stocks):
-                        price = prices[i] if i < len(prices) else ""
-                        try:
-                            price = float(price.replace(",", "")) if price else np.nan
-                        except (TypeError, ValueError):
-                            price = np.nan
-                        rows.append({"Stock": stock, "Trigger price": price})
-                    if not rows:
-                        st.session_state["chartink_import_rows"] = []
-                        st.warning("No stocks were found. Check that the payload contains a 'stocks' field.")
-                    else:
-                        st.session_state["chartink_import_rows"] = rows
-                        st.session_state["chartink_import_meta"] = {
-                            "scan_name": str(payload.get("scan_name", payload.get("alert_name", "Imported scan"))),
-                            "triggered_at": str(payload.get("triggered_at", "Not provided")),
-                            "scan_url": str(payload.get("scan_url", "")),
-                        }
-                except Exception as exc:
-                    st.error(f"Could not parse JSON: {exc}")
-            imported_rows = st.session_state.get("chartink_import_rows", [])
-            if imported_rows:
-                meta = st.session_state.get("chartink_import_meta", {})
-                st.markdown(f"**Scan:** {meta.get('scan_name', 'Imported scan')}  ·  **Triggered at:** {meta.get('triggered_at', 'Not provided')}")
-                if meta.get("scan_url"):
-                    st.caption("Scan slug: " + meta["scan_url"])
-                st.dataframe(pd.DataFrame(imported_rows), use_container_width=True, hide_index=True)
-                csv_data = pd.DataFrame(imported_rows).to_csv(index=False).encode("utf-8")
-                st.download_button("Download imported scan as CSV", data=csv_data, file_name="chartink_scan_snapshot.csv", mime="text/csv", key="chartink_download_csv")
-            st.info("To enable automatic delivery later, Chartink requires a paid Alerts subscription with webhook support, plus a separate public HTTPS endpoint and persistent storage. This Streamlit page alone is not a public webhook receiver. No broker order placement is included.")
-    
-        st.divider()
-        st.caption("For research and monitoring only. Verify exchange timestamps and official sources before trading. Public widgets and public-source data may be delayed, incomplete or unavailable; this dashboard is not an execution system or investment advice.")
-    
-        # Expanded research modules (13–22). Calculations use public-source data; personal journal data remains user-controlled.
+                    price = float(price.replace(",", "")) if price else np.nan
+                except (TypeError, ValueError):
+                    price = np.nan
+                rows.append({"Stock": stock, "Trigger price": price})
+            if not rows:
+                st.session_state["chartink_import_rows"] = []
+                st.warning("No stocks were found. Check that the payload contains a 'stocks' field.")
+            else:
+                st.session_state["chartink_import_rows"] = rows
+                st.session_state["chartink_import_meta"] = {
+                    "scan_name": str(payload.get("scan_name", payload.get("alert_name", "Imported scan"))),
+                    "triggered_at": str(payload.get("triggered_at", "Not provided")),
+                    "scan_url": str(payload.get("scan_url", "")),
+                }
+        except Exception as exc:
+            st.error(f"Could not parse JSON: {exc}")
+    imported_rows = st.session_state.get("chartink_import_rows", [])
+    if imported_rows:
+        meta = st.session_state.get("chartink_import_meta", {})
+        st.markdown(f"**Scan:** {meta.get('scan_name', 'Imported scan')}  ·  **Triggered at:** {meta.get('triggered_at', 'Not provided')}")
+        if meta.get("scan_url"):
+            st.caption("Scan slug: " + meta["scan_url"])
+        st.dataframe(pd.DataFrame(imported_rows), use_container_width=True, hide_index=True)
+        csv_data = pd.DataFrame(imported_rows).to_csv(index=False).encode("utf-8")
+        st.download_button("Download imported scan as CSV", data=csv_data, file_name="chartink_scan_snapshot.csv", mime="text/csv", key="chartink_download_csv")
+    st.info("To enable automatic delivery later, Chartink requires a paid Alerts subscription with webhook support, plus a separate public HTTPS endpoint and persistent storage. This Streamlit page alone is not a public webhook receiver. No broker order placement is included.")
+
+st.divider()
+st.caption("For research and monitoring only. Verify exchange timestamps and official sources before trading. Public widgets and public-source data may be delayed, incomplete or unavailable; this dashboard is not an execution system or investment advice.")
+
+# Expanded research modules (13–22). Calculations use public-source data; personal journal data remains user-controlled.
 if selected_page == page_names[9]:
         st.caption("Market regime and trend strength are displayed in the main dashboard above.")
 
