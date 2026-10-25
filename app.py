@@ -1565,41 +1565,8 @@ def make_expander_grid(labels, columns_per_row=1):
         containers.append(st.expander(label, expanded=False))
     return containers
 
-page_names = [
-    "Overview · market snapshot",
-    "Live charts",
-    "Technical analysis",
-    "Sector rotation",
-    "Global markets",
-    "FII/DII & news",
-    "Derivatives",
-    "History & sources",
-    "NIFTY historical returns",
-    "13 Regime & trend strength",
-    "14 Options analytics",
-    "15 Risk & position sizing",
-    "16 Strategy backtest",
-    "17 Market breadth",
-    "18 Events & gap risk",
-    "19 Trade journal",
-    "20 Data quality",
-    "21 Cross-asset performance",
-    "22 Technical signals"
-]
-
-# Sidebar navigation keeps each research module focused while retaining the shared data/session state.
-with st.sidebar:
-    st.divider()
-    st.subheader("Pages")
-    selected_page = st.radio(
-        "Open dashboard page",
-        page_names,
-        index=0,
-        key="market_terminal_page_navigation",
-        label_visibility="collapsed",
-    )
-
-if selected_page == page_names[0]:
+tabs = make_expander_grid(["Overview · market snapshot", "Live charts", "Technical analysis", "Sector rotation", "Global markets", "FII/DII & news", "Derivatives", "History & sources", "NIFTY historical returns"])
+with tabs[0]:
         st.subheader("Market snapshot and historical source data")
         rows = []
         for name, df in market_data.items():
@@ -1619,7 +1586,7 @@ if selected_page == page_names[0]:
                 snap_fig.update_layout(height=max(260, 36 * len(snapshot_plot)), margin=dict(l=10,r=10,t=45,b=10), showlegend=False, xaxis_title="Change (%)", yaxis_title="")
                 st.plotly_chart(snap_fig, use_container_width=True, config={"displaylogo": False}, key="overview_snapshot_change_chart")
 
-if selected_page == page_names[1]:
+with tabs[1]:
         st.subheader("Market charts")
         st.caption("Clean, full-width charts built from the data already loaded by this dashboard. Source is Yahoo Finance via yfinance; daily bars can be delayed or stale. For FYERS-sourced charts, use the FYERS stock charts section below.")
         available_chart_names = [name for name in ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude", "USD/INR", "INFY", "WIPRO", "RELIANCE", "HDFCBANK"] if name in market_data and not market_data[name].empty]
@@ -1662,7 +1629,7 @@ if selected_page == page_names[1]:
                     latest_bar, latest_change, latest_pct = latest_snap
                     st.caption(f"Latest returned bar: {latest_bar['Date']:%d %b %Y, %H:%M IST} · Change vs previous bar: {latest_change:,.2f} ({latest_pct:,.2f}%) · Not guaranteed live.")
 
-if selected_page == page_names[2]:
+with tabs[2]:
         st.subheader("Technical analysis from returned OHLC data")
         technical_symbols = {}
         for instrument_name, ticker in INDEXES.items():
@@ -1746,7 +1713,7 @@ if selected_page == page_names[2]:
             source_label = "FYERS historical data" if source_kind == "fyers" else "Yahoo Finance / yfinance"
             st.caption(f"Source: {source_label} · {len(calc):,} returned candles. Last source candle: {last['Date']:%d %b %Y, %H:%M IST}. Indicators depend on source coverage and are not guaranteed live signals.")
 
-if selected_page == page_names[3]:
+with tabs[3]:
         st.subheader("Sector rotation — best-effort public index history")
         st.caption("Only sectors that return usable source rows are plotted. Relative strength is computed against NIFTY 50 over the selected lookback; it is not institutional money-flow data.")
         sector_rows = []
@@ -1769,14 +1736,14 @@ if selected_page == page_names[3]:
         else:
             st.warning("No sector index series were returned by the public source. No values have been substituted.")
 
-if selected_page == page_names[4]:
+with tabs[4]:
         st.subheader("Global markets and commodities")
         tv_widget("market-overview", {"colorTheme":"dark","dateRange":"1D","showChart":True,"locale":"en","width":"100%","height":440,"isTransparent":False,"showSymbolLogo":True,"tabs":[{"title":"Global indices & commodities","symbols":[{"s":"TVC:SPX"},{"s":"NASDAQ:NDX"},{"s":"TVC:UKOIL"},{"s":"TVC:USOIL"},{"s":"TVC:DXY"},{"s":"FX:USDINR"},{"s":"TVC:GOLD"}]}]}, 450)
         st.markdown("**Public sources**")
         st.markdown("- [Reuters World](https://www.reuters.com/world/) · [Associated Press World](https://apnews.com/world-news) · [BBC World](https://www.bbc.com/news/world)")
         st.markdown("- [U.S. Energy Information Administration](https://www.eia.gov/) · [FRED economic data](https://fred.stlouisfed.org/)")
 
-if selected_page == page_names[5]:
+with tabs[5]:
         st.subheader("FII/DII and macro data")
         st.info("This free edition does not scrape or invent FII/DII values. Use the official reports below; values are not shown as current unless a source has actually been connected and timestamped.")
         st.markdown("- [NSE FII/DII reports](https://www.nseindia.com/reports/fii-dii) — official published data")
@@ -1785,14 +1752,14 @@ if selected_page == page_names[5]:
         st.markdown("- [SEBI](https://www.sebi.gov.in/)")
         tv_widget("news", {"feedMode":"market","colorTheme":"dark","isTransparent":False,"displayMode":"regular","width":"100%","height":420,"locale":"en"}, 430)
 
-if selected_page == page_names[6]:
+with tabs[6]:
         st.subheader("Derivatives and options")
         st.warning("A verified, timestamped NSE option chain, put-call ratio, max pain, option Greeks, and open-interest change are not available from this free public-data setup. These fields are intentionally not populated with guesses.")
         st.markdown("- [NSE option chain](https://www.nseindia.com/option-chain)")
         st.markdown("- [NSE derivatives reports](https://www.nseindia.com/all-reports-derivatives)")
         st.markdown("If you download an option-chain CSV from a source you are permitted to use, the next version can calculate PCR, OI changes, strike concentration and max pain from that actual file.")
 
-if selected_page == page_names[7]:
+with tabs[7]:
         st.subheader("History & provenance")
         st.markdown("**Data behaviour**")
         st.write("- Market history: Yahoo Finance via the open-source `yfinance` package; this is not an official Yahoo API product and Yahoo describes its data access as intended for personal use.")
@@ -1815,7 +1782,7 @@ if selected_page == page_names[7]:
         else:
             st.info("No data to export for this instrument.")
 
-if selected_page == page_names[8]:
+with tabs[8]:
         st.subheader("NIFTY 50 historical returns")
         st.caption("Calendar-year returns and monthly return heatmap, calculated from returned daily NIFTY 50 closing prices. Historical performance is not a prediction.")
         @st.cache_data(ttl=3600, show_spinner=False)
@@ -1933,10 +1900,12 @@ st.divider()
 st.caption("For research and monitoring only. Verify exchange timestamps and official sources before trading. Public widgets and public-source data may be delayed, incomplete or unavailable; this dashboard is not an execution system or investment advice.")
 
 # Expanded research modules (13–22). Calculations use public-source data; personal journal data remains user-controlled.
-if selected_page == page_names[9]:
+extra_tabs = make_expander_grid(["13 Regime & trend strength", "14 Options analytics", "15 Risk & position sizing", "16 Strategy backtest", "17 Market breadth", "18 Events & gap risk", "19 Trade journal", "20 Data quality", "21 Cross-asset performance", "22 Technical signals"])
+
+with extra_tabs[0]:
         st.caption("Market regime and trend strength are displayed in the main dashboard above.")
 
-if selected_page == page_names[10]:
+with extra_tabs[1]:
         st.subheader("14 · Options analytics")
         st.write("Option-chain data for NIFTY-family indices and a broad list of F&O stocks is fetched from the authenticated FYERS Market Data API. Choose an underlying and expiry; availability depends on FYERS contract coverage.")
         # FYERS accepts the underlying equity symbol for stock-option chains.
@@ -2267,7 +2236,7 @@ if selected_page == page_names[10]:
                     st.caption(f"Source: FYERS Option Chain API · selected {option_underlying} ({option_underlying_labels[option_underlying]}) · returned strikes: {len(strikes)} · retrieved {datetime.now(ZoneInfo('Asia/Kolkata')):%d %b %Y %H:%M:%S IST}. Max pain is calculated only across the returned strikes, not the entire market chain.")
         st.markdown("[FYERS Option Chain API documentation](https://fyers.in/api-docs/v3/api/market-data/option-chain) · [Official NSE option chain](https://www.nseindia.com/option-chain)")
 
-if selected_page == page_names[11]:
+with extra_tabs[2]:
         st.subheader("15 · Risk and position-sizing calculator")
         c1,c2,c3 = st.columns(3)
         capital = c1.number_input("Trading capital (₹)", min_value=0.0, value=500000.0, step=25000.0)
@@ -2287,7 +2256,7 @@ if selected_page == page_names[11]:
         st.write(f"Estimated quantity: {actual_qty:,} · Estimated loss at stop: ₹{actual_qty*per_unit:,.2f} · Target price at {target_rr:.2f}R: {entry + (per_unit*target_rr if entry>=stop else -per_unit*target_rr):,.2f}")
         st.caption("Excludes slippage, brokerage, taxes, gaps, margin rules and option-specific nonlinear risk. This is a sizing aid, not a margin calculator.")
 
-if selected_page == page_names[12]:
+with extra_tabs[3]:
         st.subheader("16 · Simple historical strategy test")
         st.write("A transparent long-only moving-average crossover test using returned daily closes. It does not include intraday execution or derivatives.")
         bt_name = st.selectbox("Instrument", list(INDEXES.keys()), key="bt_symbol")
@@ -2312,7 +2281,7 @@ if selected_page == page_names[12]:
             st.warning("Illustrative backtest only. It is not walk-forward validation and may be distorted by source data, index construction, costs and execution assumptions.")
         else: st.info("Insufficient history or invalid periods. Choose fast SMA below slow SMA and provide enough returned daily bars.")
 
-if selected_page == page_names[13]:
+with extra_tabs[4]:
         st.subheader("17 · Automatic market breadth")
         st.write("Uses the dashboard's automatically retrieved large-cap stock history. This is a sample universe, not the full NSE market.")
         wide=get_auto_universe(period="2y")
@@ -2341,7 +2310,7 @@ if selected_page == page_names[13]:
                 st.dataframe(ind.style.format({"Above200Pct":"{:.1f}%"}),use_container_width=True,hide_index=True)
             st.download_button("Download automatic breadth data",last.to_csv(index=False).encode("utf-8"),"automatic_market_breadth.csv","text/csv")
 
-if selected_page == page_names[14]:
+with extra_tabs[5]:
         st.subheader("18 · Automatic economic and gap-risk monitor")
         st.write("Automatically searches public news headlines about scheduled central-bank and macroeconomic events. This is a headline monitor, not a verified release-time calendar.")
         query=st.selectbox("News focus",["India RBI inflation GDP policy","US Federal Reserve CPI jobs economic data","Crude oil OPEC EIA inventory","India US geopolitical market risk"],key="event_news_query")
@@ -2362,7 +2331,7 @@ if selected_page == page_names[14]:
             st.caption(f"Uses returned bars only. Latest bar timestamp: {gdf.iloc[-1]['Date']:%d %b %Y %H:%M IST}; may not be today's opening gap.")
         else: st.info("Insufficient bars for gap calculation.")
 
-if selected_page == page_names[15]:
+with extra_tabs[6]:
         st.subheader("19 · Trade journal and performance review")
         journal_cols=["Date","Instrument","Strategy/setup","Direction","Entry","Stop","Exit","Quantity","Gross P&L","Costs","Net P&L","Notes","Followed rules?"]
         journal_file=st.file_uploader("Load prior journal CSV (optional)",type=["csv"],key="journal_csv")
@@ -2375,7 +2344,7 @@ if selected_page == page_names[15]:
         st.download_button("Download trade journal CSV",journal_edit.to_csv(index=False).encode(),file_name="trade_journal.csv",mime="text/csv")
         st.caption("Export your journal regularly; the hosted app does not promise permanent storage of edits between sessions.")
 
-if selected_page == page_names[16]:
+with extra_tabs[7]:
         st.subheader("20 · Data quality and provenance monitor")
         dq=[]
         for name,df in market_data.items():
@@ -2386,7 +2355,7 @@ if selected_page == page_names[16]:
         st.caption(f"App checked/viewed at {datetime.now(ZoneInfo('Asia/Kolkata')):%Y-%m-%d %H:%M:%S IST}. This is not the exchange timestamp. Staleness thresholds are not used to relabel exchange data without verified exchange metadata.")
         st.download_button("Download data quality report",dqdf.to_csv(index=False).encode(),file_name="data_quality_report.csv",mime="text/csv")
 
-if selected_page == page_names[17]:
+with extra_tabs[8]:
         st.subheader("21 · Cross-asset relative performance")
         cross_tickers={"NIFTY 50":"^NSEI","BANK NIFTY":"^NSEBANK","India VIX":"^INDIAVIX","Brent crude":"BZ=F","Gold":"GC=F","US Dollar Index":"DX-Y.NYB","USD/INR":"INR=X","S&P 500":"^GSPC","Nasdaq 100":"^NDX"}
         cross_rows=[]
@@ -2402,7 +2371,7 @@ if selected_page == page_names[17]:
         else: st.warning("No cross-asset data returned. No values substituted.")
         st.caption("Cross-asset correlations are intentionally not shown unless overlapping timestamped history is available for the selected assets.")
 
-if selected_page == page_names[18]:
+with extra_tabs[9]:
         st.subheader("22 · Transparent technical setup scanner")
         st.write("Screen the instruments already configured in this dashboard. This is a small watchlist, not a full NSE universe scanner.")
         min_rsi=st.slider("Bullish RSI minimum",0,100,50); max_rsi=st.slider("Bearish RSI maximum",0,100,45)
