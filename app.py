@@ -358,7 +358,8 @@ if "auth_code" in st.query_params:
 if "fyers_access_token" in st.session_state and fyers_credentials():
     fyers_app_id = fyers_credentials()[0]
     # Show the FYERS live quote control and results directly on the dashboard, not inside a dropdown.
-    fyers_symbols = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:INFY-EQ"]
+    # Keep Sensex directly below Nifty Bank in the live quote table.
+    fyers_symbols = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "BSE:SENSEX-INDEX", "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:INFY-EQ"]
     if st.button("Fetch FYERS live quotes", key="fyers_fetch_quotes"):
         quote_rows, quote_error = fyers_live_quotes(fyers_app_id, st.session_state["fyers_access_token"], fyers_symbols)
         if quote_error:
