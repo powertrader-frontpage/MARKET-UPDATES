@@ -1065,15 +1065,23 @@ else:
         except Exception as exc:
             weekly_ema_error = f"Weekly data unavailable ({exc.__class__.__name__})"
 
-        # Keep the 200-week EMA anchored to weekly candles, but compare it with
-        # the latest FYERS spot quote when available instead of the last weekly close.
-        weekly_close_source = "Latest weekly close"
-        if overview_regime_name == "NIFTY 50":
-            _nifty_live = fyers_headline_quotes.get("NSE:NIFTY50-INDEX", {})
-            _nifty_live_price = pd.to_numeric(_nifty_live.get("lp"), errors="coerce") if _nifty_live else np.nan
-            if pd.notna(_nifty_live_price) and np.isfinite(_nifty_live_price):
-                weekly_selected_close = float(_nifty_live_price)
-                weekly_close_source = "FYERS live"
+        # Critical trading metric: never silently present an old weekly close as a current price.
+        # EMA remains calculated from weekly candles; the gap uses only a valid FYERS quote.
+        weekly_close_source = "FYERS live"
+        _regime_fyers_symbols = {
+            "NIFTY 50": "NSE:NIFTY50-INDEX",
+            "BANK NIFTY": "NSE:NIFTYBANK-INDEX",
+            "India VIX": "NSE:INDIAVIX-INDEX",
+        }
+        _regime_symbol = _regime_fyers_symbols.get(overview_regime_name)
+        _regime_quote = fyers_headline_quotes.get(_regime_symbol, {}) if _regime_symbol else {}
+        _regime_live_price = pd.to_numeric(_regime_quote.get("lp"), errors="coerce") if _regime_quote else np.nan
+        if pd.notna(_regime_live_price) and np.isfinite(_regime_live_price) and _regime_live_price > 0:
+            weekly_selected_close = float(_regime_live_price)
+        else:
+            weekly_selected_close = np.nan
+            weekly_close_source = "LIVE PRICE UNAVAILABLE"
+            weekly_ema_error = weekly_ema_error or "No valid FYERS live quote for the selected instrument; gap withheld to avoid stale data."
         weekly_ema_gap_pct = ((weekly_selected_close / weekly_ema200) - 1) * 100 if pd.notna(weekly_selected_close) and pd.notna(weekly_ema200) and weekly_ema200 != 0 else np.nan
 
         # PCR is instrument-specific and only shown when FYERS returns a valid option chain.
@@ -1156,7 +1164,7 @@ else:
         weekly_close_text = f"{weekly_selected_close:,.2f}" if pd.notna(weekly_selected_close) else "—"
         weekly_ema_text = f"{weekly_ema200:,.2f}" if pd.notna(weekly_ema200) else "—"
         weekly_gap_text = f"{weekly_ema_gap_pct:+.2f}%" if pd.notna(weekly_ema_gap_pct) else "—"
-        weekly_subtext = weekly_ema_status if pd.notna(weekly_ema_gap_pct) else weekly_ema_error or weekly_ema_status
+        weekly_subtext = weekly_ema_status if pd.notna(weekly_ema_gap_pct) else (weekly_ema_error or "Live quote unavailable; gap not calculated.")
         regime_cols[3].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {weekly_ema_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">{html.escape(overview_regime_name)} · Weekly EMA 200 gap</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{weekly_ema_color};">{weekly_gap_text}</div><div style="font-size:12px;color:#aeb6c2;">{weekly_close_source} {weekly_close_text} · EMA {weekly_ema_text}</div><div style="font-size:12px;color:{weekly_ema_color};margin-top:4px;">{weekly_subtext}</div></div>', unsafe_allow_html=True)
         nifty_pcr_text = f"{nifty_pcr:.2f}" if pd.notna(nifty_pcr) else "—"
         regime_cols[4].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {nifty_pcr_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">{html.escape(overview_regime_name)} · PCR (OI)</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{nifty_pcr_color};">{nifty_pcr_text}</div><div style="font-size:12px;color:{nifty_pcr_color};margin-top:4px;">{nifty_pcr_status}</div><div style="font-size:11px;color:#aeb6c2;margin-top:4px;">Source: FYERS · {nifty_pcr_source_time}</div></div>', unsafe_allow_html=True)
