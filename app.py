@@ -1196,30 +1196,36 @@ else:
         with fear_col:
             fear_score = np.nan
             fear_components = []
+            fear_component_details = []
             recent_rc = overview_rc.dropna(subset=["Close"]).copy()
-            if len(recent_rc) >= 20:
-                # RSI contribution: RSI 50 maps to neutral; 0..100 maps to the same scale.
+            if len(recent_rc) >= 21:
+                # This is a transparent in-house proxy, not an official exchange sentiment index.
                 rsi_series = recent_rc["RSI 14"] if "RSI 14" in recent_rc.columns else pd.Series(dtype=float)
                 if not rsi_series.dropna().empty:
-                    fear_components.append((float(np.clip(rsi_series.dropna().iloc[-1], 0, 100)), 0.35))
-                # Trend contribution: close vs EMA 20 and EMA 50, mapped around neutral.
+                    rsi_input = float(np.clip(rsi_series.dropna().iloc[-1], 0, 100))
+                    fear_components.append((rsi_input, 0.35))
+                    fear_component_details.append({"Input": "RSI 14", "Value": f"{rsi_input:.2f}", "Weight": "35%"})
                 trend_parts = []
                 for ema_col in ["EMA 20", "EMA 50"]:
                     if ema_col in recent_rc.columns and pd.notna(recent_rc[ema_col].iloc[-1]) and recent_rc[ema_col].iloc[-1] != 0:
                         gap_pct = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc[ema_col].iloc[-1]) - 1) * 100
                         trend_parts.append(float(np.clip(50 + gap_pct * 12, 0, 100)))
                 if trend_parts:
-                    fear_components.append((float(np.mean(trend_parts)), 0.40))
-                # Medium-term momentum: 20-session return mapped around neutral.
+                    trend_input = float(np.mean(trend_parts))
+                    fear_components.append((trend_input, 0.40))
+                    fear_component_details.append({"Input": "Price vs EMA 20/50", "Value": f"{trend_input:.2f}", "Weight": "40%"})
                 if len(recent_rc) >= 21 and recent_rc["Close"].iloc[-21] != 0:
                     ret20 = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc["Close"].iloc[-21]) - 1) * 100
-                    fear_components.append((float(np.clip(50 + ret20 * 8, 0, 100)), 0.15))
-                # India VIX: higher volatility tilts the proxy toward fear.
+                    return_input = float(np.clip(50 + ret20 * 8, 0, 100))
+                    fear_components.append((return_input, 0.15))
+                    fear_component_details.append({"Input": "20-session return", "Value": f"{return_input:.2f}", "Weight": "15%"})
                 vix_frame = market_data.get("India VIX", pd.DataFrame())
                 vix_snap = quote_snapshot(vix_frame) if not vix_frame.empty else None
                 if vix_snap:
                     vix_value = float(vix_snap[0]["Close"])
-                    fear_components.append((float(np.clip(100 - vix_value * 3, 0, 100)), 0.10))
+                    vix_input = float(np.clip(100 - vix_value * 3, 0, 100))
+                    fear_components.append((vix_input, 0.10))
+                    fear_component_details.append({"Input": f"India VIX ({vix_value:.2f})", "Value": f"{vix_input:.2f}", "Weight": "10%"})
                 if fear_components:
                     fear_weight = sum(weight for _, weight in fear_components)
                     fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
@@ -1250,6 +1256,11 @@ else:
                 gauge_fig.update_layout(template="plotly_dark", height=250, margin=dict(l=8,r=8,t=48,b=8), paper_bgcolor="rgba(0,0,0,0)")
                 fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
                 fear_col.markdown(f'<div style="text-align:center;font-weight:800;color:{fear_color};font-size:26px;line-height:1.2;margin-top:-2px;padding:4px 0 8px;">{fear_label.upper()}</div>', unsafe_allow_html=True)
+                fear_col.caption("Dashboard-derived proxy · not an official index")
+                fear_col.caption("Underlying daily candle: " + pd.to_datetime(recent_rc["Date"].iloc[-1]).strftime("%d %b %Y"))
+                with fear_col.expander("Fear & Greed score breakdown"):
+                    fear_col.dataframe(pd.DataFrame(fear_component_details), use_container_width=True, hide_index=True)
+                    fear_col.caption("Score is a weighted average of available inputs. Missing inputs are excluded and remaining weights are renormalized; changes can occur when the underlying data refreshes.")
 
             else:
                 fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
