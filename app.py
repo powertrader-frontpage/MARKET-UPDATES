@@ -833,11 +833,11 @@ for flow_name, flow_weight in [("FII/FPI", 0.05), ("DII", 0.05)]:
         "Signal": "Positive" if flow_score > 0 else "Negative" if flow_score < 0 else "Flat",
         "Source bar": flow["date"],
     })
-_sentiment_change("Infosys ADR", "INFY", 0.06, inverse=False)
-_sentiment_change("Wipro ADR", "WIT", 0.04, inverse=False)
-_sentiment_change("HDFC Bank ADR", "HDB", 0.04, inverse=False)
-_sentiment_change("ICICI Bank ADR", "IBN", 0.04, inverse=False)
-_sentiment_change("Reliance Industries GDR", "RIGD.L", 0.02, inverse=False)
+_sentiment_change("Infosys ADR", "INFY", 0.10, inverse=False)
+_sentiment_change("Wipro ADR", "WIT", 0.03, inverse=False)
+_sentiment_change("HDFC Bank ADR", "HDB", 0.10, inverse=False)
+_sentiment_change("ICICI Bank ADR", "IBN", 0.09, inverse=False)
+_sentiment_change("Reliance Industries GDR", "RIGD.L", 0.08, inverse=False)
 # Do not publish a confident full-market direction when the highest-weight GIFT Nifty cue is missing.
 # Partial score remains visible for transparency, but the headline is explicitly marked incomplete.
 gift_available = any(str(item.get("Factor", "")).startswith("GIFT Nifty") for item in sentiment_details)
