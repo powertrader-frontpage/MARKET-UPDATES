@@ -679,7 +679,7 @@ for gift_source_name, gift_url in gift_sources:
         gift_score = 1 if gift_change_pct > 0 else -1 if gift_change_pct < 0 else 0
         # ADR/GDR basket is assigned 30% combined weight; other cues share 70%.
         
-        sentiment_parts.append((gift_score, 0.30))
+        sentiment_parts.append((gift_score, 0.20))
         gift_asof_match = re.search(r"Last updated:\s*([^·]{1,80})", gift_search_text, flags=re.IGNORECASE)
         gift_asof = gift_asof_match.group(1).strip()[:24] if gift_asof_match else "Timestamp unavailable"
         sentiment_details.append({
@@ -702,8 +702,8 @@ if not gift_loaded:
         "Source bar": "24 Oct 2026 · stale",
     })
     sentiment_errors.append("GIFT Nifty live quote unavailable; showing the last confirmed 24 Oct snapshot for reference only (" + "; ".join(gift_failures) + ")")
-_sentiment_change("Brent crude (inverse impact)", "BZ=F", 0.15, inverse=True)
-_sentiment_change("USD/INR (inverse impact)", "INR=X", 0.075, inverse=True)
+_sentiment_change("Brent crude (inverse impact)", "BZ=F", 0.20, inverse=True)
+_sentiment_change("USD/INR (inverse impact)", "INR=X", 0.20, inverse=True)
 
 # Fetch the latest NSE-published cash-market FII/FPI and DII net flows.
 # Prefer NSE's JSON endpoint; retain HTML-table parsing as a fallback. Never invent values.
@@ -818,7 +818,7 @@ def _nse_fii_dii_latest():
     return {}
 
 fii_dii_flows = _nse_fii_dii_latest()
-for flow_name, flow_weight in [("FII/FPI", 0.0875), ("DII", 0.0875)]:
+for flow_name, flow_weight in [("FII/FPI", 0.05), ("DII", 0.05)]:
     flow = fii_dii_flows.get(flow_name)
     if flow is None:
         sentiment_errors.append(f"{flow_name} cash-market flow: unavailable from NSE")
@@ -833,11 +833,11 @@ for flow_name, flow_weight in [("FII/FPI", 0.0875), ("DII", 0.0875)]:
         "Signal": "Positive" if flow_score > 0 else "Negative" if flow_score < 0 else "Flat",
         "Source bar": flow["date"],
     })
-_sentiment_change("Infosys ADR", "INFY", 0.09, inverse=False)
-_sentiment_change("Wipro ADR", "WIT", 0.06, inverse=False)
-_sentiment_change("HDFC Bank ADR", "HDB", 0.05, inverse=False)
-_sentiment_change("ICICI Bank ADR", "IBN", 0.05, inverse=False)
-_sentiment_change("Reliance Industries GDR", "RIGD.L", 0.05, inverse=False)
+_sentiment_change("Infosys ADR", "INFY", 0.06, inverse=False)
+_sentiment_change("Wipro ADR", "WIT", 0.04, inverse=False)
+_sentiment_change("HDFC Bank ADR", "HDB", 0.04, inverse=False)
+_sentiment_change("ICICI Bank ADR", "IBN", 0.04, inverse=False)
+_sentiment_change("Reliance Industries GDR", "RIGD.L", 0.02, inverse=False)
 # Do not publish a confident full-market direction when the highest-weight GIFT Nifty cue is missing.
 # Partial score remains visible for transparency, but the headline is explicitly marked incomplete.
 gift_available = any(str(item.get("Factor", "")).startswith("GIFT Nifty") for item in sentiment_details)
