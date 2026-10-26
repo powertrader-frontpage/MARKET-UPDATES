@@ -1000,6 +1000,26 @@ else:
         overview_last = overview_rc.iloc[-1]
         overview_adx_value = overview_adx.iloc[-1]
         overview_rsi_value = overview_last.get("RSI 14", np.nan)
+        overview_prev_rsi = overview_rc["RSI 14"].iloc[-2] if "RSI 14" in overview_rc.columns and len(overview_rc) >= 2 else np.nan
+        overview_rsi_delta = overview_rsi_value - overview_prev_rsi if pd.notna(overview_rsi_value) and pd.notna(overview_prev_rsi) else np.nan
+        if pd.isna(overview_rsi_value):
+            overview_rsi_zone = "Insufficient RSI data"
+            overview_rsi_color = "#94a3b8"
+        elif overview_rsi_value < 40:
+            overview_rsi_zone = "Bearish zone"
+            overview_rsi_color = "#ef4444"
+        elif overview_rsi_value > 60:
+            overview_rsi_zone = "Bullish zone"
+            overview_rsi_color = "#22c55e"
+        elif pd.isna(overview_rsi_delta) or abs(overview_rsi_delta) < 0.05:
+            overview_rsi_zone = "Neutral · little change"
+            overview_rsi_color = "#94a3b8"
+        elif overview_rsi_delta > 0:
+            overview_rsi_zone = "Neutral → Positive"
+            overview_rsi_color = "#22c55e"
+        else:
+            overview_rsi_zone = "Neutral → Negative"
+            overview_rsi_color = "#ef4444"
         overview_close = overview_last["Close"]
         overview_ema20 = overview_last.get("EMA 20", np.nan)
         overview_ema50 = overview_last.get("EMA 50", np.nan)
@@ -1120,9 +1140,10 @@ else:
             unsafe_allow_html=True,
         )
         adx_color = "#22c55e" if pd.notna(overview_adx_value) and overview_adx_value >= 25 else "#f59e0b" if pd.notna(overview_adx_value) and overview_adx_value >= 20 else "#94a3b8"
-        rsi_color = "#ef4444" if pd.notna(overview_rsi_value) and overview_rsi_value < 30 else "#22c55e" if pd.notna(overview_rsi_value) and overview_rsi_value > 70 else "#f59e0b" if pd.notna(overview_rsi_value) and (overview_rsi_value >= 60 or overview_rsi_value <= 40) else "#94a3b8"
+        rsi_color = overview_rsi_color
         regime_cols[1].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {adx_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">ADX 14 · trend strength</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{adx_color};">{fmt(overview_adx_value)}</div><div style="font-size:12px;color:#aeb6c2;">{ "Strong trend" if pd.notna(overview_adx_value) and overview_adx_value >= 25 else "Trend building" if pd.notna(overview_adx_value) and overview_adx_value >= 20 else "Weak trend" }</div></div>', unsafe_allow_html=True)
-        regime_cols[2].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {rsi_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">RSI 14 · momentum</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{rsi_color};">{fmt(overview_rsi_value)}</div><div style="font-size:12px;color:#aeb6c2;">{ "Oversold" if pd.notna(overview_rsi_value) and overview_rsi_value < 30 else "Overbought" if pd.notna(overview_rsi_value) and overview_rsi_value > 70 else "Bullish momentum" if pd.notna(overview_rsi_value) and overview_rsi_value >= 60 else "Bearish momentum" if pd.notna(overview_rsi_value) and overview_rsi_value <= 40 else "Neutral" }</div></div>', unsafe_allow_html=True)
+        rsi_delta_text = f"{overview_rsi_delta:+.2f} vs previous bar" if pd.notna(overview_rsi_delta) else "Change unavailable"
+        regime_cols[2].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {rsi_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">RSI 14 · momentum</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{rsi_color};">{fmt(overview_rsi_value)}</div><div style="font-size:12px;color:{rsi_color};margin-top:3px;">{overview_rsi_zone}</div><div style="font-size:11px;color:#aeb6c2;margin-top:4px;">{rsi_delta_text}</div><div style="font-size:10px;color:#aeb6c2;margin-top:3px;">Zones: below 40 bearish · 40–60 transition · above 60 bullish</div></div>', unsafe_allow_html=True)
         weekly_close_text = f"{weekly_selected_close:,.2f}" if pd.notna(weekly_selected_close) else "—"
         weekly_ema_text = f"{weekly_ema200:,.2f}" if pd.notna(weekly_ema200) else "—"
         weekly_gap_text = f"{weekly_ema_gap_pct:+.2f}%" if pd.notna(weekly_ema_gap_pct) else "—"
