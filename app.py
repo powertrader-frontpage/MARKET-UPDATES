@@ -1840,24 +1840,30 @@ else:
         st.warning("Heatmap source timestamps unavailable; freshness cannot be verified.")
     # Use an explicit formatted custom-data field for tile labels. Plotly treemap's
     # %{color} token is not reliably populated in texttemplate and can render NaN%.
-    heatmap_df["Direction"] = np.where(heatmap_df["Change (%)"] >= 0, "Positive", "Negative")
-    heatmap_df["Display Change"] = heatmap_df["Change (%)"].map(
-        lambda value: f"{value:+.2f}%" if pd.notna(value) and np.isfinite(value) else "N/A"
-    )
-    heatmap_fig = px.treemap(
-        heatmap_df, path=["Direction", "Symbol"], values=np.ones(len(heatmap_df)),
-        color="Change (%)", custom_data=["Display Change"],
-        color_continuous_scale=["#ef4444", "#252a34", "#16a34a"],
-        color_continuous_midpoint=0,
-        hover_data={"Close": ":,.2f", "Change (%)": ":.2f", "Direction": False, "Display Change": False}
-    )
-    heatmap_fig.update_traces(
-        texttemplate="%{label}<br>%{customdata[0]}",
-        textfont_size=12,
-        hovertemplate="%{label}<br>Daily change: %{customdata[0]}<extra></extra>"
-    )
-    heatmap_fig.update_layout(template="plotly_dark", height=520, margin=dict(l=4, r=4, t=8, b=4), coloraxis_colorbar_title="Daily %")
-    st.plotly_chart(heatmap_fig, use_container_width=True, config={"displaylogo": False}, key="nifty50_only_treemap")
+    if heatmap_is_stale:
+        st.error(
+            "Heatmap hidden because the data provider returned an outdated trading date. "
+            "No old percentage changes are being presented as current. Please use the connected broker/exchange feed or retry when the public source updates."
+        )
+    else:
+        heatmap_df["Direction"] = np.where(heatmap_df["Change (%)"] >= 0, "Positive", "Negative")
+        heatmap_df["Display Change"] = heatmap_df["Change (%)"].map(
+            lambda value: f"{value:+.2f}%" if pd.notna(value) and np.isfinite(value) else "N/A"
+        )
+        heatmap_fig = px.treemap(
+            heatmap_df, path=["Direction", "Symbol"], values=np.ones(len(heatmap_df)),
+            color="Change (%)", custom_data=["Display Change"],
+            color_continuous_scale=["#ef4444", "#252a34", "#16a34a"],
+            color_continuous_midpoint=0,
+            hover_data={"Close": ":,.2f", "Change (%)": ":.2f", "Direction": False, "Display Change": False}
+        )
+        heatmap_fig.update_traces(
+            texttemplate="%{label}<br>%{customdata[0]}",
+            textfont_size=12,
+            hovertemplate="%{label}<br>Daily change: %{customdata[0]}<extra></extra>"
+        )
+        heatmap_fig.update_layout(template="plotly_dark", height=520, margin=dict(l=4, r=4, t=8, b=4), coloraxis_colorbar_title="Daily %")
+        st.plotly_chart(heatmap_fig, use_container_width=True, config={"displaylogo": False}, key="nifty50_only_treemap")
 st.divider()
 
 def make_expander_grid(labels, columns_per_row=1):
