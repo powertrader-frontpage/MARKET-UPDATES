@@ -96,9 +96,6 @@ with st.sidebar:
     interval = st.selectbox("Intraday bar interval", ["5m", "15m", "30m", "60m"], index=0)
     st.caption("Intraday Yahoo Finance history is limited by the upstream source. If it is unavailable, the app will show an error instead of substituting sample values.")
     refresh = st.button("↻ Refresh market data", use_container_width=True)
-    if refresh:
-        st.cache_data.clear()
-        st.rerun()
     st.divider()
     st.markdown("**Public source links**")
     st.markdown("- [NSE reports](https://www.nseindia.com/all-reports)")
@@ -577,24 +574,6 @@ with st.spinner("Loading best-effort public market data…"):
         market_data[name], market_errors[name] = hist, err
 
 now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
-# Show feed freshness for the main market instruments so stale candles cannot appear current.
-_core_daily_dates = {}
-for _name in ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude", "USD/INR"]:
-    _frame = market_data.get(_name, pd.DataFrame())
-    if not _frame.empty and "Date" in _frame.columns:
-        _valid_dates = pd.to_datetime(_frame["Date"], errors="coerce").dropna()
-        if not _valid_dates.empty:
-            _core_daily_dates[_name] = _valid_dates.iloc[-1].date()
-_stale_core = {
-    _name: _date for _name, _date in _core_daily_dates.items()
-    if (now_ist.date() - _date).days > 3
-}
-if _stale_core:
-    _stale_list = ", ".join(f"{_name}: {_date.strftime('%d %b %Y')}" for _name, _date in _stale_core.items())
-    st.error("MARKET DATA FRESHNESS ALERT — stale daily feeds detected: " + _stale_list + ". Indicators based on these candles may not reflect current conditions. Use Refresh market data; if dates remain old, the provider has not supplied newer candles.")
-elif _core_daily_dates:
-    _latest_core_date = max(_core_daily_dates.values())
-    st.caption(f"Core daily feeds latest candle: {_latest_core_date.strftime('%d %b %Y')} · Checked {now_ist:%d %b %Y %H:%M:%S IST}. Daily candles and live quotes can have different timestamps.")
 # Hidden refresh/source note retained in code to keep the dashboard focused on key headings and values.
 
 # Headline cards: use FYERS quotes for NIFTY 50, BANK NIFTY and India VIX when connected.
@@ -611,45 +590,6 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
         _symbol = _item.get("n", _values.get("symbol", ""))
         if _symbol in _live_symbols:
             fyers_headline_quotes[_symbol] = _values
-
-    # Prefer FYERS daily candles for NIFTY and India VIX when connected, rather than
-    # silently calculating sentiment from stale Yahoo daily history.
-    for _market_name, _fyers_symbol in [("NIFTY 50", "NSE:NIFTY50-INDEX"), ("India VIX", "NSE:INDIAVIX-INDEX")]:
-        _fyers_daily, _fyers_daily_error = fyers_history(
-            _fyers_app_id, st.session_state["fyers_access_token"], _fyers_symbol, "1D", 120
-        )
-        if not _fyers_daily.empty and {"Date", "High", "Low", "Close"}.issubset(_fyers_daily.columns):
-            market_data[_market_name] = _fyers_daily.copy()
-            market_errors[_market_name] = None
-
-# Dashboard-wide freshness audit across the core instruments, after all source overrides.
-# Display actual source dates and flag stale daily candles instead of implying they are live.
-def _daily_source_date(frame):
-    if frame is None or frame.empty or "Date" not in frame.columns:
-        return None
-    dates = pd.to_datetime(frame["Date"], errors="coerce").dropna()
-    if dates.empty:
-        return None
-    last = dates.max()
-    if getattr(last, "tzinfo", None) is not None:
-        last = last.tz_convert("Asia/Kolkata").tz_localize(None)
-    return last.date()
-
-_core_dates = {name: _daily_source_date(market_data.get(name, pd.DataFrame())) for name in ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude", "USD/INR"]}
-_core_stale = {}
-for _name, _date in _core_dates.items():
-    if _date is None or (now_ist.date() - _date).days >= 3:
-        _core_stale[_name] = _date
-if _core_stale:
-    _stale_list = ", ".join(f"{_name} ({_date.strftime('%d %b %Y') if _date else 'no source data'})" for _name, _date in _core_stale.items())
-    st.warning(
-        "MARKET DATA FRESHNESS WARNING — Latest returned daily data is stale or unavailable for: "
-        + _stale_list
-        + ". Several indicators may therefore reflect old candles. Connect FYERS for live NIFTY, BANK NIFTY and India VIX quotes; refresh and verify other instruments with their source/broker."
-    )
-else:
-    st.caption("Core daily source dates · " + " · ".join(f"{_name}: {_date.strftime('%d %b %Y') if _date else 'unavailable'}" for _name, _date in _core_dates.items()))
-
 # Responsive headline cards: keep full numeric values readable on narrow mobile screens.
 st.markdown("""
 <style>
@@ -1258,10 +1198,7 @@ else:
             fear_components = []
             fear_component_details = []
             recent_rc = overview_rc.dropna(subset=["Close"]).copy()
-            _fear_data_date = pd.to_datetime(recent_rc["Date"].iloc[-1]).date() if not recent_rc.empty else None
-            _fear_today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-            _fear_data_is_fresh = _fear_data_date is not None and (_fear_today - _fear_data_date).days <= 3
-            if len(recent_rc) >= 21 and _fear_data_is_fresh:
+            if len(recent_rc) >= 21:
                 # This is a transparent in-house proxy, not an official exchange sentiment index.
                 rsi_series = recent_rc["RSI 14"] if "RSI 14" in recent_rc.columns else pd.Series(dtype=float)
                 if not rsi_series.dropna().empty:
@@ -1324,10 +1261,7 @@ else:
                 # Keep the dashboard compact: show the sentiment label without the input table.
 
             else:
-                if len(recent_rc) >= 21 and not _fear_data_is_fresh:
-                    fear_col.warning(f"Fear & Greed unavailable: latest daily candle is {_fear_data_date.strftime('%d %b %Y')}. Data is stale; no current sentiment is shown.")
-                else:
-                    fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
+                fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
 
 # Compact support/resistance follows the currently selected regime instrument.
 # Classic floor pivots use the latest completed daily candle returned for that instrument.
@@ -3335,3 +3269,5 @@ with st.expander("Important: Public Yahoo Finance and market-data limitations", 
 
 
 
+if refresh:
+    st.cache_data.clear()
