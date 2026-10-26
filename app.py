@@ -383,7 +383,6 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                 "High": _quote_num(values.get("high_price")),
                 "Low": _quote_num(values.get("low_price")),
                 "Previous close": _quote_num(values.get("prev_close_price")),
-                "Volume": int(_quote_num(values.get("volume"), 0)) if pd.notna(_quote_num(values.get("volume"), 0)) else np.nan,
             })
         quote_df = pd.DataFrame(normalized)
 
@@ -409,7 +408,6 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
             "High": "{:,.2f}",
             "Low": "{:,.2f}",
             "Previous close": "{:,.2f}",
-            "Volume": "{:,.0f}",
         }
         styled_quotes = quote_df.style.format(quote_format, na_rep="—").map(_fyers_change_style, subset=["Change", "Change %"])
         st.dataframe(styled_quotes, use_container_width=True, hide_index=True)
