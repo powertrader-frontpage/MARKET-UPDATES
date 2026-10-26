@@ -381,8 +381,26 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         "Previous close": values.get("prev_close_price"),
                         "Volume": values.get("volume"),
                     })
-                st.dataframe(pd.DataFrame(normalized), use_container_width=True, hide_index=True)
-                st.caption("Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
+                quote_df = pd.DataFrame(normalized)
+
+                # Highlight both absolute and percentage changes by direction.
+                # Keep numeric values unchanged; only apply visual styling to the two columns.
+                def _fyers_change_style(value):
+                    try:
+                        number = float(value)
+                    except (TypeError, ValueError):
+                        return ""
+                    if not np.isfinite(number):
+                        return ""
+                    if number > 0:
+                        return "color: #22c55e; font-weight: 600;"
+                    if number < 0:
+                        return "color: #ef4444; font-weight: 600;"
+                    return "color: #9ca3af;"
+
+                styled_quotes = quote_df.style.map(_fyers_change_style, subset=["Change", "Change %"])
+                st.dataframe(styled_quotes, use_container_width=True, hide_index=True)
+                st.caption("Green = positive change · Red = negative change · Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
 
 
 @st.cache_data(ttl=300, show_spinner=False)
