@@ -875,7 +875,10 @@ for flow_name, flow_weight in [("FII/FPI", 0.025), ("DII", 0.025)]:
         "Source bar": flow["date"],
     })
 _sentiment_change("Infosys ADR", "INFY", 0.10, inverse=False)
+_sentiment_change("Wipro ADR", "WIT", 0.0, inverse=False)
 _sentiment_change("HDFC Bank ADR", "HDB", 0.10, inverse=False)
+_sentiment_change("ICICI Bank ADR", "IBN", 0.0, inverse=False)
+_sentiment_change("Reliance Industries GDR", "RIGD.L", 0.0, inverse=False)
 # Do not publish a confident full-market direction when the highest-weight GIFT Nifty cue is missing.
 # Partial score remains visible for transparency, but the headline is explicitly marked incomplete.
 gift_available = bool(gift_loaded)  # A stale fallback row is display-only and must not count as live GIFT Nifty
