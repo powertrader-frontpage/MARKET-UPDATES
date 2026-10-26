@@ -679,7 +679,7 @@ for gift_source_name, gift_url in gift_sources:
         gift_score = 1 if gift_change_pct > 0 else -1 if gift_change_pct < 0 else 0
         # ADR/GDR basket is assigned 30% combined weight; other cues share 70%.
         
-        sentiment_parts.append((gift_score, 0.40))
+        sentiment_parts.append((gift_score, 0.30))
         gift_asof_match = re.search(r"Last updated:\s*([^·]{1,80})", gift_search_text, flags=re.IGNORECASE)
         gift_asof = gift_asof_match.group(1).strip()[:24] if gift_asof_match else "Timestamp unavailable"
         sentiment_details.append({
@@ -702,8 +702,8 @@ if not gift_loaded:
         "Source bar": "24 Oct 2026 · stale",
     })
     sentiment_errors.append("GIFT Nifty live quote unavailable; showing the last confirmed 24 Oct snapshot for reference only (" + "; ".join(gift_failures) + ")")
-_sentiment_change("Brent crude (inverse impact)", "BZ=F", 0.20, inverse=True)
-_sentiment_change("USD/INR (inverse impact)", "INR=X", 0.10, inverse=True)
+_sentiment_change("Brent crude (inverse impact)", "BZ=F", 0.15, inverse=True)
+_sentiment_change("USD/INR (inverse impact)", "INR=X", 0.075, inverse=True)
 
 # Fetch the latest NSE-published cash-market FII/FPI and DII net flows.
 # Prefer NSE's JSON endpoint; retain HTML-table parsing as a fallback. Never invent values.
@@ -818,7 +818,7 @@ def _nse_fii_dii_latest():
     return {}
 
 fii_dii_flows = _nse_fii_dii_latest()
-for flow_name, flow_weight in [("FII/FPI", 0.075), ("DII", 0.075)]:
+for flow_name, flow_weight in [("FII/FPI", 0.0875), ("DII", 0.0875)]:
     flow = fii_dii_flows.get(flow_name)
     if flow is None:
         sentiment_errors.append(f"{flow_name} cash-market flow: unavailable from NSE")
