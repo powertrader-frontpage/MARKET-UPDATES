@@ -590,6 +590,16 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
         _symbol = _item.get("n", _values.get("symbol", ""))
         if _symbol in _live_symbols:
             fyers_headline_quotes[_symbol] = _values
+
+    # Prefer FYERS daily candles for NIFTY and India VIX when connected, rather than
+    # silently calculating sentiment from stale Yahoo daily history.
+    for _market_name, _fyers_symbol in [("NIFTY 50", "NSE:NIFTY50-INDEX"), ("India VIX", "NSE:INDIAVIX-INDEX")]:
+        _fyers_daily, _fyers_daily_error = fyers_history(
+            _fyers_app_id, st.session_state["fyers_access_token"], _fyers_symbol, "1D", 120
+        )
+        if not _fyers_daily.empty and {"Date", "High", "Low", "Close"}.issubset(_fyers_daily.columns):
+            market_data[_market_name] = _fyers_daily.copy()
+            market_errors[_market_name] = None
 # Responsive headline cards: keep full numeric values readable on narrow mobile screens.
 st.markdown("""
 <style>
