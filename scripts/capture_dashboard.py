@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import exchange_calendars as xcals
+import pandas_market_calendars as mcal
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -23,15 +23,17 @@ OUTPUT = Path("output/market-dashboard.png")
 
 
 def is_nse_session(day) -> bool:
-    """Use the XNSE trading calendar to skip weekends and exchange holidays."""
+    """Use the NSE trading calendar to skip weekends and exchange holidays."""
     # Avoid asking the exchange calendar about weekend dates; a manual run on a
     # Sunday or Saturday should finish successfully without attempting a capture.
     if day.weekday() >= 5:
         return False
 
-    calendar = xcals.get_calendar("XNSE")
+    # pandas-market-calendars registers the Indian exchange as "NSE".
+    calendar = mcal.get_calendar("NSE")
     session = day.strftime("%Y-%m-%d")
-    return bool(calendar.is_session(session))
+    schedule = calendar.schedule(start_date=session, end_date=session)
+    return not schedule.empty
 
 
 def main() -> int:
