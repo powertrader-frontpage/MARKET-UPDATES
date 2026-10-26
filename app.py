@@ -1833,7 +1833,7 @@ else:
         )
         if heatmap_is_stale:
             st.warning(
-                f"The heatmap is based on {heatmap_latest_date}, but the latest expected weekday is {expected_last_weekday.date()}. "
+                f"The heatmap is based on {heatmap_latest_date}, but the latest expected weekday is {expected_last_weekday}. "
                 "The source is returning outdated data. The dashboard will not label these values as current; use a verified broker/exchange feed until the source catches up."
             )
     else:
