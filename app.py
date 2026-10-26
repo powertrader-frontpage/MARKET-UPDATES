@@ -623,14 +623,14 @@ for _name, _date in _core_dates.items():
     if _date is None or (now_ist.date() - _date).days >= 3:
         _core_stale[_name] = _date
 if _core_stale:
-    _stale_list = ", ".join(f"{_name} ({_date.strftime("%d %b %Y") if _date else "no source data"})" for _name, _date in _core_stale.items())
+    _stale_list = ", ".join(f"{_name} ({_date.strftime('%d %b %Y') if _date else 'no source data'})" for _name, _date in _core_stale.items())
     st.warning(
         "MARKET DATA FRESHNESS WARNING — Latest returned daily data is stale or unavailable for: "
         + _stale_list
         + ". Several indicators may therefore reflect old candles. Connect FYERS for live NIFTY, BANK NIFTY and India VIX quotes; refresh and verify other instruments with their source/broker."
     )
 else:
-    st.caption("Core daily source dates · " + " · ".join(f"{_name}: {_date.strftime("%d %b %Y") if _date else "unavailable"}" for _name, _date in _core_dates.items()))
+    st.caption("Core daily source dates · " + " · ".join(f"{_name}: {_date.strftime('%d %b %Y') if _date else 'unavailable'}" for _name, _date in _core_dates.items()))
 
 # Responsive headline cards: keep full numeric values readable on narrow mobile screens.
 st.markdown("""
