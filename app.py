@@ -2962,12 +2962,12 @@ with advanced_tabs[5]:
             now_audit = pd.Timestamp.now(tz="Asia/Kolkata")
             source_day = date_max.date()
             today_day = now_audit.date()
-            monday_after_friday = (
-                now_audit.weekday() == 0
+            normal_weekend_gap = (
+                now_audit.weekday() in (5, 6, 0)
                 and date_max.weekday() == 4
                 and (today_day - source_day).days <= 3
             )
-            stale_threshold_hours = 84 if monday_after_friday else 36
+            stale_threshold_hours = 84 if normal_weekend_gap else 36
             age_hours = age * 24
             status = "Latest returned daily bar" if age_hours <= stale_threshold_hours else "POTENTIALLY STALE — verify source candle"
             if complete < 99.9: status += "; incomplete OHLC"
