@@ -576,11 +576,20 @@ with st.spinner("Loading best-effort public market data…"):
 now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
 # Hidden refresh/source note retained in code to keep the dashboard focused on key headings and values.
 
-# Restore original headline-card source: use the same Yahoo Finance historical
-# snapshots as the chart/indicators. FYERS remains available in its explicit tools,
-# but does not override core dashboard history implicitly.
+# Use the same FYERS quote snapshot as the visible quote table for headline index cards.
+# Historical charts/indicators remain on their own historical candle source.
 headline_names = ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude", "USD/INR"]
 fyers_headline_quotes = {}
+fyers_headline_error = None
+if "fyers_access_token" in st.session_state and fyers_credentials():
+    _fyers_app_id = fyers_credentials()[0]
+    _live_symbols = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:INDIAVIX-INDEX"]
+    _live_rows, fyers_headline_error = fyers_live_quotes(_fyers_app_id, st.session_state["fyers_access_token"], _live_symbols)
+    for _item in (_live_rows or []):
+        _values = _item.get("v") or {}
+        _symbol = _item.get("n", _values.get("symbol", ""))
+        if _symbol in _live_symbols:
+            fyers_headline_quotes[_symbol] = _values
 # Responsive headline cards: keep full numeric values readable on narrow mobile screens.
 st.markdown("""
 <style>
@@ -605,7 +614,18 @@ cols = st.columns(5)
 for col, name in zip(cols, headline_names):
     df = market_data[name]
     snap = quote_snapshot(df)
-    if snap:
+    _fyers_symbol = {"NIFTY 50": "NSE:NIFTY50-INDEX", "BANK NIFTY": "NSE:NIFTYBANK-INDEX", "India VIX": "NSE:INDIAVIX-INDEX"}.get(name)
+    _live = fyers_headline_quotes.get(_fyers_symbol) if _fyers_symbol else None
+    if _live and _live.get("lp") is not None:
+        _live_price = pd.to_numeric(_live.get("lp"), errors="coerce")
+        _live_change = pd.to_numeric(_live.get("ch"), errors="coerce")
+        _live_pct = pd.to_numeric(_live.get("chp"), errors="coerce")
+        _live_delta = f"{fmt(_live_change)} ({fmt(_live_pct)}%)" if pd.notna(_live_change) and pd.notna(_live_pct) else None
+        if name == "India VIX":
+            col.metric(name, fmt(_live_price), _live_delta, delta_color="inverse")
+        else:
+            col.metric(name, fmt(_live_price), _live_delta)
+    elif snap:
         last, change, pct = snap
         # Invert colour semantics for instruments where a decline is favourable for India.
         if name == "USD/INR":
