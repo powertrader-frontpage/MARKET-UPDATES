@@ -3084,48 +3084,7 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
             intelligence_chart.update_layout(template="plotly_dark", height=300, margin=dict(l=15,r=15,t=30,b=15), xaxis_title=None, yaxis_title="₹", legend=dict(orientation="h", y=1.12))
             st.plotly_chart(intelligence_chart, use_container_width=True, config={"displaylogo":False}, key="stock_intelligence_price_chart")
             st.caption("Technical analysis uses FYERS daily historical candles; live quote is shown when available. Data refreshes automatically on selection and is cached for up to 5 minutes.")
-        col_res, col_period = st.columns(2)
-        with col_res:
-            chart_resolution = st.selectbox("Candle interval", ["1", "5", "15", "30", "60", "120", "240", "1D", "1W"], index=2, key="fyers_chart_resolution", format_func=lambda value: {"1":"1 minute","5":"5 minutes","15":"15 minutes","30":"30 minutes","60":"1 hour","120":"2 hours","240":"4 hours","1D":"1 day","1W":"1 week"}[value])
-        with col_period:
-            chart_days_label = st.selectbox("History window", ["5 days", "1 month", "3 months", "6 months", "1 year", "2 years", "5 years"], index=2, key="fyers_chart_days")
-        chart_days = {"5 days": 5, "1 month": 31, "3 months": 92, "6 months": 183, "1 year": 365, "2 years": 730, "5 years": 1825}[chart_days_label]
-        if chart_resolution in {"1", "5"} and chart_days > 5:
-            st.warning("For 1-minute and 5-minute candles, the chart automatically limits history to the most recent 5 calendar days to avoid oversized or unsupported requests.")
-            chart_days = 5
-        st.markdown("**Chart tools**")
-        ind1, ind2, ind3, ind4, ind5 = st.columns(5)
-        with ind1:
-            show_ema21 = st.checkbox("EMA 21", value=True, key="fyers_ema21")
-        with ind2:
-            show_ema50 = st.checkbox("EMA 50", value=False, key="fyers_ema50")
-        with ind3:
-            show_ema200 = st.checkbox("EMA 200", value=False, key="fyers_ema200")
-        with ind4:
-            show_rsi = st.checkbox("RSI", value=False, key="fyers_rsi")
-        with ind5:
-            show_stoch_rsi = st.checkbox("Stochastic RSI", value=False, key="fyers_stoch_rsi")
-        show_volume = st.checkbox("Volume", value=False, key="fyers_volume")
-        st.caption("After the chart loads, use the Plotly toolbar to draw lines, rectangles, circles, and annotations. These drawings are temporary and reset when the chart is rebuilt.")
-        if st.button("Load / refresh FYERS chart", key="fyers_load_chart"):
-            chart_symbol = symbol_labels[selected_label]
-            with st.spinner(f"Fetching FYERS candles for {chart_symbol}..."):
-                candles, candle_error = fyers_history(fyers_credentials()[0], st.session_state["fyers_access_token"], chart_symbol, chart_resolution, chart_days)
-            if candle_error:
-                st.warning(f"Chart data unavailable: {candle_error}")
-            else:
-                candles = candles.copy()
-                candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
-                candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
-                if candles.empty:
-                    st.warning("FYERS returned no valid OHLC candles for this selection.")
-                else:
-                    st.session_state["fyers_chart_data"] = candles.to_json(date_format="iso", orient="split")
-                    st.session_state["fyers_chart_symbol_loaded"] = chart_symbol
-                    st.session_state["fyers_chart_resolution_loaded"] = chart_resolution
-                    st.session_state["fyers_chart_loaded_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
-                    st.session_state.pop("fyers_chart_error", None)
-
+        # The Stock Intelligence Card now provides the selected-stock overview and analysis.
         # Start a single FYERS Data Socket for the currently selected chart symbol.
         st.markdown("**Live market stream**")
         live_symbol = symbol_labels[selected_label]
