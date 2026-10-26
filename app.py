@@ -1208,7 +1208,10 @@ else:
             fear_components = []
             fear_component_details = []
             recent_rc = overview_rc.dropna(subset=["Close"]).copy()
-            if len(recent_rc) >= 21:
+            _fear_data_date = pd.to_datetime(recent_rc["Date"].iloc[-1]).date() if not recent_rc.empty else None
+            _fear_today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+            _fear_data_is_fresh = _fear_data_date is not None and (_fear_today - _fear_data_date).days <= 3
+            if len(recent_rc) >= 21 and _fear_data_is_fresh:
                 # This is a transparent in-house proxy, not an official exchange sentiment index.
                 rsi_series = recent_rc["RSI 14"] if "RSI 14" in recent_rc.columns else pd.Series(dtype=float)
                 if not rsi_series.dropna().empty:
@@ -1271,7 +1274,10 @@ else:
                 # Keep the dashboard compact: show the sentiment label without the input table.
 
             else:
-                fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
+                if len(recent_rc) >= 21 and not _fear_data_is_fresh:
+                    fear_col.warning(f"Fear & Greed unavailable: latest daily candle is {_fear_data_date.strftime('%d %b %Y')}. Data is stale; no current sentiment is shown.")
+                else:
+                    fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
 
 # Compact support/resistance follows the currently selected regime instrument.
 # Classic floor pivots use the latest completed daily candle returned for that instrument.
