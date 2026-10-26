@@ -106,11 +106,6 @@ with st.sidebar:
     st.markdown("- [Yahoo Finance data coverage/delays](https://help.yahoo.com/kb/SLN2310.html)")
 
 
-# Clear cached source data BEFORE this run fetches and renders it. Clearing at the end
-# made the refresh button display the old cached values until a later rerun.
-if refresh:
-    st.cache_data.clear()
-
 # FYERS read-only market-data connection. Credentials must live in Streamlit Cloud Secrets.
 def fyers_credentials():
     try:
@@ -1796,15 +1791,7 @@ def _nifty50_heatmap_data(symbols: tuple[str, ...]):
             if len(closes) >= 2 and float(closes.iloc[-2]) != 0:
                 last_close = float(closes.iloc[-1])
                 change_pct = (last_close / float(closes.iloc[-2]) - 1) * 100
-                source_date = pd.to_datetime(frame.index[-1], errors="coerce")
-                if pd.isna(source_date):
-                    source_date = pd.to_datetime(raw.index[-1], errors="coerce")
-                rows.append({
-                    "Symbol": symbol.removesuffix(".NS"),
-                    "Close": last_close,
-                    "Change (%)": change_pct,
-                    "Source date": source_date.strftime("%Y-%m-%d") if pd.notna(source_date) else "Unavailable",
-                })
+                rows.append({"Symbol": symbol.removesuffix(".NS"), "Close": last_close, "Change (%)": change_pct})
         except (KeyError, TypeError, ValueError, IndexError):
             continue
     return pd.DataFrame(rows)
@@ -1813,31 +1800,6 @@ with st.spinner("Loading NIFTY 50 constituent performance…"):
 if heatmap_df.empty:
     st.warning("NIFTY 50 heatmap data is temporarily unavailable from the public data source.")
 else:
-    heatmap_dates = pd.to_datetime(heatmap_df["Source date"], errors="coerce").dropna()
-    if not heatmap_dates.empty:
-        heatmap_latest_date = heatmap_dates.max().date()
-        heatmap_today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-        # Expected previous weekday, with weekend handling. This deliberately flags
-        # old weekday candles instead of allowing a 4-day-old Friday candle to look current on Tuesday.
-        expected_last_weekday = heatmap_today - pd.Timedelta(days=1)
-        while expected_last_weekday.weekday() >= 5:
-            expected_last_weekday -= pd.Timedelta(days=1)
-        heatmap_is_stale = heatmap_latest_date < expected_last_weekday
-        heatmap_status = (
-            "STALE DATA — provider has not returned the expected latest weekday candle. Values below are old and must not be treated as current."
-            if heatmap_is_stale else
-            "Daily source date shown; these are closing-price changes, not live quotes."
-        )
-        st.caption(
-            f"Source: Yahoo Finance via yfinance · Latest returned constituent candle: {heatmap_latest_date} · {heatmap_status}"
-        )
-        if heatmap_is_stale:
-            st.warning(
-                f"The heatmap is based on {heatmap_latest_date}, but the latest expected weekday is {expected_last_weekday}. "
-                "The source is returning outdated data. The dashboard will not label these values as current; use a verified broker/exchange feed until the source catches up."
-            )
-    else:
-        st.warning("Heatmap source timestamps unavailable; freshness cannot be verified.")
     # Use an explicit formatted custom-data field for tile labels. Plotly treemap's
     # %{color} token is not reliably populated in texttemplate and can render NaN%.
     heatmap_df["Direction"] = np.where(heatmap_df["Change (%)"] >= 0, "Positive", "Negative")
@@ -2990,19 +2952,7 @@ with advanced_tabs[5]:
             cols = [c for c in ["Open","High","Low","Close"] if c in df.columns]
             complete = df[cols].notna().all(axis=1).mean()*100 if cols else np.nan
             dupes = int(df["Date"].duplicated().sum())
-            # A Friday candle can be normal on Monday because markets close over the weekend.
-            # Otherwise, a daily candle older than 36 hours deserves a visible freshness warning.
-            now_audit = pd.Timestamp.now(tz="Asia/Kolkata")
-            source_day = date_max.date()
-            today_day = now_audit.date()
-            normal_weekend_gap = (
-                now_audit.weekday() in (5, 6, 0)
-                and date_max.weekday() == 4
-                and (today_day - source_day).days <= 3
-            )
-            stale_threshold_hours = 84 if normal_weekend_gap else 36
-            age_hours = age * 24
-            status = "Latest returned daily bar" if age_hours <= stale_threshold_hours else "POTENTIALLY STALE — verify source candle"
+            status = "OK (daily source bar)" if age < 4 else "Potentially stale — verify source" 
             if complete < 99.9: status += "; incomplete OHLC"
             quality_rows.append({"Instrument":name,"Ticker":ticker,"Rows":len(df),"Latest source candle":date_max.strftime("%Y-%m-%d %H:%M %Z"),"Age (days)":age,"Duplicate timestamps":dupes,"OHLC complete %":complete,"Status":status})
     qdf = pd.DataFrame(quality_rows)
@@ -3314,3 +3264,10 @@ with st.expander("Important: Public Yahoo Finance and market-data limitations", 
     st.write("TradingView embeds, where used elsewhere in the app, have their own exchange coverage and delay rules. Always check the source candle timestamp and verify important prices with your broker or official exchange before trading.")
     st.markdown("[Yahoo Finance data coverage and delays](https://help.yahoo.com/kb/SLN2310.html) · [TradingView widgets and data coverage](https://www.tradingview.com/widget/)")
 
+
+
+
+
+
+if refresh:
+    st.cache_data.clear()
