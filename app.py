@@ -309,28 +309,20 @@ with st.sidebar:
                 token_vault.clear()
                 st.rerun()
         elif token_vault.get("refresh_token"):
-            st.info("Your access token has expired. Refresh it here without repeating the full FYERS login, if the refresh token is still valid.")
-            fyers_pin = st.text_input("FYERS PIN (used only for refresh)", type="password", key="fyers_refresh_pin")
-            if st.button("Refresh FYERS session", use_container_width=True, disabled=not fyers_pin):
-                with st.spinner("Refreshing FYERS access token…"):
-                    refreshed_token, refresh_error = fyers_refresh_access_token(fyers_app_id, fyers_app_secret, token_vault["refresh_token"], fyers_pin)
-                if refreshed_token:
-                    token_vault["access_token"] = refreshed_token
-                    token_vault["access_expires_at"] = fyers_access_expiry_iso()
-                    st.session_state["fyers_access_token"] = refreshed_token
-                    st.session_state["fyers_connected_at"] = now_ist.isoformat()
-                    st.session_state.pop("fyers_refresh_pin", None)
-                    st.success("FYERS session refreshed.")
-                    st.rerun()
-                else:
-                    st.error(f"Token refresh failed: {refresh_error}. The refresh token may have expired; reconnect FYERS if needed.")
+            st.warning("Your FYERS access token has expired. Automatic token refresh is unavailable for this app, so reconnect your FYERS account to continue using live data.")
+            st.link_button(
+                "Reconnect FYERS account",
+                fyers_login_url(fyers_app_id, fyers_redirect_uri, fyers_make_state(fyers_app_secret)),
+                use_container_width=True,
+            )
+            st.caption("This opens FYERS authorization. Sign in and approve the connection; you should not need to enter your FYERS PIN into this dashboard.")
         else:
             st.link_button(
                 "Connect FYERS account",
                 fyers_login_url(fyers_app_id, fyers_redirect_uri, fyers_make_state(fyers_app_secret)),
                 use_container_width=True,
             )
-            st.caption("The token is shared across app sessions in memory. FYERS access tokens expire daily at 6:30 AM; a server restart or expired refresh token may require reconnecting.")
+            st.caption("FYERS access tokens expire daily at 6:30 AM. If the token expires or the app restarts, reconnect FYERS when prompted.")
 
 # Handle the redirect from FYERS after user authorization.
 if "auth_code" in st.query_params:
