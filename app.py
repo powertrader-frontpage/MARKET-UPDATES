@@ -577,6 +577,24 @@ with st.spinner("Loading best-effort public market data…"):
         market_data[name], market_errors[name] = hist, err
 
 now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+# Show feed freshness for the main market instruments so stale candles cannot appear current.
+_core_daily_dates = {}
+for _name in ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude", "USD/INR"]:
+    _frame = market_data.get(_name, pd.DataFrame())
+    if not _frame.empty and "Date" in _frame.columns:
+        _valid_dates = pd.to_datetime(_frame["Date"], errors="coerce").dropna()
+        if not _valid_dates.empty:
+            _core_daily_dates[_name] = _valid_dates.iloc[-1].date()
+_stale_core = {
+    _name: _date for _name, _date in _core_daily_dates.items()
+    if (now_ist.date() - _date).days > 3
+}
+if _stale_core:
+    _stale_list = ", ".join(f"{_name}: {_date.strftime('%d %b %Y')}" for _name, _date in _stale_core.items())
+    st.error("MARKET DATA FRESHNESS ALERT — stale daily feeds detected: " + _stale_list + ". Indicators based on these candles may not reflect current conditions. Use Refresh market data; if dates remain old, the provider has not supplied newer candles.")
+elif _core_daily_dates:
+    _latest_core_date = max(_core_daily_dates.values())
+    st.caption(f"Core daily feeds latest candle: {_latest_core_date.strftime('%d %b %Y')} · Checked {now_ist:%d %b %Y %H:%M:%S IST}. Daily candles and live quotes can have different timestamps.")
 # Hidden refresh/source note retained in code to keep the dashboard focused on key headings and values.
 
 # Headline cards: use FYERS quotes for NIFTY 50, BANK NIFTY and India VIX when connected.
