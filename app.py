@@ -357,50 +357,49 @@ if "auth_code" in st.query_params:
 
 if "fyers_access_token" in st.session_state and fyers_credentials():
     fyers_app_id = fyers_credentials()[0]
-    # Keep the optional live-quote tool available without taking space on the main dashboard.
-    with st.expander("FYERS live market snapshot · optional", expanded=False):
-        fyers_symbols = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:INFY-EQ"]
-        if st.button("Fetch FYERS live quotes", key="fyers_fetch_quotes"):
-            quote_rows, quote_error = fyers_live_quotes(fyers_app_id, st.session_state["fyers_access_token"], fyers_symbols)
-            if quote_error:
-                st.warning(f"FYERS quote data unavailable: {quote_error}")
-            elif not quote_rows:
-                st.info("FYERS returned no quote rows for the selected symbols.")
-            else:
-                normalized = []
-                for item in quote_rows:
-                    values = item.get("v") or {}
-                    normalized.append({
-                        "Symbol": item.get("n", values.get("symbol", "Unknown")),
-                        "Last price": values.get("lp"),
-                        "Change": values.get("ch"),
-                        "Change %": values.get("chp"),
-                        "Open": values.get("open_price"),
-                        "High": values.get("high_price"),
-                        "Low": values.get("low_price"),
-                        "Previous close": values.get("prev_close_price"),
-                        "Volume": values.get("volume"),
-                    })
-                quote_df = pd.DataFrame(normalized)
+    # Show the FYERS live quote control and results directly on the dashboard, not inside a dropdown.
+    fyers_symbols = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:INFY-EQ"]
+    if st.button("Fetch FYERS live quotes", key="fyers_fetch_quotes"):
+        quote_rows, quote_error = fyers_live_quotes(fyers_app_id, st.session_state["fyers_access_token"], fyers_symbols)
+        if quote_error:
+            st.warning(f"FYERS quote data unavailable: {quote_error}")
+        elif not quote_rows:
+            st.info("FYERS returned no quote rows for the selected symbols.")
+        else:
+            normalized = []
+            for item in quote_rows:
+                values = item.get("v") or {}
+                normalized.append({
+                    "Symbol": item.get("n", values.get("symbol", "Unknown")),
+                    "Last price": values.get("lp"),
+                    "Change": values.get("ch"),
+                    "Change %": values.get("chp"),
+                    "Open": values.get("open_price"),
+                    "High": values.get("high_price"),
+                    "Low": values.get("low_price"),
+                    "Previous close": values.get("prev_close_price"),
+                    "Volume": values.get("volume"),
+                })
+            quote_df = pd.DataFrame(normalized)
 
-                # Highlight both absolute and percentage changes by direction.
-                # Keep numeric values unchanged; only apply visual styling to the two columns.
-                def _fyers_change_style(value):
-                    try:
-                        number = float(value)
-                    except (TypeError, ValueError):
-                        return ""
-                    if not np.isfinite(number):
-                        return ""
-                    if number > 0:
-                        return "color: #22c55e; font-weight: 600;"
-                    if number < 0:
-                        return "color: #ef4444; font-weight: 600;"
-                    return "color: #9ca3af;"
+            # Highlight both absolute and percentage changes by direction.
+            # Keep numeric values unchanged; only apply visual styling to the two columns.
+            def _fyers_change_style(value):
+                try:
+                    number = float(value)
+                except (TypeError, ValueError):
+                    return ""
+                if not np.isfinite(number):
+                    return ""
+                if number > 0:
+                    return "color: #22c55e; font-weight: 600;"
+                if number < 0:
+                    return "color: #ef4444; font-weight: 600;"
+                return "color: #9ca3af;"
 
-                styled_quotes = quote_df.style.map(_fyers_change_style, subset=["Change", "Change %"])
-                st.dataframe(styled_quotes, use_container_width=True, hide_index=True)
-                st.caption("Green = positive change · Red = negative change · Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
+            styled_quotes = quote_df.style.map(_fyers_change_style, subset=["Change", "Change %"])
+            st.dataframe(styled_quotes, use_container_width=True, hide_index=True)
+            st.caption("Green = positive change · Red = negative change · Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
 
 
 @st.cache_data(ttl=300, show_spinner=False)
