@@ -368,18 +368,22 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
         st.info("FYERS returned no quote rows for the selected symbols.")
     else:
         normalized = []
+        def _quote_num(value, decimals=2):
+            number = pd.to_numeric(value, errors="coerce")
+            return round(float(number), decimals) if pd.notna(number) and np.isfinite(number) else np.nan
+
         for item in quote_rows:
             values = item.get("v") or {}
             normalized.append({
                 "Symbol": item.get("n", values.get("symbol", "Unknown")),
-                "Last price": values.get("lp"),
-                "Change": values.get("ch"),
-                "Change %": values.get("chp"),
-                "Open": values.get("open_price"),
-                "High": values.get("high_price"),
-                "Low": values.get("low_price"),
-                "Previous close": values.get("prev_close_price"),
-                "Volume": values.get("volume"),
+                "Last price": _quote_num(values.get("lp")),
+                "Change": _quote_num(values.get("ch")),
+                "Change %": _quote_num(values.get("chp")),
+                "Open": _quote_num(values.get("open_price")),
+                "High": _quote_num(values.get("high_price")),
+                "Low": _quote_num(values.get("low_price")),
+                "Previous close": _quote_num(values.get("prev_close_price")),
+                "Volume": int(_quote_num(values.get("volume"), 0)) if pd.notna(_quote_num(values.get("volume"), 0)) else np.nan,
             })
         quote_df = pd.DataFrame(normalized)
 
