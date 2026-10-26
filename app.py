@@ -1258,9 +1258,7 @@ else:
                 fear_col.markdown(f'<div style="text-align:center;font-weight:800;color:{fear_color};font-size:26px;line-height:1.2;margin-top:-2px;padding:4px 0 8px;">{fear_label.upper()}</div>', unsafe_allow_html=True)
                 fear_col.caption("Dashboard-derived proxy · not an official index")
                 fear_col.caption("Underlying daily candle: " + pd.to_datetime(recent_rc["Date"].iloc[-1]).strftime("%d %b %Y"))
-                with fear_col.expander("Fear & Greed score breakdown"):
-                    fear_col.dataframe(pd.DataFrame(fear_component_details), use_container_width=True, hide_index=True)
-                    fear_col.caption("Score is a weighted average of available inputs. Missing inputs are excluded and remaining weights are renormalized; changes can occur when the underlying data refreshes.")
+                # Keep the dashboard compact: show the sentiment label without the input table.
 
             else:
                 fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
