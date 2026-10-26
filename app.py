@@ -575,12 +575,15 @@ for col, name in zip(cols, headline_names):
     snap = quote_snapshot(df)
     if snap:
         last, change, pct = snap
-        # For USD/INR, a falling rate means the rupee appreciates; reverse the colour semantics.
+        # Invert colour semantics for instruments where a decline is favourable for India.
         if name == "USD/INR":
+            # A falling USD/INR rate means the rupee appreciates.
             delta_text = f"{fmt(change)} ({fmt(pct)}%)"
-            delta_color = "inverse"
             delta_text += " · INR stronger" if change < 0 else (" · INR weaker" if change > 0 else "")
-            col.metric(name, fmt(last["Close"]), delta_text, delta_color=delta_color)
+            col.metric(name, fmt(last["Close"]), delta_text, delta_color="inverse")
+        elif name == "Brent Crude":
+            # Falling crude prices are generally favourable for India; show declines in green.
+            col.metric(name, fmt(last["Close"]), f"{fmt(change)} ({fmt(pct)}%)", delta_color="inverse")
         else:
             col.metric(name, fmt(last["Close"]), f"{fmt(change)} ({fmt(pct)}%)")
         # Source-bar timestamp retained in data, but hidden from the compact headline display.
