@@ -401,7 +401,17 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                 return "color: #ef4444; font-weight: 600;"
             return "color: #9ca3af;"
 
-        styled_quotes = quote_df.style.map(_fyers_change_style, subset=["Change", "Change %"])
+        quote_format = {
+            "Last price": "{:,.2f}",
+            "Change": "{:+,.2f}",
+            "Change %": "{:+.2f}%",
+            "Open": "{:,.2f}",
+            "High": "{:,.2f}",
+            "Low": "{:,.2f}",
+            "Previous close": "{:,.2f}",
+            "Volume": "{:,.0f}",
+        }
+        styled_quotes = quote_df.style.format(quote_format, na_rep="—").map(_fyers_change_style, subset=["Change", "Change %"])
         st.dataframe(styled_quotes, use_container_width=True, hide_index=True)
         st.caption("FYERS quotes fetched automatically · " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
 
