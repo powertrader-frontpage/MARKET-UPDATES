@@ -2969,6 +2969,121 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
     else:
         symbol_labels = {f"{name or symbol} · {symbol}": symbol for symbol, name in symbols_list}
         selected_label = st.selectbox("Search/select NSE stock", list(symbol_labels.keys()), index=0, key="fyers_chart_symbol")
+        # Stock Intelligence Card: use FYERS daily candles and live quote when connected.
+        analysis_symbol = symbol_labels[selected_label]
+        analysis_cache = st.session_state.get("stock_intelligence_cache", {})
+        analysis_item = analysis_cache.get(analysis_symbol, {})
+        analysis_age = (datetime.now(ZoneInfo("Asia/Kolkata")).timestamp() - analysis_item.get("loaded_epoch", 0)) if analysis_item else float("inf")
+        if not analysis_item or analysis_age > 300:
+            with st.spinner(f"Loading FYERS stock intelligence for {analysis_symbol}..."):
+                analysis_candles, analysis_error = fyers_history(fyers_credentials()[0], st.session_state["fyers_access_token"], analysis_symbol, "1D", 365)
+                analysis_quote_rows, analysis_quote_error = fyers_live_quotes(fyers_credentials()[0], st.session_state["fyers_access_token"], [analysis_symbol])
+                analysis_quote = {}
+                for _qrow in (analysis_quote_rows or []):
+                    _qvalues = _qrow.get("v") or {}
+                    if _qrow.get("n", _qvalues.get("symbol", "")) == analysis_symbol:
+                        analysis_quote = _qvalues
+                        break
+                analysis_item = {
+                    "candles": analysis_candles.to_json(date_format="iso", orient="split") if analysis_candles is not None and not analysis_candles.empty else None,
+                    "error": analysis_error,
+                    "quote": analysis_quote,
+                    "quote_error": analysis_quote_error,
+                    "loaded_epoch": datetime.now(ZoneInfo("Asia/Kolkata")).timestamp(),
+                    "loaded_at": datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y %H:%M:%S IST"),
+                }
+                analysis_cache[analysis_symbol] = analysis_item
+                st.session_state["stock_intelligence_cache"] = analysis_cache
+
+        st.markdown("### Stock Intelligence")
+        if not analysis_item.get("candles"):
+            st.warning("FYERS historical candles are unavailable for this stock. " + str(analysis_item.get("error") or "No candle data returned."))
+        else:
+            intelligence_df = pd.read_json(analysis_item["candles"], orient="split")
+            intelligence_df["Date"] = pd.to_datetime(intelligence_df["Date"], errors="coerce")
+            intelligence_df = intelligence_df.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
+            intelligence_close = intelligence_df["Close"].astype(float)
+            intelligence_last = float(intelligence_close.iloc[-1])
+            intelligence_quote = analysis_item.get("quote") or {}
+            intelligence_ltp = pd.to_numeric(intelligence_quote.get("lp"), errors="coerce")
+            if pd.isna(intelligence_ltp) or not np.isfinite(intelligence_ltp) or intelligence_ltp <= 0:
+                intelligence_ltp = intelligence_last
+                intelligence_price_source = "Last FYERS daily close"
+            else:
+                intelligence_ltp = float(intelligence_ltp)
+                intelligence_price_source = "FYERS quote"
+            intelligence_change_pct = pd.to_numeric(intelligence_quote.get("chp"), errors="coerce")
+            if pd.isna(intelligence_change_pct) and len(intelligence_close) > 1:
+                intelligence_change_pct = (intelligence_close.iloc[-1] / intelligence_close.iloc[-2] - 1) * 100
+            intelligence_ema5 = intelligence_close.ewm(span=5, adjust=False).mean()
+            intelligence_ema20 = intelligence_close.ewm(span=20, adjust=False).mean()
+            intelligence_ema50 = intelligence_close.ewm(span=50, adjust=False).mean()
+            intelligence_ema100 = intelligence_close.ewm(span=100, adjust=False).mean()
+            intelligence_delta = intelligence_close.diff()
+            intelligence_gain = intelligence_delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+            intelligence_loss = (-intelligence_delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+            intelligence_rs = intelligence_gain / intelligence_loss.replace(0, np.nan)
+            intelligence_rsi = (100 - 100 / (1 + intelligence_rs)).iloc[-1]
+            intelligence_ma_bull = intelligence_ltp > intelligence_ema20.iloc[-1] > intelligence_ema50.iloc[-1]
+            intelligence_ma_bear = intelligence_ltp < intelligence_ema20.iloc[-1] < intelligence_ema50.iloc[-1]
+            if intelligence_ma_bull and pd.notna(intelligence_rsi) and intelligence_rsi >= 55:
+                intelligence_signal, intelligence_signal_color = "BULLISH MOMENTUM", "#16a34a"
+            elif intelligence_ma_bear and pd.notna(intelligence_rsi) and intelligence_rsi <= 45:
+                intelligence_signal, intelligence_signal_color = "BEARISH MOMENTUM", "#dc2626"
+            elif intelligence_ltp > intelligence_ema20.iloc[-1]:
+                intelligence_signal, intelligence_signal_color = "MIXED · ABOVE EMA 20", "#d97706"
+            else:
+                intelligence_signal, intelligence_signal_color = "NEUTRAL / WEAK", "#64748b"
+            intelligence_atr = (intelligence_df["High"] - intelligence_df["Low"]).rolling(14, min_periods=14).mean().iloc[-1]
+            if pd.isna(intelligence_atr) or intelligence_atr <= 0:
+                intelligence_atr = intelligence_ltp * 0.02
+            intelligence_entry_low = intelligence_ltp - 0.25 * intelligence_atr
+            intelligence_entry_high = intelligence_ltp + 0.25 * intelligence_atr
+            intelligence_stop = intelligence_ltp - 1.5 * intelligence_atr
+            intelligence_target = intelligence_ltp + 2.0 * intelligence_atr
+            intelligence_days = [5, 20, 50]
+            intelligence_performance = {}
+            for _days in intelligence_days:
+                if len(intelligence_close) > _days and intelligence_close.iloc[-_days-1] != 0:
+                    intelligence_performance[_days] = (intelligence_close.iloc[-1] / intelligence_close.iloc[-_days-1] - 1) * 100
+            st.markdown(f"""
+            <div style="border:1px solid #334155;border-radius:18px;padding:20px;background:linear-gradient(135deg,#101923,#111827);">
+              <div style="font-size:12px;color:#94a3b8;letter-spacing:1px;">FYERS STOCK SNAPSHOT</div>
+              <div style="font-size:26px;font-weight:750;margin:4px 0 12px;">{selected_label.split(' · ')[0]}</div>
+              <div style="font-size:30px;font-weight:750;">₹{intelligence_ltp:,.2f}</div>
+              <div style="color:{'#16a34a' if pd.notna(intelligence_change_pct) and intelligence_change_pct >= 0 else '#dc2626'};font-weight:650;">{f'{float(intelligence_change_pct):+.2f}%' if pd.notna(intelligence_change_pct) else 'Daily change unavailable'}</div>
+              <div style="display:inline-block;margin-top:12px;padding:7px 12px;border-radius:999px;background:{intelligence_signal_color}22;color:{intelligence_signal_color};font-weight:750;">{intelligence_signal}</div>
+              <div style="margin-top:10px;font-size:12px;color:#94a3b8;">Price source: {intelligence_price_source} · Data fetched: {analysis_item.get('loaded_at','unknown')}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            card_left, card_right = st.columns([1, 1])
+            with card_left:
+                st.markdown("#### Technical snapshot")
+                st.dataframe(pd.DataFrame([
+                    {"Indicator":"EMA 5","Value":f"₹{intelligence_ema5.iloc[-1]:,.2f}","Signal":"Above" if intelligence_ltp > intelligence_ema5.iloc[-1] else "Below"},
+                    {"Indicator":"EMA 20","Value":f"₹{intelligence_ema20.iloc[-1]:,.2f}","Signal":"Above" if intelligence_ltp > intelligence_ema20.iloc[-1] else "Below"},
+                    {"Indicator":"EMA 50","Value":f"₹{intelligence_ema50.iloc[-1]:,.2f}","Signal":"Above" if intelligence_ltp > intelligence_ema50.iloc[-1] else "Below"},
+                    {"Indicator":"EMA 100","Value":f"₹{intelligence_ema100.iloc[-1]:,.2f}","Signal":"Above" if intelligence_ltp > intelligence_ema100.iloc[-1] else "Below"},
+                    {"Indicator":"RSI 14","Value":f"{float(intelligence_rsi):.1f}" if pd.notna(intelligence_rsi) else "—","Signal":"Overbought" if pd.notna(intelligence_rsi) and intelligence_rsi >= 70 else "Oversold" if pd.notna(intelligence_rsi) and intelligence_rsi <= 30 else "Neutral"},
+                ]), use_container_width=True, hide_index=True)
+            with card_right:
+                st.markdown("#### Trade levels · ATR-based estimate")
+                st.metric("Potential entry zone", f"₹{intelligence_entry_low:,.2f} – ₹{intelligence_entry_high:,.2f}")
+                st.metric("Illustrative target (+2 ATR)", f"₹{intelligence_target:,.2f}")
+                st.metric("Illustrative stop (−1.5 ATR)", f"₹{intelligence_stop:,.2f}")
+                st.caption("Mechanical volatility-based reference, not a guaranteed target or personalized recommendation.")
+            st.markdown("#### Momentum and recent performance")
+            if intelligence_performance:
+                performance_cols = st.columns(len(intelligence_performance))
+                for _col, (_period, _perf) in zip(performance_cols, intelligence_performance.items()):
+                    _col.metric(f"{_period}-day change", f"{_perf:+.2f}%")
+            intelligence_chart = go.Figure()
+            intelligence_chart.add_trace(go.Scatter(x=intelligence_df["Date"], y=intelligence_close, name="Close", line=dict(width=2)))
+            intelligence_chart.add_trace(go.Scatter(x=intelligence_df["Date"], y=intelligence_ema20, name="EMA 20", line=dict(width=1.3)))
+            intelligence_chart.add_trace(go.Scatter(x=intelligence_df["Date"], y=intelligence_ema50, name="EMA 50", line=dict(width=1.3)))
+            intelligence_chart.update_layout(template="plotly_dark", height=300, margin=dict(l=15,r=15,t=30,b=15), xaxis_title=None, yaxis_title="₹", legend=dict(orientation="h", y=1.12))
+            st.plotly_chart(intelligence_chart, use_container_width=True, config={"displaylogo":False}, key="stock_intelligence_price_chart")
+            st.caption("Technical analysis uses FYERS daily historical candles; live quote is shown when available. Data refreshes automatically on selection and is cached for up to 5 minutes.")
         col_res, col_period = st.columns(2)
         with col_res:
             chart_resolution = st.selectbox("Candle interval", ["1", "5", "15", "30", "60", "120", "240", "1D", "1W"], index=2, key="fyers_chart_resolution", format_func=lambda value: {"1":"1 minute","5":"5 minutes","15":"15 minutes","30":"30 minutes","60":"1 hour","120":"2 hours","240":"4 hours","1D":"1 day","1W":"1 week"}[value])
