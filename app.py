@@ -1060,7 +1060,7 @@ else:
         # Restore the original historical-close calculation for the weekly EMA gap.
         # The selected instrument's returned history is the source for both close and EMA.
         weekly_close_source = "Yahoo Finance historical close"
-        weekly_selected_close = float(weekly_df["Close"].iloc[-1]) if not weekly_df.empty and pd.notna(weekly_df["Close"].iloc[-1]) else np.nan
+        # weekly_selected_close and weekly_ema200 were both calculated from weekly_selected above.
         weekly_ema_gap_pct = ((weekly_selected_close / weekly_ema200) - 1) * 100 if pd.notna(weekly_selected_close) and pd.notna(weekly_ema200) and weekly_ema200 != 0 else np.nan
 
         # PCR is instrument-specific and only shown when FYERS returns a valid option chain.
