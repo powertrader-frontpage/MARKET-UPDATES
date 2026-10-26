@@ -1036,6 +1036,7 @@ else:
         # Return % is in percentage points; convert to decimal before annualizing.
         overview_vol = overview_rc["Return %"].rolling(20).std().iloc[-1] / 100 * np.sqrt(252)
         # Weekly EMA 200 is calculated for the instrument selected in the regime selector.
+        # Use all available weekly history to reduce EMA initialization differences versus charting platforms.
         # Standard indices use their Yahoo ticker; NIFTY 500 constituents use their .NS ticker.
         weekly_ema200 = np.nan
         weekly_selected_close = np.nan
@@ -1043,7 +1044,7 @@ else:
         weekly_ema_error = None
         selected_yahoo_ticker = INDEXES.get(overview_regime_name, overview_regime_name + ".NS")
         try:
-            weekly_selected = yf.download(selected_yahoo_ticker, period="10y", interval="1wk", auto_adjust=False, progress=False, threads=False)
+            weekly_selected = yf.download(selected_yahoo_ticker, period="max", interval="1wk", auto_adjust=False, progress=False, threads=False)
             if not weekly_selected.empty:
                 if isinstance(weekly_selected.columns, pd.MultiIndex):
                     weekly_selected.columns = weekly_selected.columns.get_level_values(0)
