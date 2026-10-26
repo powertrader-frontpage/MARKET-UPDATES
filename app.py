@@ -1796,7 +1796,15 @@ def _nifty50_heatmap_data(symbols: tuple[str, ...]):
             if len(closes) >= 2 and float(closes.iloc[-2]) != 0:
                 last_close = float(closes.iloc[-1])
                 change_pct = (last_close / float(closes.iloc[-2]) - 1) * 100
-                rows.append({"Symbol": symbol.removesuffix(".NS"), "Close": last_close, "Change (%)": change_pct})
+                source_date = pd.to_datetime(frame.index[-1], errors="coerce")
+                if pd.isna(source_date):
+                    source_date = pd.to_datetime(raw.index[-1], errors="coerce")
+                rows.append({
+                    "Symbol": symbol.removesuffix(".NS"),
+                    "Close": last_close,
+                    "Change (%)": change_pct,
+                    "Source date": source_date.strftime("%Y-%m-%d") if pd.notna(source_date) else "Unavailable",
+                })
         except (KeyError, TypeError, ValueError, IndexError):
             continue
     return pd.DataFrame(rows)
@@ -1805,6 +1813,17 @@ with st.spinner("Loading NIFTY 50 constituent performance…"):
 if heatmap_df.empty:
     st.warning("NIFTY 50 heatmap data is temporarily unavailable from the public data source.")
 else:
+    heatmap_dates = pd.to_datetime(heatmap_df["Source date"], errors="coerce").dropna()
+    if not heatmap_dates.empty:
+        heatmap_latest_date = heatmap_dates.max().date()
+        heatmap_today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        heatmap_age_days = (heatmap_today - heatmap_latest_date).days
+        st.caption(
+            f"Source: Yahoo Finance via yfinance · Latest returned constituent candle: {heatmap_latest_date} · "
+            + ("POTENTIALLY STALE — verify before use." if heatmap_age_days > 4 else "Daily source date shown; not a live quote.")
+        )
+    else:
+        st.warning("Heatmap source timestamps unavailable; freshness cannot be verified.")
     # Use an explicit formatted custom-data field for tile labels. Plotly treemap's
     # %{color} token is not reliably populated in texttemplate and can render NaN%.
     heatmap_df["Direction"] = np.where(heatmap_df["Change (%)"] >= 0, "Positive", "Negative")
