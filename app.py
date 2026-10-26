@@ -577,21 +577,6 @@ with st.spinner("Loading best-effort public market data…"):
         market_data[name], market_errors[name] = hist, err
 
 now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
-# Flag stale daily history clearly instead of letting an old candle appear current.
-_nifty_daily = market_data.get("NIFTY 50", pd.DataFrame())
-if not _nifty_daily.empty and "Date" in _nifty_daily.columns:
-    _latest_daily_ts = pd.to_datetime(_nifty_daily["Date"].iloc[-1], errors="coerce")
-    if pd.notna(_latest_daily_ts):
-        _latest_daily_date = _latest_daily_ts.date()
-        _calendar_age = (now_ist.date() - _latest_daily_date).days
-        if _calendar_age >= 3:
-            st.warning(
-                f"Market data freshness warning: NIFTY 50 daily history ends on "
-                f"{_latest_daily_date.strftime('%d %b %Y')}, which is {_calendar_age} calendar days old. "
-                "Indicators using daily candles may be stale; verify live prices with FYERS or your broker."
-            )
-        else:
-            st.caption(f"NIFTY 50 latest daily candle: {_latest_daily_date.strftime('%d %b %Y')} · Dashboard checked {now_ist:%d %b %Y %H:%M IST}")
 # Hidden refresh/source note retained in code to keep the dashboard focused on key headings and values.
 
 # Headline cards: use FYERS quotes for NIFTY 50, BANK NIFTY and India VIX when connected.
@@ -618,6 +603,35 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
         if not _fyers_daily.empty and {"Date", "High", "Low", "Close"}.issubset(_fyers_daily.columns):
             market_data[_market_name] = _fyers_daily.copy()
             market_errors[_market_name] = None
+
+# Dashboard-wide freshness audit across the core instruments, after all source overrides.
+# Display actual source dates and flag stale daily candles instead of implying they are live.
+def _daily_source_date(frame):
+    if frame is None or frame.empty or "Date" not in frame.columns:
+        return None
+    dates = pd.to_datetime(frame["Date"], errors="coerce").dropna()
+    if dates.empty:
+        return None
+    last = dates.max()
+    if getattr(last, "tzinfo", None) is not None:
+        last = last.tz_convert("Asia/Kolkata").tz_localize(None)
+    return last.date()
+
+_core_dates = {name: _daily_source_date(market_data.get(name, pd.DataFrame())) for name in ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude", "USD/INR"]}
+_core_stale = {}
+for _name, _date in _core_dates.items():
+    if _date is None or (now_ist.date() - _date).days >= 3:
+        _core_stale[_name] = _date
+if _core_stale:
+    _stale_list = ", ".join(f"{_name} ({_date.strftime("%d %b %Y") if _date else "no source data"})" for _name, _date in _core_stale.items())
+    st.warning(
+        "MARKET DATA FRESHNESS WARNING — Latest returned daily data is stale or unavailable for: "
+        + _stale_list
+        + ". Several indicators may therefore reflect old candles. Connect FYERS for live NIFTY, BANK NIFTY and India VIX quotes; refresh and verify other instruments with their source/broker."
+    )
+else:
+    st.caption("Core daily source dates · " + " · ".join(f"{_name}: {_date.strftime("%d %b %Y") if _date else "unavailable"}" for _name, _date in _core_dates.items()))
+
 # Responsive headline cards: keep full numeric values readable on narrow mobile screens.
 st.markdown("""
 <style>
