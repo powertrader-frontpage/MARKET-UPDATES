@@ -1785,7 +1785,7 @@ NIFTY50_HEATMAP_SYMBOLS = [
     "TATACONSUM.NS", "TATAMOTORS.NS", "TATASTEEL.NS", "TCS.NS", "TECHM.NS",
     "TITAN.NS", "TRENT.NS", "ULTRACEMCO.NS", "WIPRO.NS", "TMPV.NS"
 ]
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def _nifty50_heatmap_data(symbols: tuple[str, ...]):
     raw = yf.download(list(symbols), period="5d", interval="1d", group_by="ticker", auto_adjust=False, progress=False, threads=True)
     rows = []
@@ -1817,11 +1817,25 @@ else:
     if not heatmap_dates.empty:
         heatmap_latest_date = heatmap_dates.max().date()
         heatmap_today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-        heatmap_age_days = (heatmap_today - heatmap_latest_date).days
-        st.caption(
-            f"Source: Yahoo Finance via yfinance · Latest returned constituent candle: {heatmap_latest_date} · "
-            + ("POTENTIALLY STALE — verify before use." if heatmap_age_days > 4 else "Daily source date shown; not a live quote.")
+        # Expected previous weekday, with weekend handling. This deliberately flags
+        # old weekday candles instead of allowing a 4-day-old Friday candle to look current on Tuesday.
+        expected_last_weekday = heatmap_today - pd.Timedelta(days=1)
+        while expected_last_weekday.weekday() >= 5:
+            expected_last_weekday -= pd.Timedelta(days=1)
+        heatmap_is_stale = heatmap_latest_date < expected_last_weekday
+        heatmap_status = (
+            "STALE DATA — provider has not returned the expected latest weekday candle. Values below are old and must not be treated as current."
+            if heatmap_is_stale else
+            "Daily source date shown; these are closing-price changes, not live quotes."
         )
+        st.caption(
+            f"Source: Yahoo Finance via yfinance · Latest returned constituent candle: {heatmap_latest_date} · {heatmap_status}"
+        )
+        if heatmap_is_stale:
+            st.warning(
+                f"The heatmap is based on {heatmap_latest_date}, but the latest expected weekday is {expected_last_weekday.date()}. "
+                "The source is returning outdated data. The dashboard will not label these values as current; use a verified broker/exchange feed until the source catches up."
+            )
     else:
         st.warning("Heatmap source timestamps unavailable; freshness cannot be verified.")
     # Use an explicit formatted custom-data field for tile labels. Plotly treemap's
