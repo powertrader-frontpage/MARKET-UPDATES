@@ -1212,8 +1212,8 @@ else:
                         trend_parts.append(float(np.clip(50 + gap_pct * 12, 0, 100)))
                 if trend_parts:
                     trend_input = float(np.mean(trend_parts))
-                    fear_components.append((trend_input, 0.40))
-                    fear_component_details.append({"Input": "Price vs EMA 20/50", "Value": f"{trend_input:.2f}", "Weight": "40%"})
+                    fear_components.append((trend_input, 0.25))
+                    fear_component_details.append({"Input": "Price vs EMA 20/50", "Value": f"{trend_input:.2f}", "Weight": "25%"})
                 if len(recent_rc) >= 21 and recent_rc["Close"].iloc[-21] != 0:
                     ret20 = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc["Close"].iloc[-21]) - 1) * 100
                     return_input = float(np.clip(50 + ret20 * 8, 0, 100))
@@ -1224,8 +1224,8 @@ else:
                 if vix_snap:
                     vix_value = float(vix_snap[0]["Close"])
                     vix_input = float(np.clip(100 - vix_value * 3, 0, 100))
-                    fear_components.append((vix_input, 0.10))
-                    fear_component_details.append({"Input": f"India VIX ({vix_value:.2f})", "Value": f"{vix_input:.2f}", "Weight": "10%"})
+                    fear_components.append((vix_input, 0.25))
+                    fear_component_details.append({"Input": f"India VIX ({vix_value:.2f})", "Value": f"{vix_input:.2f}", "Weight": "25%"})
                 if fear_components:
                     fear_weight = sum(weight for _, weight in fear_components)
                     fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
@@ -1256,46 +1256,6 @@ else:
                 gauge_fig.update_layout(template="plotly_dark", height=250, margin=dict(l=8,r=8,t=48,b=8), paper_bgcolor="rgba(0,0,0,0)")
                 fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
                 fear_col.markdown(f'<div style="text-align:center;font-weight:800;color:{fear_color};font-size:26px;line-height:1.2;margin-top:-2px;padding:4px 0 8px;">{fear_label.upper()}</div>', unsafe_allow_html=True)
-                fear_col.caption("Dashboard-derived proxy · not an official index")
-                with fear_col.expander("Validate Fear & Greed against historical NIFTY moves"):
-                    # Backtest the same RSI / EMA-gap / 20-session-return score against the
-                    # next five completed sessions. VIX is excluded from this test because
-                    # the historical VIX series may not align cleanly with the selected index.
-                    validation = overview_rc.copy().sort_values("Date").reset_index(drop=True)
-                    validation["FG_RSI"] = pd.to_numeric(validation.get("RSI 14"), errors="coerce").clip(0, 100)
-                    trend_score_parts = []
-                    for _ema_col in ["EMA 20", "EMA 50"]:
-                        if _ema_col in validation.columns:
-                            _ema = pd.to_numeric(validation[_ema_col], errors="coerce").replace(0, np.nan)
-                            trend_score_parts.append((50 + (pd.to_numeric(validation["Close"], errors="coerce") / _ema - 1) * 1200).clip(0, 100))
-                    validation["FG_Trend"] = pd.concat(trend_score_parts, axis=1).mean(axis=1) if trend_score_parts else np.nan
-                    validation["FG_Return"] = (50 + (pd.to_numeric(validation["Close"], errors="coerce") / pd.to_numeric(validation["Close"], errors="coerce").shift(20) - 1) * 800).clip(0, 100)
-                    _parts = pd.concat([
-                        validation["FG_RSI"].rename("rsi") * 0.35,
-                        validation["FG_Trend"].rename("trend") * 0.40,
-                        validation["FG_Return"].rename("return") * 0.15,
-                    ], axis=1)
-                    _weights = pd.concat([
-                        validation["FG_RSI"].notna().astype(float).rename("rsi") * 0.35,
-                        validation["FG_Trend"].notna().astype(float).rename("trend") * 0.40,
-                        validation["FG_Return"].notna().astype(float).rename("return") * 0.15,
-                    ], axis=1)
-                    validation["FG_Score"] = _parts.sum(axis=1, min_count=1) / _weights.sum(axis=1).replace(0, np.nan)
-                    validation["Forward_5D_Return"] = (pd.to_numeric(validation["Close"], errors="coerce").shift(-5) / pd.to_numeric(validation["Close"], errors="coerce") - 1) * 100
-                    tested = validation.dropna(subset=["FG_Score", "Forward_5D_Return"]).copy()
-                    if len(tested) >= 30:
-                        tested["Signal"] = np.select([tested["FG_Score"] >= 60, tested["FG_Score"] < 40], ["Greed", "Fear"], default="Neutral")
-                        tested["Outcome"] = np.select([tested["Forward_5D_Return"] > 0.25, tested["Forward_5D_Return"] < -0.25], ["Up", "Down"], default="Flat")
-                        directional = tested[(tested["Signal"] == "Greed") & (tested["Outcome"].isin(["Up", "Down"])) | (tested["Signal"] == "Fear") & (tested["Outcome"].isin(["Up", "Down"]))]
-                        _a, _b, _d = st.columns(3)
-                        _a.metric("Historical samples", f"{len(tested):,}")
-                        _b.metric("Greed → up", f"{(100*(directional.loc[directional['Signal']=='Greed','Outcome']=='Up').mean()):.1f}%" if (directional["Signal"]=="Greed").any() else "N/A")
-                        _b.caption("Share of Greed signals followed by a positive 5-session move")
-                        _d.metric("Fear → down", f"{(100*(directional.loc[directional['Signal']=='Fear','Outcome']=='Down').mean()):.1f}%" if (directional["Signal"]=="Fear").any() else "N/A")
-                        _d.caption("Share of Fear signals followed by a negative 5-session move")
-                        st.caption("Exploratory historical check, not proof of predictive power. Uses daily index candles and the same RSI/EMA/return mapping, excludes India VIX, and evaluates the next 5 sessions. Overlapping outcomes and market regimes can affect results.")
-                    else:
-                        st.info("Not enough completed historical observations to validate the score reliably.")
                 fear_col.caption("Dashboard-derived proxy · not an official index")
                 fear_col.caption("Underlying daily candle: " + pd.to_datetime(recent_rc["Date"].iloc[-1]).strftime("%d %b %Y"))
                 with fear_col.expander("Fear & Greed score breakdown"):
