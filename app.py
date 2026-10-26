@@ -96,6 +96,9 @@ with st.sidebar:
     interval = st.selectbox("Intraday bar interval", ["5m", "15m", "30m", "60m"], index=0)
     st.caption("Intraday Yahoo Finance history is limited by the upstream source. If it is unavailable, the app will show an error instead of substituting sample values.")
     refresh = st.button("↻ Refresh market data", use_container_width=True)
+    if refresh:
+        st.cache_data.clear()
+        st.rerun()
     st.divider()
     st.markdown("**Public source links**")
     st.markdown("- [NSE reports](https://www.nseindia.com/all-reports)")
@@ -574,6 +577,21 @@ with st.spinner("Loading best-effort public market data…"):
         market_data[name], market_errors[name] = hist, err
 
 now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+# Flag stale daily history clearly instead of letting an old candle appear current.
+_nifty_daily = market_data.get("NIFTY 50", pd.DataFrame())
+if not _nifty_daily.empty and "Date" in _nifty_daily.columns:
+    _latest_daily_ts = pd.to_datetime(_nifty_daily["Date"].iloc[-1], errors="coerce")
+    if pd.notna(_latest_daily_ts):
+        _latest_daily_date = _latest_daily_ts.date()
+        _calendar_age = (now_ist.date() - _latest_daily_date).days
+        if _calendar_age >= 3:
+            st.warning(
+                f"Market data freshness warning: NIFTY 50 daily history ends on "
+                f"{_latest_daily_date.strftime('%d %b %Y')}, which is {_calendar_age} calendar days old. "
+                "Indicators using daily candles may be stale; verify live prices with FYERS or your broker."
+            )
+        else:
+            st.caption(f"NIFTY 50 latest daily candle: {_latest_daily_date.strftime('%d %b %Y')} · Dashboard checked {now_ist:%d %b %Y %H:%M IST}")
 # Hidden refresh/source note retained in code to keep the dashboard focused on key headings and values.
 
 # Headline cards: use FYERS quotes for NIFTY 50, BANK NIFTY and India VIX when connected.
@@ -3285,5 +3303,3 @@ with st.expander("Important: Public Yahoo Finance and market-data limitations", 
 
 
 
-if refresh:
-    st.cache_data.clear()
