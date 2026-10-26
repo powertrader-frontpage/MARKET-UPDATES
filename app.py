@@ -840,7 +840,7 @@ _sentiment_change("ICICI Bank ADR", "IBN", 0.075, inverse=False)
 _sentiment_change("Reliance Industries GDR", "RIGD.L", 0.05, inverse=False)
 # Do not publish a confident full-market direction when the highest-weight GIFT Nifty cue is missing.
 # Partial score remains visible for transparency, but the headline is explicitly marked incomplete.
-gift_available = any(str(item.get("Factor", "")).startswith("GIFT Nifty") for item in sentiment_details)
+gift_available = bool(gift_loaded)  # A stale fallback row is display-only and must not count as live GIFT Nifty
 sentiment_weight = sum(weight for _, weight in sentiment_parts)
 sentiment_score = sum(score * weight for score, weight in sentiment_parts) / sentiment_weight if sentiment_weight else np.nan
 if not gift_available:
