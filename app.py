@@ -559,12 +559,16 @@ for col, name in zip(cols, headline_names):
     snap = quote_snapshot(df)
     if snap:
         last, change, pct = snap
-        # For USD/INR, a falling rate means the rupee appreciates; reverse the colour semantics.
+        # Inverse-impact instruments: lower USD/INR (stronger rupee) and lower India VIX
+        # (less expected volatility) are generally supportive; higher values are headwinds.
         if name == "USD/INR":
             delta_text = f"{fmt(change)} ({fmt(pct)}%)"
-            delta_color = "inverse"
             delta_text += " · INR stronger" if change < 0 else (" · INR weaker" if change > 0 else "")
-            col.metric(name, fmt(last["Close"]), delta_text, delta_color=delta_color)
+            col.metric(name, fmt(last["Close"]), delta_text, delta_color="inverse")
+        elif name == "India VIX":
+            delta_text = f"{fmt(change)} ({fmt(pct)}%)"
+            delta_text += " · volatility easing" if change < 0 else (" · volatility rising" if change > 0 else "")
+            col.metric(name, fmt(last["Close"]), delta_text, delta_color="inverse")
         else:
             col.metric(name, fmt(last["Close"]), f"{fmt(change)} ({fmt(pct)}%)")
         # Source-bar timestamp retained in data, but hidden from the compact headline display.
