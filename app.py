@@ -651,6 +651,81 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                 st.caption("Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
 
 
+# Side-by-side provider comparison. This is diagnostic only and does not alter dashboard calculations.
+with st.expander("FYERS vs Upstox · quote comparison", expanded=False):
+    upstox_config, upstox_missing = upstox_credentials()
+    fyers_config = fyers_credentials()
+    fyers_access = st.session_state.get("fyers_access_token")
+    status_cols = st.columns(2)
+    with status_cols[0]:
+        st.write("**Upstox**")
+        st.caption("Credentials configured" if upstox_config else "Secrets missing: " + ", ".join(upstox_missing))
+    with status_cols[1]:
+        st.write("**FYERS**")
+        st.caption("Connected" if fyers_config and fyers_access else "Connect FYERS first to compare both providers")
+    if st.button("Compare live quotes", key="compare_fyers_upstox_quotes"):
+        if not upstox_config:
+            st.error("Upstox secrets missing: " + ", ".join(upstox_missing))
+        elif not (fyers_config and fyers_access):
+            st.warning("Upstox is configured, but FYERS is not connected in this session. Connect FYERS and retry.")
+        else:
+            with st.spinner("Requesting quotes from both providers..."):
+                up_data, up_error = upstox_ltp(
+                    upstox_config[3],
+                    ["NSE_INDEX|Nifty 50", "NSE_INDEX|Nifty Bank", "NSE_EQ|INE002A01018"],
+                )
+                fy_data, fy_error = fyers_live_quotes(
+                    fyers_config[0],
+                    fyers_access,
+                    ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:RELIANCE-EQ"],
+                )
+            if up_error:
+                st.warning("Upstox: " + up_error)
+            if fy_error:
+                st.warning("FYERS: " + fy_error)
+            up_norm = {}
+            for key, quote in (up_data or {}).items():
+                raw_key = str(key).lower()
+                if "nifty 50" in raw_key:
+                    label = "NIFTY 50"
+                elif "nifty bank" in raw_key:
+                    label = "BANK NIFTY"
+                elif "ine002a01018" in raw_key or "reliance" in raw_key:
+                    label = "RELIANCE"
+                else:
+                    continue
+                up_norm[label] = quote.get("last_price")
+            fy_norm = {}
+            for item in (fy_data or []):
+                name = str(item.get("n", "")).upper()
+                values = item.get("v") or {}
+                if "NIFTY50" in name:
+                    label = "NIFTY 50"
+                elif "NIFTYBANK" in name:
+                    label = "BANK NIFTY"
+                elif "RELIANCE" in name:
+                    label = "RELIANCE"
+                else:
+                    continue
+                fy_norm[label] = values.get("lp")
+            labels = ["NIFTY 50", "BANK NIFTY", "RELIANCE"]
+            rows = []
+            for label in labels:
+                up_price = up_norm.get(label)
+                fy_price = fy_norm.get(label)
+                diff = (float(up_price) - float(fy_price)) if up_price is not None and fy_price is not None else None
+                diff_pct = (diff / float(fy_price) * 100) if diff is not None and float(fy_price) != 0 else None
+                rows.append({
+                    "Instrument": label,
+                    "FYERS LTP": fy_price,
+                    "Upstox LTP": up_price,
+                    "Upstox − FYERS": diff,
+                    "Difference %": diff_pct,
+                    "Comparison": "Both returned" if diff is not None else "One or both quotes missing",
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.caption("Requested at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") + ". Requests are sequential, so small timing differences are expected. This diagnostic does not switch dashboard data sources.")
+
 @st.cache_data(ttl=300, show_spinner=False)
 def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, str | None]:
     """Fetch best-effort market history from Yahoo Finance via yfinance; never synthesize rows."""
