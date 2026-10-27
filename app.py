@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import requests
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 import streamlit.components.v1 as components
 import yfinance as yf
 
@@ -72,6 +73,13 @@ with st.sidebar:
     interval = st.selectbox("Intraday bar interval", ["5m", "15m", "30m", "60m"], index=0)
     st.caption("Intraday Yahoo Finance history is limited by the upstream source. If it is unavailable, the app will show an error instead of substituting sample values.")
     refresh = st.button("↻ Refresh market data", use_container_width=True)
+    auto_refresh_enabled = st.toggle("Automatic refresh", value=False, key="market_auto_refresh_enabled", help="Refreshes the dashboard page on a timer. Cached sources may still serve data until their cache expires; this does not make delayed public feeds live.")
+    if auto_refresh_enabled:
+        auto_refresh_minutes = st.selectbox("Refresh interval", [5, 10, 15, 30], index=1, format_func=lambda n: f"Every {n} minutes", key="market_auto_refresh_minutes")
+        st_autorefresh(interval=auto_refresh_minutes * 60 * 1000, limit=None, key="market_auto_refresh_timer")
+        st.caption(f"Automatic page refresh enabled · every {auto_refresh_minutes} minutes. Data freshness depends on each source and its cache.")
+    else:
+        st.caption("Automatic refresh is off. Use Refresh market data for a manual refresh.")
     st.divider()
     st.markdown("**Public source links**")
     st.markdown("- [NSE reports](https://www.nseindia.com/all-reports)")
