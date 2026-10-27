@@ -3116,7 +3116,12 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                                     value = row[col]
                                     try:
                                         numeric = float(str(value).replace(",", "").replace("%", "").replace("₹", "").strip())
-                                        return numeric if np.isfinite(numeric) else None
+                                        if not np.isfinite(numeric):
+                                            return None
+                                        # Screener CSV commonly expresses ROE/ROCE as percentages; Yahoo expresses them as fractions.
+                                        if any(re.sub(r"[^a-z0-9]", "", label.lower()) in {"returnonequity", "roe", "returnoncapitalemployed", "roce"} for label in labels) and numeric > 1:
+                                            numeric /= 100.0
+                                        return numeric
                                     except (TypeError, ValueError):
                                         continue
                         return None
@@ -3168,7 +3173,7 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                     fundamental_metrics = [
                         ("P/E (TTM)", _fundamental_value(pe_value)),
                         ("Industry P/E", _fundamental_value(industry_pe_value)),
-                        ("D/E", _fundamental_value(debt_equity_value, "%")),
+                        ("D/E", _fundamental_value(debt_equity_value)),
                         ("PEG", _fundamental_value(peg_value)),
                         ("ROE", _fundamental_value(roe_value, "%", 100)),
                         ("ROCE", _fundamental_value(roce_value, "%", 100)),
@@ -3183,7 +3188,7 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         )
                     metric_html += '</div>'
                     st.markdown(metric_html, unsafe_allow_html=True)
-                    st.caption("Screener.in CSV values take priority when uploaded; remaining values use Yahoo Finance when available. — means the source did not return a value.")
+                    st.caption("Screener.in CSV values take priority when uploaded; remaining values use Yahoo Finance when available. D/E is shown as a ratio. — means the source did not return a value.")
 
                 st.markdown("#### Price trend · recent momentum")
                 stock_chart = go.Figure()
