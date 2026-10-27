@@ -1585,14 +1585,26 @@ with st.spinner("Loading NIFTY 50 constituent performance…"):
 if heatmap_df.empty:
     st.warning("NIFTY 50 heatmap data is temporarily unavailable from the public data source.")
 else:
+    # Drop invalid percentage rows before plotting; NaN labels usually indicate an invalid
+    # text-template field or a source row without a valid close.
+    heatmap_df["Change (%)"] = pd.to_numeric(heatmap_df["Change (%)"], errors="coerce")
+    heatmap_df = heatmap_df.replace([np.inf, -np.inf], np.nan).dropna(subset=["Change (%)", "Close"])
     heatmap_df["Direction"] = np.where(heatmap_df["Change (%)"] >= 0, "Positive", "Negative")
-    heatmap_df["Color"] = heatmap_df["Change (%)"]
+    heatmap_df["Display change"] = heatmap_df["Change (%)"].map(lambda value: f"{value:+.2f}%")
     heatmap_fig = px.treemap(
         heatmap_df, path=["Direction", "Symbol"], values=np.ones(len(heatmap_df)),
         color="Change (%)", color_continuous_scale=["#ef4444", "#252a34", "#16a34a"],
-        color_continuous_midpoint=0, hover_data={"Close": ":,.2f", "Change (%)": ":.2f", "Direction": False, "Color": False}
+        color_continuous_midpoint=0,
+        custom_data=["Display change", "Close"],
+        hover_data={"Close": ":,.2f", "Change (%)": ":.2f", "Direction": False, "Display change": False}
     )
-    heatmap_fig.update_traces(texttemplate="%{label}<br>%{color:.2f}%", textfont_size=12)
+    # Use explicit customdata for the percentage text; %{color} is not a reliable
+    # numeric placeholder in Plotly treemap text templates.
+    heatmap_fig.update_traces(
+        texttemplate="%{label}<br>%{customdata[0]}",
+        textfont_size=12,
+        hovertemplate="<b>%{label}</b><br>Daily change: %{customdata[0]}<br>Close: ₹%{customdata[1]:,.2f}<extra></extra>",
+    )
     heatmap_fig.update_layout(template="plotly_dark", height=520, margin=dict(l=4, r=4, t=8, b=4), coloraxis_colorbar_title="Daily %")
     st.plotly_chart(heatmap_fig, use_container_width=True, config={"displaylogo": False}, key="nifty50_only_treemap")
 st.divider()
