@@ -1121,7 +1121,7 @@ else:
                         f'<div style="border:1px solid #343a46;border-top:2px solid {level_color};border-radius:7px;'
                         f'padding:6px 5px;text-align:center;background:rgba(15,23,42,.42);">'
                         f'<div style="font-size:10px;color:#aeb6c2;">{level_name}</div>'
-                        f'<div style="font-size:13px;font-weight:750;color:{level_color};">{nifty_levels_fmt if False else f"{level_value:,.2f}"}</div></div>',
+                        f'<div style="font-size:13px;font-weight:750;color:{level_color};">{level_value:,.2f}</div></div>',
                         unsafe_allow_html=True,
                     )
                 st.caption("Classic pivot estimates for information only; not guaranteed price levels.")
