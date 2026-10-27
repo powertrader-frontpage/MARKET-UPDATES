@@ -167,6 +167,40 @@ with st.sidebar:
             st.caption("Upstox is not connected in this app process yet.")
 
 
+# Upstox read-only market-data connection. Keep credentials in Streamlit Cloud Secrets.
+def upstox_credentials():
+    try:
+        api_key = str(st.secrets["UPSTOX_API_KEY"]).strip()
+        api_secret = str(st.secrets["UPSTOX_API_SECRET"]).strip()
+        redirect_uri = str(st.secrets["UPSTOX_REDIRECT_URI"]).strip()
+        access_token = str(st.secrets["UPSTOX_ACCESS_TOKEN"]).strip()
+        if api_key and api_secret and redirect_uri and access_token:
+            return api_key, api_secret, redirect_uri, access_token
+    except Exception:
+        pass
+    return None
+
+def upstox_ltp(access_token: str, instrument_keys: list[str]):
+    """Fetch read-only LTP quotes from Upstox; never place orders."""
+    try:
+        response = requests.get(
+            "https://api.upstox.com/v2/market-quote/ltp",
+            params={"instrument_key": ",".join(instrument_keys)},
+            headers={"Accept": "application/json", "Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        try:
+            payload = response.json()
+        except Exception:
+            return {}, f"Upstox returned a non-JSON response (HTTP {response.status_code})."
+        if response.ok and payload.get("status") == "success":
+            return payload.get("data") or {}, None
+        errors = payload.get("errors") or []
+        detail = errors[0].get("message") if errors and isinstance(errors[0], dict) else payload.get("message")
+        return {}, f"Upstox quote request failed (HTTP {response.status_code}): {detail or 'check token, instrument keys and API access'}"
+    except Exception as exc:
+        return {}, f"Upstox request failed ({exc.__class__.__name__})."
+
 # FYERS read-only market-data connection. Credentials must live in Streamlit Cloud Secrets.
 def fyers_credentials():
     try:
@@ -513,6 +547,36 @@ if "code" in st.query_params and "state" in st.query_params:
     else:
         st.error("Upstox returned without an authorization code. Please retry.")
         st.query_params.clear()
+
+# Optional Upstox read-only connection check. FYERS and the main dashboard remain unchanged.
+with st.expander("Upstox API · read-only connection test", expanded=False):
+    upstox_config = upstox_credentials()
+    if not upstox_config:
+        st.warning("Upstox credentials are not fully configured. Add UPSTOX_API_KEY, UPSTOX_API_SECRET, UPSTOX_REDIRECT_URI and UPSTOX_ACCESS_TOKEN in Streamlit Cloud Secrets.")
+    else:
+        st.caption("Credentials detected in Streamlit Secrets. The API Secret is not used or displayed during this read-only quote test.")
+        st.write("Configured API key: " + upstox_config[0][:4] + "••••")
+        if st.button("Test Upstox market data", key="upstox_test_market_data"):
+            with st.spinner("Checking Upstox LTP endpoint..."):
+                upstox_data, upstox_error = upstox_ltp(
+                    upstox_config[3],
+                    ["NSE_INDEX|Nifty 50", "NSE_EQ|INE002A01018"],
+                )
+            if upstox_error:
+                st.error(upstox_error)
+            elif not upstox_data:
+                st.warning("Upstox responded successfully but returned no quote rows for the test instruments.")
+            else:
+                upstox_rows = []
+                for instrument_key, quote in upstox_data.items():
+                    upstox_rows.append({
+                        "Instrument": quote.get("instrument_token", instrument_key),
+                        "Last traded price": quote.get("last_price"),
+                        "Close price": quote.get("cp"),
+                    })
+                st.dataframe(pd.DataFrame(upstox_rows), use_container_width=True, hide_index=True)
+                st.success("Upstox read-only market-data request succeeded.")
+                st.caption("Tested at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") + ". This confirms the quote endpoint only; it does not yet switch dashboard calculations to Upstox.")
 
 # Handle the redirect from FYERS after user authorization.
 if "auth_code" in st.query_params:
