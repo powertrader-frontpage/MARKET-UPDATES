@@ -159,29 +159,6 @@ with st.sidebar:
     st.markdown("- [TradingView widgets](https://www.tradingview.com/widget/)")
     st.markdown("- [Yahoo Finance data coverage/delays](https://help.yahoo.com/kb/SLN2310.html)")
 
-    st.divider()
-    st.markdown("**Upstox API · read-only connection**")
-    upstox_config = upstox_oauth_credentials()
-    if not upstox_config:
-        st.caption("Add UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI in Streamlit Secrets.")
-    else:
-        if st.button("Connect / refresh Upstox login", use_container_width=True, key="upstox_start_oauth"):
-            upstox_state = upstox_make_state(upstox_config[1])
-            st.session_state["upstox_oauth_started_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
-            st.link_button("Continue to Upstox login", upstox_login_url(upstox_config[0], upstox_config[2], upstox_state), use_container_width=True)
-        current_upstox_token = upstox_token_vault().get("access_token")
-        if not current_upstox_token:
-            try:
-                configured_token = str(st.secrets.get("UPSTOX_ACCESS_TOKEN", "")).strip()
-            except Exception:
-                configured_token = ""
-            if configured_token:
-                upstox_token_vault()["access_token"] = configured_token
-                current_upstox_token = configured_token
-        if current_upstox_token:
-            st.caption("Upstox access token is configured in this app process.")
-        else:
-            st.caption("Upstox is not connected in this app process yet.")
 
 
 # Upstox read-only market-data connection. Keep credentials in Streamlit Cloud Secrets.
@@ -543,84 +520,7 @@ with st.sidebar:
             )
             st.caption("The token is shared across app sessions in memory. FYERS access tokens expire daily at 6:30 AM; a server restart or expired refresh token may require reconnecting.")
 
-# Handle Upstox OAuth callback, including provider-side errors and incomplete redirects.
-if any(key in st.query_params for key in ("code", "state", "error", "error_description")):
-    upstox_config = upstox_oauth_credentials()
-    returned_state = st.query_params.get("state", "")
-    auth_code = st.query_params.get("code", "")
-    oauth_error = st.query_params.get("error", "")
-    oauth_error_description = st.query_params.get("error_description", "")
-    if oauth_error:
-        st.error("Upstox rejected the authorization request: " + str(oauth_error))
-        if oauth_error_description:
-            st.caption("Upstox detail: " + str(oauth_error_description))
-        st.caption("Check the API Key / Client ID and exact redirect URI registered for the same Upstox app.")
-        st.query_params.clear()
-    elif not auth_code:
-        st.error("Returned from the Upstox authorization page without an authorization code.")
-        st.caption("The provider did not complete the login. Check that the API Key / Client ID belongs to this app and that the app is enabled for OAuth login.")
-        st.query_params.clear()
-    elif not upstox_config:
-        st.error("Upstox credentials are not configured in Streamlit Secrets.")
-        st.query_params.clear()
-    elif not returned_state:
-        st.error("Upstox returned an authorization code but no state value. Restart login from the dashboard.")
-        st.query_params.clear()
-    elif not upstox_verify_state(returned_state, upstox_config[1]):
-        st.error("Upstox OAuth state validation failed. Restart login using the current link.")
-        st.caption("The state signature did not match the configured app secret. No credential values are displayed.")
-        st.query_params.clear()
-    elif auth_code:
-        with st.spinner("Completing Upstox authorization..."):
-            token, token_error = upstox_exchange_auth_code(upstox_config[0], upstox_config[1], upstox_config[2], auth_code)
-        if token:
-            upstox_token_vault()["access_token"] = token
-            profile, profile_error = upstox_get_profile(token)
-            st.session_state["upstox_connected_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
-            st.session_state["upstox_profile_name"] = str(profile.get("user_name") or profile.get("user_id") or "Connected") if profile else "Connected"
-            st.query_params.clear()
-            if profile_error:
-                st.warning("Upstox token was received, but profile verification failed. Check token access.")
-            else:
-                st.success("Upstox OAuth connected and profile verified.")
-            st.rerun()
-        else:
-            st.error(f"Upstox authorization failed: {token_error}")
-            st.query_params.clear()
-    else:
-        st.error("Upstox returned without an authorization code. Please retry.")
-        st.query_params.clear()
 
-# Optional Upstox read-only connection check. FYERS and the main dashboard remain unchanged.
-with st.expander("Upstox API · read-only connection test", expanded=False):
-    upstox_config, upstox_missing = upstox_credentials()
-    if not upstox_config:
-        st.warning("Upstox secrets are missing or empty: " + ", ".join(upstox_missing))
-        st.caption("Open Streamlit Cloud → app Settings → Secrets. Check the exact uppercase names and save; do not share the values.")
-    else:
-        st.caption("All four required Upstox secrets were read successfully. Secret values are never displayed.")
-        st.write("Configured API key: " + upstox_config[0][:4] + "••••")
-        if st.button("Test Upstox market data", key="upstox_test_market_data"):
-            with st.spinner("Checking Upstox LTP endpoint..."):
-                upstox_data, upstox_error = upstox_ltp(
-                    upstox_config[3],
-                    ["NSE_INDEX|Nifty 50", "NSE_EQ|INE002A01018"],
-                )
-            if upstox_error:
-                st.error(upstox_error)
-            elif not upstox_data:
-                st.warning("Upstox responded successfully but returned no quote rows for the test instruments.")
-            else:
-                upstox_rows = []
-                for instrument_key, quote in upstox_data.items():
-                    upstox_rows.append({
-                        "Instrument": quote.get("instrument_token", instrument_key),
-                        "Last traded price": quote.get("last_price"),
-                        "Close price": quote.get("cp"),
-                    })
-                st.dataframe(pd.DataFrame(upstox_rows), use_container_width=True, hide_index=True)
-                st.success("Upstox read-only market-data request succeeded.")
-                st.caption("Tested at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") + ". This confirms the quote endpoint only; it does not yet switch dashboard calculations to Upstox.")
 
 # Handle the redirect from FYERS after user authorization.
 if "auth_code" in st.query_params:
@@ -683,80 +583,6 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                 st.caption("Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
 
 
-# Side-by-side provider comparison. This is diagnostic only and does not alter dashboard calculations.
-with st.expander("FYERS vs Upstox · quote comparison", expanded=False):
-    upstox_config, upstox_missing = upstox_credentials()
-    fyers_config = fyers_credentials()
-    fyers_access = st.session_state.get("fyers_access_token")
-    status_cols = st.columns(2)
-    with status_cols[0]:
-        st.write("**Upstox**")
-        st.caption("Credentials configured" if upstox_config else "Secrets missing: " + ", ".join(upstox_missing))
-    with status_cols[1]:
-        st.write("**FYERS**")
-        st.caption("Connected" if fyers_config and fyers_access else "Connect FYERS first to compare both providers")
-    if st.button("Compare live quotes", key="compare_fyers_upstox_quotes"):
-        if not upstox_config:
-            st.error("Upstox secrets missing: " + ", ".join(upstox_missing))
-        elif not (fyers_config and fyers_access):
-            st.warning("Upstox is configured, but FYERS is not connected in this session. Connect FYERS and retry.")
-        else:
-            with st.spinner("Requesting quotes from both providers..."):
-                up_data, up_error = upstox_ltp(
-                    upstox_config[3],
-                    ["NSE_INDEX|Nifty 50", "NSE_INDEX|Nifty Bank", "NSE_EQ|INE002A01018"],
-                )
-                fy_data, fy_error = fyers_live_quotes(
-                    fyers_config[0],
-                    fyers_access,
-                    ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:RELIANCE-EQ"],
-                )
-            if up_error:
-                st.warning("Upstox: " + up_error)
-            if fy_error:
-                st.warning("FYERS: " + fy_error)
-            up_norm = {}
-            for key, quote in (up_data or {}).items():
-                raw_key = str(key).lower()
-                if "nifty 50" in raw_key:
-                    label = "NIFTY 50"
-                elif "nifty bank" in raw_key:
-                    label = "BANK NIFTY"
-                elif "ine002a01018" in raw_key or "reliance" in raw_key:
-                    label = "RELIANCE"
-                else:
-                    continue
-                up_norm[label] = quote.get("last_price")
-            fy_norm = {}
-            for item in (fy_data or []):
-                name = str(item.get("n", "")).upper()
-                values = item.get("v") or {}
-                if "NIFTY50" in name:
-                    label = "NIFTY 50"
-                elif "NIFTYBANK" in name:
-                    label = "BANK NIFTY"
-                elif "RELIANCE" in name:
-                    label = "RELIANCE"
-                else:
-                    continue
-                fy_norm[label] = values.get("lp")
-            labels = ["NIFTY 50", "BANK NIFTY", "RELIANCE"]
-            rows = []
-            for label in labels:
-                up_price = up_norm.get(label)
-                fy_price = fy_norm.get(label)
-                diff = (float(up_price) - float(fy_price)) if up_price is not None and fy_price is not None else None
-                diff_pct = (diff / float(fy_price) * 100) if diff is not None and float(fy_price) != 0 else None
-                rows.append({
-                    "Instrument": label,
-                    "FYERS LTP": fy_price,
-                    "Upstox LTP": up_price,
-                    "Upstox − FYERS": diff,
-                    "Difference %": diff_pct,
-                    "Comparison": "Both returned" if diff is not None else "One or both quotes missing",
-                })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-            st.caption("Requested at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") + ". Requests are sequential, so small timing differences are expected. This diagnostic does not switch dashboard data sources.")
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, str | None]:
@@ -967,38 +793,7 @@ for col, name in zip(cols, headline_names):
 
 # Hidden headline explanation retained here in code; display headline metrics without extra notes.
 
-# Upstox live quote strip for market overview. Historical indicators remain on their original sources.
-upstox_overview_config, upstox_overview_missing = upstox_credentials()
-if upstox_overview_config:
-    with st.expander("Upstox live quotes · market overview", expanded=False):
-        if st.button("Refresh Upstox overview quotes", key="upstox_overview_refresh"):
-            with st.spinner("Fetching current Upstox quotes..."):
-                overview_data, overview_error = upstox_ltp(
-                    upstox_overview_config[3],
-                    ["NSE_INDEX|Nifty 50", "NSE_INDEX|Nifty Bank", "NSE_EQ|INE002A01018"],
-                )
-            if overview_error:
-                st.warning("Upstox overview quotes unavailable: " + overview_error)
-            elif not overview_data:
-                st.info("Upstox returned no quote data.")
-            else:
-                overview_map = {}
-                for instrument_key, quote in overview_data.items():
-                    key_lower = str(instrument_key).lower()
-                    if "nifty 50" in key_lower:
-                        label = "NIFTY 50"
-                    elif "nifty bank" in key_lower:
-                        label = "BANK NIFTY"
-                    elif "ine002a01018" in key_lower or "reliance" in key_lower:
-                        label = "RELIANCE"
-                    else:
-                        continue
-                    overview_map[label] = quote.get("last_price")
-                quote_cols = st.columns(3)
-                for quote_col, label in zip(quote_cols, ["NIFTY 50", "BANK NIFTY", "RELIANCE"]):
-                    quote_value = overview_map.get(label)
-                    quote_col.metric(label, fmt(quote_value) if quote_value is not None else "Unavailable")
-                st.caption("Source: Upstox API · fetched " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") + ". These quotes are displayed separately; historical indicators, sentiment and heatmap calculations are unchanged.")
+
 # Daily global-cue sentiment panel is intentionally placed immediately above Market Regime.
 st.subheader("Today's Market Direction · Global Sentiment")
 # Hidden sentiment explanation retained here in code; display the main heading and sentiment output.
