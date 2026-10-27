@@ -48,11 +48,6 @@ div[data-testid="stDataFrame"]{border-radius:10px;overflow:hidden}
 st.title("📈 Market Intelligence Terminal")
 st.caption("Free hybrid edition · No broker API · Source-labelled data · Missing data stays missing")
 
-# Preserve a visible, non-sensitive OAuth diagnostic even when the provider
-# redirects to the root URL without query parameters.
-if st.session_state.get("upstox_oauth_started_at"):
-    st.info("Upstox login was started at " + st.session_state["upstox_oauth_started_at"] +
-            ". If no connection confirmation appears, the provider may have returned without an authorization code. Use the diagnostic below.")
 
 
 INDEXES = {
@@ -170,11 +165,10 @@ with st.sidebar:
     if not upstox_config:
         st.caption("Add UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI in Streamlit Secrets.")
     else:
-        # Keep the OAuth launch link visible on every rerun; mobile browsers can
-        # otherwise lose the transient link rendered only after a button click.
-        upstox_state = upstox_make_state(upstox_config[1])
-        st.session_state["upstox_oauth_started_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
-        st.link_button("Continue to Upstox login", upstox_login_url(upstox_config[0], upstox_config[2], upstox_state), use_container_width=True)
+        if st.button("Connect / refresh Upstox login", use_container_width=True, key="upstox_start_oauth"):
+            upstox_state = upstox_make_state(upstox_config[1])
+            st.session_state["upstox_oauth_started_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
+            st.link_button("Continue to Upstox login", upstox_login_url(upstox_config[0], upstox_config[2], upstox_state), use_container_width=True)
         current_upstox_token = upstox_token_vault().get("access_token")
         if not current_upstox_token:
             try:
@@ -598,15 +592,7 @@ if any(key in st.query_params for key in ("code", "state", "error", "error_descr
         st.query_params.clear()
 
 # Optional Upstox read-only connection check. FYERS and the main dashboard remain unchanged.
-with st.expander("Upstox API · read-only connection test", expanded=True):
-    st.markdown("**OAuth callback diagnostic**")
-    st.write("Callback parameters detected: " + (", ".join(sorted(str(k) for k in st.query_params.keys())) if len(st.query_params) else "none"))
-    if "code" in st.query_params:
-        st.success("An authorization code reached the dashboard. The app will attempt token exchange.")
-    elif "error" in st.query_params or "error_description" in st.query_params:
-        st.warning("Upstox returned an OAuth error. Check the message above this panel.")
-    else:
-        st.warning("No OAuth code or error was received by the dashboard. If you were just redirected here, the authorization provider did not return a usable callback.")
+with st.expander("Upstox API · read-only connection test", expanded=False):
     upstox_config, upstox_missing = upstox_credentials()
     if not upstox_config:
         st.warning("Upstox secrets are missing or empty: " + ", ".join(upstox_missing))
