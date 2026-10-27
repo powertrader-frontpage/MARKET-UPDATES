@@ -869,7 +869,12 @@ if sentiment_details:
         return [f"color: {color}; font-weight: 600" if col == "Latest change" else "" for col in row.index]
 
     styled_sentiment = sentiment_df.style.applymap(_sentiment_cell_style, subset=["Signal"]).apply(_sentiment_change_style, axis=1)
-    st.dataframe(styled_sentiment, use_container_width=True, hide_index=True)
+    # Split the 10 factors into two compact tables to reduce vertical scrolling.
+    sentiment_left, sentiment_right = st.columns(2, gap="small")
+    with sentiment_left:
+        st.dataframe(styled_sentiment.data.iloc[:5].style.applymap(_sentiment_cell_style, subset=["Signal"]).apply(_sentiment_change_style, axis=1), use_container_width=True, hide_index=True)
+    with sentiment_right:
+        st.dataframe(styled_sentiment.data.iloc[5:].style.applymap(_sentiment_cell_style, subset=["Signal"]).apply(_sentiment_change_style, axis=1), use_container_width=True, hide_index=True)
 else:
     st.warning("No usable global cue data returned. No direction is guessed.")
 # Unavailable-factor details are retained in sentiment_errors but not displayed.
@@ -1142,6 +1147,43 @@ else:
                 fear_col.caption("Proxy score from RSI, EMA trend, 20-session momentum and India VIX. Not an official index or trading signal.")
             else:
                 fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
+
+        # Compact informational NIFTY 50 pivot levels, calculated from the latest completed daily candle.
+        nifty_levels_df = market_data.get("NIFTY 50", pd.DataFrame())
+        if not nifty_levels_df.empty and {"High", "Low", "Close"}.issubset(nifty_levels_df.columns):
+            nifty_ohlc = nifty_levels_df.dropna(subset=["High", "Low", "Close"]).copy()
+            if len(nifty_ohlc) >= 2:
+                # Use the previous completed session, not the current in-progress candle.
+                prev_nifty = nifty_ohlc.iloc[-2]
+                prev_high = float(prev_nifty["High"])
+                prev_low = float(prev_nifty["Low"])
+                prev_close = float(prev_nifty["Close"])
+                pivot = (prev_high + prev_low + prev_close) / 3
+                resistance_1 = 2 * pivot - prev_low
+                support_1 = 2 * pivot - prev_high
+                resistance_2 = pivot + (prev_high - prev_low)
+                support_2 = pivot - (prev_high - prev_low)
+                level_date = pd.to_datetime(prev_nifty["Date"], errors="coerce")
+                level_date_text = level_date.strftime("%d %b %Y") if pd.notna(level_date) else "previous session"
+                st.markdown("#### NIFTY 50 · Support & Resistance")
+                level_cols = st.columns(5, gap="small")
+                level_items = [
+                    ("Support 2", support_2, "#22c55e"),
+                    ("Support 1", support_1, "#4ade80"),
+                    ("Pivot", pivot, "#f59e0b"),
+                    ("Resistance 1", resistance_1, "#fb7185"),
+                    ("Resistance 2", resistance_2, "#ef4444"),
+                ]
+                for level_col, (level_name, level_value, level_color) in zip(level_cols, level_items):
+                    level_col.markdown(
+                        f'<div style="border:1px solid #343a46;border-top:3px solid {level_color};'
+                        f'border-radius:8px;padding:7px 8px;text-align:center;">'
+                        f'<div style="font-size:12px;color:#aeb6c2;">{level_name}</div>'
+                        f'<div style="font-size:clamp(13px,1.5vw,16px);font-weight:700;color:{level_color};">'
+                        f'{level_value:,.2f}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+                st.caption(f"Classic pivot levels calculated from NIFTY 50 OHLC for {level_date_text}. Informational reference only; not a forecast or trading recommendation.")
 
 # Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
 st.markdown("### Leading sectors vs NIFTY 50")
