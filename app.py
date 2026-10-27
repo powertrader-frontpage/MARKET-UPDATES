@@ -1091,6 +1091,48 @@ else:
         trend_fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified", xaxis_title="Source candle date", yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0))
         with trend_col:
             st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
+            # Compact NIFTY 50 pivot levels directly beneath the Price trend chart.
+            # Levels use the latest completed daily candle, never an in-progress session candle.
+            nifty_levels_df = market_data.get("NIFTY 50", pd.DataFrame())
+            if not nifty_levels_df.empty and {"High", "Low", "Close"}.issubset(nifty_levels_df.columns):
+                nifty_ohlc = nifty_levels_df.dropna(subset=["High", "Low", "Close"]).copy()
+                if not nifty_ohlc.empty:
+                    latest_nifty = nifty_ohlc.iloc[-1]
+                    latest_nifty_date = pd.to_datetime(latest_nifty["Date"], errors="coerce")
+                    today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+                    if pd.notna(latest_nifty_date) and latest_nifty_date.date() == today_ist and len(nifty_ohlc) >= 2:
+                        prev_nifty = nifty_ohlc.iloc[-2]
+                    else:
+                        prev_nifty = latest_nifty
+                    prev_high = float(prev_nifty["High"])
+                    prev_low = float(prev_nifty["Low"])
+                    prev_close = float(prev_nifty["Close"])
+                    pivot = (prev_high + prev_low + prev_close) / 3
+                    resistance_1 = 2 * pivot - prev_low
+                    support_1 = 2 * pivot - prev_high
+                    resistance_2 = pivot + (prev_high - prev_low)
+                    support_2 = pivot - (prev_high - prev_low)
+                    level_date = pd.to_datetime(prev_nifty["Date"], errors="coerce")
+                    level_date_text = level_date.strftime("%d %b %Y") if pd.notna(level_date) else "previous session"
+                    st.markdown("**NIFTY 50 · Support / Resistance**")
+                    level_cols = st.columns(5, gap="small")
+                    level_items = [
+                        ("S2", support_2, "#22c55e"),
+                        ("S1", support_1, "#4ade80"),
+                        ("Pivot", pivot, "#f59e0b"),
+                        ("R1", resistance_1, "#fb7185"),
+                        ("R2", resistance_2, "#ef4444"),
+                    ]
+                    for level_col, (level_name, level_value, level_color) in zip(level_cols, level_items):
+                        level_col.markdown(
+                            f'<div style="border:1px solid #343a46;border-top:2px solid {level_color};'
+                            f'border-radius:7px;padding:5px 3px;text-align:center;">'
+                            f'<div style="font-size:11px;color:#aeb6c2;">{level_name}</div>'
+                            f'<div style="font-size:clamp(11px,1.2vw,14px);font-weight:700;color:{level_color};">'
+                            f'{level_value:,.2f}</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                    st.caption(f"Classic daily pivot · based on {level_date_text} OHLC · informational only.")
         with fear_col:
             fear_score = np.nan
             fear_components = []
@@ -1152,48 +1194,7 @@ else:
             else:
                 fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
 
-        # Compact informational NIFTY 50 pivot levels, calculated from the latest completed daily candle.
-        nifty_levels_df = market_data.get("NIFTY 50", pd.DataFrame())
-        if not nifty_levels_df.empty and {"High", "Low", "Close"}.issubset(nifty_levels_df.columns):
-            nifty_ohlc = nifty_levels_df.dropna(subset=["High", "Low", "Close"]).copy()
-            if len(nifty_ohlc) >= 1:
-                # Use the latest completed daily candle; if today's candle is in progress, use yesterday's.
-                latest_nifty = nifty_ohlc.iloc[-1]
-                latest_nifty_date = pd.to_datetime(latest_nifty["Date"], errors="coerce")
-                today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-                if pd.notna(latest_nifty_date) and latest_nifty_date.date() == today_ist and len(nifty_ohlc) >= 2:
-                    prev_nifty = nifty_ohlc.iloc[-2]
-                else:
-                    prev_nifty = latest_nifty
-                prev_high = float(prev_nifty["High"])
-                prev_low = float(prev_nifty["Low"])
-                prev_close = float(prev_nifty["Close"])
-                pivot = (prev_high + prev_low + prev_close) / 3
-                resistance_1 = 2 * pivot - prev_low
-                support_1 = 2 * pivot - prev_high
-                resistance_2 = pivot + (prev_high - prev_low)
-                support_2 = pivot - (prev_high - prev_low)
-                level_date = pd.to_datetime(prev_nifty["Date"], errors="coerce")
-                level_date_text = level_date.strftime("%d %b %Y") if pd.notna(level_date) else "previous session"
-                st.markdown("#### NIFTY 50 · Support & Resistance")
-                level_cols = st.columns(5, gap="small")
-                level_items = [
-                    ("Support 2", support_2, "#22c55e"),
-                    ("Support 1", support_1, "#4ade80"),
-                    ("Pivot", pivot, "#f59e0b"),
-                    ("Resistance 1", resistance_1, "#fb7185"),
-                    ("Resistance 2", resistance_2, "#ef4444"),
-                ]
-                for level_col, (level_name, level_value, level_color) in zip(level_cols, level_items):
-                    level_col.markdown(
-                        f'<div style="border:1px solid #343a46;border-top:3px solid {level_color};'
-                        f'border-radius:8px;padding:7px 8px;text-align:center;">'
-                        f'<div style="font-size:12px;color:#aeb6c2;">{level_name}</div>'
-                        f'<div style="font-size:clamp(13px,1.5vw,16px);font-weight:700;color:{level_color};">'
-                        f'{level_value:,.2f}</div></div>',
-                        unsafe_allow_html=True,
-                    )
-                st.caption(f"Classic pivot levels calculated from NIFTY 50 OHLC for {level_date_text}. Informational reference only; not a forecast or trading recommendation.")
+
 
 # Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
 st.markdown("### Leading sectors vs NIFTY 50")
