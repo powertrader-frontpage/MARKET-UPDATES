@@ -3132,14 +3132,14 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         return None
 
                     pe_value = mindforge_row.get("P/E") if mindforge_row is not None else None
-                    if pd.isna(pe_value) if pe_value is not None else True:
+                    if pe_value is None or pd.isna(pe_value):
                         pe_value = fundamentals.get("trailingPE")
                     industry_pe_value = fundamentals.get("industryPE")
                     debt_equity_value = mindforge_row.get("D/E") if mindforge_row is not None else None
-                    if pd.isna(debt_equity_value) if debt_equity_value is not None else True:
+                    if debt_equity_value is None or pd.isna(debt_equity_value):
                         debt_equity_value = fundamentals.get("debtToEquity")
                     peg_value = mindforge_row.get("PEG") if mindforge_row is not None else None
-                    if pd.isna(peg_value) if peg_value is not None else True:
+                    if peg_value is None or pd.isna(peg_value):
                         peg_value = fundamentals.get("pegRatio") or fundamentals.get("trailingPegRatio")
                     roe_value = mindforge_row.get("ROE %") / 100.0 if mindforge_row is not None and pd.notna(mindforge_row.get("ROE %")) else fundamentals.get("returnOnEquity")
                     roce_value = mindforge_row.get("ROCE %") / 100.0 if mindforge_row is not None and pd.notna(mindforge_row.get("ROCE %")) else fundamentals.get("returnOnCapitalEmployed")
