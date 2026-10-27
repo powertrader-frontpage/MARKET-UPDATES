@@ -1266,6 +1266,32 @@ if leading_sector_rows:
     ranked_sectors = leading_df.sort_values("1W outperformance (pp)", ascending=False).copy()
     leaders = ranked_sectors[ranked_sectors["1W outperformance (pp)"] > 0].head(3).copy()
     current_top_names = leaders["Sector"].tolist()
+
+    # Detect a genuine transition from relative underperformance (<= 0 pp)
+    # to outperformance (> 0 pp), using the prior successful dashboard run.
+    current_relative = {
+        str(row["Sector"]): float(row["1W outperformance (pp)"])
+        for _, row in ranked_sectors.iterrows()
+        if pd.notna(row["1W outperformance (pp)"])
+    }
+    previous_relative = st.session_state.get("previous_sector_relative_performance")
+    if previous_relative is not None:
+        newly_outperforming = [
+            name for name, value in current_relative.items()
+            if value > 0 and name in previous_relative and previous_relative[name] <= 0
+        ]
+        if newly_outperforming:
+            alert_text = "🟨 SECTOR ROTATION ALERT · Now outperforming NIFTY 50: " + ", ".join(newly_outperforming)
+            st.toast(alert_text, icon="🟨")
+            st.markdown(
+                f'<div style="background:#fef3c7;color:#78350f;border:1px solid #f59e0b;'
+                f'border-left:6px solid #eab308;border-radius:10px;padding:12px 16px;'
+                f'font-weight:750;margin:8px 0 12px;">{html.escape(alert_text)}</div>',
+                unsafe_allow_html=True,
+            )
+    st.session_state["previous_sector_relative_performance"] = current_relative
+
+    # Retain the existing top-three membership-change alert.
     previous_top_names = st.session_state.get("previous_top_3_sectors")
     if previous_top_names is not None:
         entered = [name for name in current_top_names if name not in previous_top_names]
