@@ -75,7 +75,7 @@ with st.sidebar:
     refresh = st.button("↻ Refresh market data", use_container_width=True)
     auto_refresh_enabled = st.toggle("Automatic refresh", value=False, key="market_auto_refresh_enabled", help="Refreshes the dashboard page on a timer. Cached sources may still serve data until their cache expires; this does not make delayed public feeds live.")
     if auto_refresh_enabled:
-        auto_refresh_minutes = st.selectbox("Refresh interval", [5, 10, 15, 30], index=1, format_func=lambda n: f"Every {n} minutes", key="market_auto_refresh_minutes")
+        auto_refresh_minutes = st.selectbox("Refresh interval", [1, 5, 10, 15, 30], index=1, format_func=lambda n: f"Every {n} minutes", key="market_auto_refresh_minutes")
         st_autorefresh(interval=auto_refresh_minutes * 60 * 1000, limit=None, key="market_auto_refresh_timer")
         st.caption(f"Automatic page refresh enabled · every {auto_refresh_minutes} minutes. Data freshness depends on each source and its cache.")
     else:
