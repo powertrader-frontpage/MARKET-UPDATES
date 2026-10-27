@@ -1152,9 +1152,15 @@ else:
         nifty_levels_df = market_data.get("NIFTY 50", pd.DataFrame())
         if not nifty_levels_df.empty and {"High", "Low", "Close"}.issubset(nifty_levels_df.columns):
             nifty_ohlc = nifty_levels_df.dropna(subset=["High", "Low", "Close"]).copy()
-            if len(nifty_ohlc) >= 2:
-                # Use the previous completed session, not the current in-progress candle.
-                prev_nifty = nifty_ohlc.iloc[-2]
+            if len(nifty_ohlc) >= 1:
+                # Use the latest completed daily candle; if today's candle is in progress, use yesterday's.
+                latest_nifty = nifty_ohlc.iloc[-1]
+                latest_nifty_date = pd.to_datetime(latest_nifty["Date"], errors="coerce")
+                today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+                if pd.notna(latest_nifty_date) and latest_nifty_date.date() == today_ist and len(nifty_ohlc) >= 2:
+                    prev_nifty = nifty_ohlc.iloc[-2]
+                else:
+                    prev_nifty = latest_nifty
                 prev_high = float(prev_nifty["High"])
                 prev_low = float(prev_nifty["Low"])
                 prev_close = float(prev_nifty["Close"])
