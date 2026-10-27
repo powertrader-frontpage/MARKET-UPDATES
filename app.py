@@ -1091,6 +1091,41 @@ else:
         trend_fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified", xaxis_title="Source candle date", yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0))
         with trend_col:
             st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
+
+        # Minimal NIFTY 50 pivot strip directly below Price Trend.
+        nifty_levels_df = market_data.get("NIFTY 50", pd.DataFrame()).copy()
+        if not nifty_levels_df.empty and {"Date", "High", "Low", "Close"}.issubset(nifty_levels_df.columns):
+            nifty_levels_df["Date"] = pd.to_datetime(nifty_levels_df["Date"], errors="coerce")
+            nifty_levels_df = nifty_levels_df.dropna(subset=["Date", "High", "Low", "Close"]).sort_values("Date")
+            if len(nifty_levels_df) >= 2:
+                nifty_last_date = nifty_levels_df.iloc[-1]["Date"]
+                nifty_today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+                nifty_pivot_row = nifty_levels_df.iloc[-2] if nifty_last_date.date() == nifty_today else nifty_levels_df.iloc[-1]
+                nifty_ph, nifty_pl, nifty_pc = float(nifty_pivot_row["High"]), float(nifty_pivot_row["Low"]), float(nifty_pivot_row["Close"])
+                nifty_p = (nifty_ph + nifty_pl + nifty_pc) / 3
+                nifty_s1, nifty_r1 = 2 * nifty_p - nifty_ph, 2 * nifty_p - nifty_pl
+                nifty_s2, nifty_r2 = nifty_p - (nifty_ph - nifty_pl), nifty_p + (nifty_ph - nifty_pl)
+                st.markdown(
+                    f'<div style="font-size:12px;font-weight:700;color:#cbd5e1;margin:5px 0 6px;">NIFTY 50 · QUICK SUPPORT / RESISTANCE '
+                    f'<span style="font-size:10px;font-weight:400;color:#94a3b8;">Pivot estimates · ref. {nifty_pivot_row["Date"]:%d %b %Y}</span></div>',
+                    unsafe_allow_html=True,
+                )
+                nifty_level_cols = st.columns(5, gap="small")
+                for level_col, level_name, level_value, level_color in zip(
+                    nifty_level_cols,
+                    ["S2", "S1", "Pivot", "R1", "R2"],
+                    [nifty_s2, nifty_s1, nifty_p, nifty_r1, nifty_r2],
+                    ["#4ade80", "#22c55e", "#f59e0b", "#fb7185", "#ef4444"],
+                ):
+                    level_col.markdown(
+                        f'<div style="border:1px solid #343a46;border-top:2px solid {level_color};border-radius:7px;'
+                        f'padding:6px 5px;text-align:center;background:rgba(15,23,42,.42);">'
+                        f'<div style="font-size:10px;color:#aeb6c2;">{level_name}</div>'
+                        f'<div style="font-size:13px;font-weight:750;color:{level_color};">{nifty_levels_fmt if False else f"{level_value:,.2f}"}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+                st.caption("Classic pivot estimates for information only; not guaranteed price levels.")
+
             # Compact NIFTY 50 pivot levels directly beneath the Price trend chart.
             # Levels use the latest completed daily candle, never an in-progress session candle.
             nifty_levels_df = market_data.get("NIFTY 50", pd.DataFrame())
