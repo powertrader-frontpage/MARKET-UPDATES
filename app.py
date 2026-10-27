@@ -1270,7 +1270,7 @@ if leading_sector_rows:
                 f'<div style="font-size:12px;color:#a7f3d0;">1M relative strength: {month_confirmation}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
-
+            )
             stock_universe = SECTOR_LEADING_STOCKS.get(leader["Sector"], [])
             stock_leaders = []
             with st.spinner(f'Ranking {leader["Sector"]} stocks…'):
@@ -1295,7 +1295,6 @@ if leading_sector_rows:
                     )
             else:
                 leader_col.caption("Stock-level data unavailable; no ranking shown.")
-            )
 else:
     st.info("Weekly sector momentum is temporarily unavailable because usable 3-month daily history was not returned.")
 
