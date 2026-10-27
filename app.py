@@ -163,9 +163,10 @@ with st.sidebar:
     if not upstox_config:
         st.caption("Add UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI in Streamlit Secrets.")
     else:
-        if st.button("Connect / refresh Upstox login", use_container_width=True, key="upstox_start_oauth"):
-            upstox_state = upstox_make_state(upstox_config[1])
-            st.link_button("Continue to Upstox login", upstox_login_url(upstox_config[0], upstox_config[2], upstox_state), use_container_width=True)
+        # Keep the OAuth launch link visible on every rerun; mobile browsers can
+        # otherwise lose the transient link rendered only after a button click.
+        upstox_state = upstox_make_state(upstox_config[1])
+        st.link_button("Continue to Upstox login", upstox_login_url(upstox_config[0], upstox_config[2], upstox_state), use_container_width=True)
         current_upstox_token = upstox_token_vault().get("access_token")
         if not current_upstox_token:
             try:
@@ -549,7 +550,8 @@ if "code" in st.query_params and "state" in st.query_params:
         st.error("Upstox credentials are not configured in Streamlit Secrets.")
         st.query_params.clear()
     elif not upstox_verify_state(returned_state, upstox_config[1]):
-        st.error("Upstox login state could not be verified or has expired. Please start Connect / refresh Upstox login again.")
+        st.error("Upstox OAuth state validation failed. This can happen if the app secret changed or the authorization link was stale. Please use the current Continue to Upstox login link and retry.")
+        st.caption("Diagnostic: state was returned by Upstox, but its signature did not match the current configured API secret. No credential values are displayed.")
         st.query_params.clear()
     elif auth_code:
         with st.spinner("Completing Upstox authorization..."):
