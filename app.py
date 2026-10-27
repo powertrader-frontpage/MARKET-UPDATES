@@ -2784,11 +2784,11 @@ with advanced_tabs[5]:
     st.write("- Calculations are only as sound as the dates, adjustments, universe membership and source rows supplied.")
 
 
-# FYERS chart workspace: all NSE cash-market equity symbols from FYERS Symbol Master.
+# Compact selected-stock intelligence panel (replaces the large FYERS chart workspace).
 if "fyers_access_token" in st.session_state and fyers_credentials():
     st.divider()
-    st.subheader("FYERS stock charts")
-    st.caption("Choose any symbol from FYERS' NSE capital-market symbol master. Candles are from FYERS Historical Data; the current quote is fetched separately. This is not a continuously updating WebSocket chart.")
+    st.subheader("Selected Stock · Quick Levels")
+    st.caption("Choose an NSE stock to view its latest available daily data, trend, and compact support/resistance levels. Levels are calculated from the previous completed daily candle.")
     symbols_list, symbols_error = fyers_nse_equity_symbols()
     if symbols_error:
         st.warning(symbols_error)
@@ -2796,218 +2796,88 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
         st.warning("The FYERS symbol master returned no NSE equity symbols.")
     else:
         symbol_labels = {f"{name or symbol} · {symbol}": symbol for symbol, name in symbols_list}
-        selected_label = st.selectbox("Search/select NSE stock", list(symbol_labels.keys()), index=0, key="fyers_chart_symbol")
-        col_res, col_period = st.columns(2)
-        with col_res:
-            chart_resolution = st.selectbox("Candle interval", ["1", "5", "15", "30", "60", "120", "240", "1D", "1W"], index=2, key="fyers_chart_resolution", format_func=lambda value: {"1":"1 minute","5":"5 minutes","15":"15 minutes","30":"30 minutes","60":"1 hour","120":"2 hours","240":"4 hours","1D":"1 day","1W":"1 week"}[value])
-        with col_period:
-            chart_days_label = st.selectbox("History window", ["5 days", "1 month", "3 months", "6 months", "1 year", "2 years", "5 years"], index=2, key="fyers_chart_days")
-        chart_days = {"5 days": 5, "1 month": 31, "3 months": 92, "6 months": 183, "1 year": 365, "2 years": 730, "5 years": 1825}[chart_days_label]
-        if chart_resolution in {"1", "5"} and chart_days > 5:
-            st.warning("For 1-minute and 5-minute candles, the chart automatically limits history to the most recent 5 calendar days to avoid oversized or unsupported requests.")
-            chart_days = 5
-        st.markdown("**Chart tools**")
-        ind1, ind2, ind3, ind4, ind5 = st.columns(5)
-        with ind1:
-            show_ema21 = st.checkbox("EMA 21", value=True, key="fyers_ema21")
-        with ind2:
-            show_ema50 = st.checkbox("EMA 50", value=False, key="fyers_ema50")
-        with ind3:
-            show_ema200 = st.checkbox("EMA 200", value=False, key="fyers_ema200")
-        with ind4:
-            show_rsi = st.checkbox("RSI", value=False, key="fyers_rsi")
-        with ind5:
-            show_stoch_rsi = st.checkbox("Stochastic RSI", value=False, key="fyers_stoch_rsi")
-        show_volume = st.checkbox("Volume", value=False, key="fyers_volume")
-        st.caption("After the chart loads, use the Plotly toolbar to draw lines, rectangles, circles, and annotations. These drawings are temporary and reset when the chart is rebuilt.")
-        if st.button("Load / refresh FYERS chart", key="fyers_load_chart"):
-            chart_symbol = symbol_labels[selected_label]
-            with st.spinner(f"Fetching FYERS candles for {chart_symbol}..."):
-                candles, candle_error = fyers_history(fyers_credentials()[0], st.session_state["fyers_access_token"], chart_symbol, chart_resolution, chart_days)
-            if candle_error:
-                st.warning(f"Chart data unavailable: {candle_error}")
+        selected_label = st.selectbox(
+            "Search/select NSE stock",
+            list(symbol_labels.keys()),
+            index=0,
+            key="fyers_quick_stock_symbol",
+        )
+        selected_symbol = symbol_labels[selected_label]
+        # Daily history provides consistent support/resistance calculations across symbols.
+        with st.spinner(f"Loading daily data for {selected_symbol}…"):
+            stock_candles, stock_error = fyers_history(
+                fyers_credentials()[0],
+                st.session_state["fyers_access_token"],
+                selected_symbol,
+                "1D",
+                120,
+            )
+        if stock_error or stock_candles.empty:
+            st.info(f"Stock data unavailable: {stock_error or 'No daily candles returned.'}")
+        else:
+            stock_candles = stock_candles.copy()
+            stock_candles["Date"] = pd.to_datetime(stock_candles["Date"], errors="coerce")
+            stock_candles = stock_candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
+            if len(stock_candles) < 2:
+                st.info("At least two completed daily candles are needed to calculate support and resistance.")
             else:
-                candles = candles.copy()
-                candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
-                candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
-                if candles.empty:
-                    st.warning("FYERS returned no valid OHLC candles for this selection.")
-                else:
-                    st.session_state["fyers_chart_data"] = candles.to_json(date_format="iso", orient="split")
-                    st.session_state["fyers_chart_symbol_loaded"] = chart_symbol
-                    st.session_state["fyers_chart_resolution_loaded"] = chart_resolution
-                    st.session_state["fyers_chart_loaded_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
-                    st.session_state.pop("fyers_chart_error", None)
+                latest_stock = stock_candles.iloc[-1]
+                previous_stock = stock_candles.iloc[-2]
+                close_price = float(latest_stock["Close"])
+                previous_close = float(previous_stock["Close"])
+                day_change = close_price - previous_close
+                day_change_pct = (day_change / previous_close * 100) if previous_close else np.nan
 
-        # Start a single FYERS Data Socket for the currently selected chart symbol.
-        st.markdown("**Live market stream**")
-        live_symbol = symbol_labels[selected_label]
-        stream_symbol = st.session_state.get("fyers_stream_symbol")
-        stream_active = bool(st.session_state.get("fyers_stream_active"))
-        live_col1, live_col2 = st.columns(2)
-        with live_col1:
-            if not stream_active and st.button("▶ Start live updates", key="fyers_start_stream"):
-                try:
-                    import queue
-                    import threading
-                    from fyers_apiv3.FyersWebsocket import data_ws
+                # Classic floor pivots based on the previous completed daily candle.
+                prev_high = float(previous_stock["High"])
+                prev_low = float(previous_stock["Low"])
+                prev_close = float(previous_stock["Close"])
+                pivot = (prev_high + prev_low + prev_close) / 3
+                resistance_1 = 2 * pivot - prev_low
+                support_1 = 2 * pivot - prev_high
+                resistance_2 = pivot + (prev_high - prev_low)
+                support_2 = pivot - (prev_high - prev_low)
 
-                    tick_queue = queue.Queue(maxsize=2000)
-                    app_id = fyers_credentials()[0]
-                    access_token = st.session_state["fyers_access_token"]
-                    def _push_tick(message):
-                        if isinstance(message, dict) and message.get("symbol") and message.get("ltp") is not None:
-                            try:
-                                tick_queue.put_nowait(dict(message, received_at=datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()))
-                            except Exception:
-                                pass
-                    def _socket_error(message):
-                        try:
-                            tick_queue.put_nowait({"_error": str(message), "received_at": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()})
-                        except Exception:
-                            pass
-                    socket_holder = {"socket": None}
-                    def _on_connect():
-                        connected_socket = socket_holder.get("socket")
-                        if connected_socket:
-                            connected_socket.subscribe(symbols=[live_symbol], data_type="SymbolUpdate")
-                            connected_socket.keep_running()
-                    socket_ref = data_ws.FyersDataSocket(
-                        access_token=f"{app_id}:{access_token}",
-                        log_path="",
-                        litemode=False,
-                        write_to_file=False,
-                        reconnect=True,
-                        reconnect_retry=10,
-                        on_connect=_on_connect,
-                        on_close=_socket_error,
-                        on_error=_socket_error,
-                        on_message=_push_tick,
+                close_series = stock_candles["Close"].astype(float)
+                ema20 = close_series.ewm(span=20, adjust=False).mean().iloc[-1]
+                ema50 = close_series.ewm(span=50, adjust=False).mean().iloc[-1]
+                delta = close_series.diff()
+                gains = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                losses = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                rs = gains / losses.replace(0, np.nan)
+                stock_rsi = (100 - 100 / (1 + rs)).iloc[-1]
+                if pd.isna(stock_rsi):
+                    stock_rsi = 50.0
+                trend_label = "Bullish" if close_price > ema20 > ema50 else "Bearish" if close_price < ema20 < ema50 else "Mixed"
+                trend_color = "#22c55e" if trend_label == "Bullish" else "#ef4444" if trend_label == "Bearish" else "#f59e0b"
+                change_color = "#22c55e" if day_change >= 0 else "#ef4444"
+                levels = [
+                    ("Last close", f"₹{close_price:,.2f}", change_color, f"{day_change:+,.2f} ({day_change_pct:+.2f}%)" if pd.notna(day_change_pct) else "Change unavailable"),
+                    ("Support 1", f"₹{support_1:,.2f}", "#22c55e", "Pivot support"),
+                    ("Support 2", f"₹{support_2:,.2f}", "#22c55e", "Extended support"),
+                    ("Resistance 1", f"₹{resistance_1:,.2f}", "#ef4444", "Pivot resistance"),
+                    ("Resistance 2", f"₹{resistance_2:,.2f}", "#ef4444", "Extended resistance"),
+                    ("Trend · RSI 14", f"{trend_label} · {stock_rsi:.1f}", trend_color, f"EMA20 ₹{ema20:,.2f} · EMA50 ₹{ema50:,.2f}"),
+                ]
+                card_cols = st.columns(3, gap="small")
+                for idx, (label, value, accent, note) in enumerate(levels):
+                    with card_cols[idx % 3]:
+                        st.markdown(
+                            f'<div style="border:1px solid #343a46;border-left:4px solid {accent};border-radius:10px;padding:9px 11px;margin-bottom:8px;min-height:78px;">'
+                            f'<div style="font-size:12px;color:#aeb6c2;margin-bottom:5px;">{label}</div>'
+                            f'<div style="font-size:18px;font-weight:700;color:{accent};line-height:1.25;">{value}</div>'
+                            f'<div style="font-size:11px;color:#aeb6c2;margin-top:4px;">{note}</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                st.caption(
+                    f"Source: FYERS daily candles · Latest candle: {latest_stock['Date'].strftime('%d %b %Y')} · "
+                    "Support/resistance are classic pivot estimates, not guaranteed price levels."
+                )
+                with st.expander("View selected stock's recent daily candles", expanded=False):
+                    st.dataframe(
+                        stock_candles.tail(10).loc[:, [col for col in ["Date", "Open", "High", "Low", "Close", "Volume"] if col in stock_candles.columns]].sort_values("Date", ascending=False),
+                        use_container_width=True,
+                        hide_index=True,
                     )
-                    socket_holder["socket"] = socket_ref
-                    st.session_state["fyers_tick_queue"] = tick_queue
-                    st.session_state["fyers_socket_ref"] = socket_ref
-                    st.session_state["fyers_stream_symbol"] = live_symbol
-                    st.session_state["fyers_stream_active"] = True
-                    thread = threading.Thread(target=socket_ref.connect, daemon=True)
-                    st.session_state["fyers_socket_thread"] = thread
-                    thread.start()
-                    st.success(f"Started FYERS live stream for {live_symbol}.")
-                except Exception as exc:
-                    st.session_state["fyers_stream_active"] = False
-                    st.error(f"Could not start FYERS live stream ({exc.__class__.__name__}). Check app deployment and FYERS session.")
-        with live_col2:
-            if stream_active and st.button("■ Stop live updates", key="fyers_stop_stream"):
-                try:
-                    socket_ref = st.session_state.get("fyers_socket_ref")
-                    if socket_ref:
-                        socket_ref.close_connection()
-                except Exception:
-                    pass
-                st.session_state["fyers_stream_active"] = False
-                st.session_state.pop("fyers_socket_ref", None)
-                st.session_state.pop("fyers_socket_thread", None)
-                st.session_state.pop("fyers_tick_queue", None)
-                st.session_state.pop("fyers_live_tick", None)
-                st.rerun()
-
-        @st.fragment(run_every=2)
-        def _fyers_live_chart_fragment():
-            import queue as _queue
-            tick_queue = st.session_state.get("fyers_tick_queue")
-            if tick_queue is not None:
-                while True:
-                    try:
-                        tick = tick_queue.get_nowait()
-                    except _queue.Empty:
-                        break
-                    if tick.get("_error"):
-                        st.session_state["fyers_stream_error"] = tick["_error"]
-                    elif tick.get("symbol") == st.session_state.get("fyers_stream_symbol"):
-                        st.session_state["fyers_live_tick"] = tick
-                        st.session_state["fyers_stream_error"] = None
-
-            tick = st.session_state.get("fyers_live_tick")
-            if tick and tick.get("symbol") == st.session_state.get("fyers_stream_symbol"):
-                tick_time = tick.get("exch_feed_time") or tick.get("last_traded_time")
-                try:
-                    tick_time_text = datetime.fromtimestamp(float(tick_time), ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") if tick_time else tick.get("received_at", "time unavailable")
-                except Exception:
-                    tick_time_text = tick.get("received_at", "time unavailable")
-                m1, m2, m3 = st.columns(3)
-                with m1:
-                    st.metric("FYERS live LTP", f"{float(tick['ltp']):,.2f}", f"{float(tick.get('chp', 0)):+.2f}%" if tick.get("chp") is not None else None)
-                with m2:
-                    st.metric("Day high", f"{float(tick['high_price']):,.2f}" if tick.get("high_price") is not None else "—")
-                with m3:
-                    st.metric("Day low", f"{float(tick['low_price']):,.2f}" if tick.get("low_price") is not None else "—")
-                st.caption(f"WebSocket feed time: {tick_time_text} · Last received by app: {tick.get('received_at', 'unknown')}")
-            elif st.session_state.get("fyers_stream_error"):
-                st.warning("FYERS stream message: " + str(st.session_state["fyers_stream_error"])[:300])
-            elif st.session_state.get("fyers_stream_active"):
-                st.info("Connecting to FYERS Data Socket; waiting for the first market update.")
-            else:
-                st.caption("Live stream is stopped. Start it during market hours to receive updates.")
-
-            chart_json = st.session_state.get("fyers_chart_data")
-            if chart_json:
-                chart_symbol_loaded = st.session_state.get("fyers_chart_symbol_loaded", live_symbol)
-                candles = pd.read_json(chart_json, orient="split")
-                candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
-                candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
-                if not candles.empty:
-                    tick = st.session_state.get("fyers_live_tick")
-                    current_ltp = tick.get("ltp") if tick and tick.get("symbol") == chart_symbol_loaded else None
-                    fig = go.Figure(data=[go.Candlestick(x=candles["Date"], open=candles["Open"], high=candles["High"], low=candles["Low"], close=candles["Close"], name=chart_symbol_loaded)])
-                    for span, enabled in [(21, show_ema21), (50, show_ema50), (200, show_ema200)]:
-                        if enabled:
-                            ema_values = candles["Close"].ewm(span=span, adjust=False).mean()
-                            fig.add_trace(go.Scatter(x=candles["Date"], y=ema_values, name="EMA " + str(span), mode="lines", line=dict(width=1.4)))
-                    if show_volume and "Volume" in candles:
-                        volume_fig = go.Figure(go.Bar(x=candles["Date"], y=candles["Volume"], name="Volume"))
-                        volume_fig.update_layout(title="Volume", template="plotly_dark", height=220, margin=dict(l=20,r=20,t=40,b=20), xaxis_title="Time (IST)")
-                        st.plotly_chart(volume_fig, use_container_width=True, config={"displaylogo": False}, key="fyers_volume_plot")
-                    if current_ltp is not None:
-                        fig.add_hline(y=float(current_ltp), line_dash="dot", annotation_text=f"Live FYERS LTP: {float(current_ltp):,.2f}")
-                    fig.update_layout(title=f"{chart_symbol_loaded} · FYERS candles", xaxis_title="Time (IST)", yaxis_title="Price", xaxis_rangeslider_visible=False, height=650, hovermode="x unified", margin=dict(l=20, r=20, t=60, b=20))
-                    fig.update_xaxes(type="date", tickformat="%d %b %H:%M" if st.session_state.get("fyers_chart_resolution_loaded") != "1D" else "%d %b %Y", showspikes=True, spikemode="across", spikesnap="cursor")
-                    fig.update_yaxes(fixedrange=False)
-                    st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False, "modeBarButtonsToAdd": ["drawline", "drawopenpath", "drawclosedpath", "drawcircle", "drawrect", "eraseshape"]}, key="fyers_live_chart_plot")
-                    st.caption(f"Historical candles: FYERS · fetched: {st.session_state.get('fyers_chart_loaded_at', 'unknown')} · live quote overlay refreshes every 2 seconds while connected.")
-                    delta = candles["Close"].diff()
-                    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                    rs = gain / loss.replace(0, np.nan)
-                    rsi = (100 - (100 / (1 + rs))).fillna(50)
-                    if show_rsi:
-                        rsi_fig = go.Figure(go.Scatter(x=candles["Date"], y=rsi, name="RSI 14", line=dict(width=1.5)))
-                        rsi_fig.add_hline(y=70, line_dash="dash")
-                        rsi_fig.add_hline(y=30, line_dash="dash")
-                        rsi_fig.update_layout(title="RSI (14)", template="plotly_dark", height=240, margin=dict(l=20,r=20,t=45,b=20), yaxis=dict(range=[0,100]), xaxis_title="Time (IST)")
-                        st.plotly_chart(rsi_fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_rsi_plot")
-                    if show_stoch_rsi:
-                        rsi_low = rsi.rolling(14, min_periods=14).min()
-                        rsi_high = rsi.rolling(14, min_periods=14).max()
-                        stoch = ((rsi-rsi_low)/(rsi_high-rsi_low).replace(0, np.nan))*100
-                        stoch_k = stoch.rolling(3, min_periods=3).mean()
-                        stoch_d = stoch_k.rolling(3, min_periods=3).mean()
-                        sf = go.Figure()
-                        sf.add_trace(go.Scatter(x=candles["Date"], y=stoch_k, name="Stoch RSI %K"))
-                        sf.add_trace(go.Scatter(x=candles["Date"], y=stoch_d, name="Stoch RSI %D"))
-                        sf.add_hline(y=80, line_dash="dash")
-                        sf.add_hline(y=20, line_dash="dash")
-                        sf.update_layout(title="Stochastic RSI (14,14,3,3)", template="plotly_dark", height=240, margin=dict(l=20,r=20,t=45,b=20), yaxis=dict(range=[0,100]), xaxis_title="Time (IST)")
-                        st.plotly_chart(sf, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_stoch_rsi_plot")
-
-        _fyers_live_chart_fragment()
-
-        if st.session_state.get("fyers_stream_active") and st.session_state.get("fyers_stream_symbol") != live_symbol:
-            st.warning("The active stream is subscribed to a different symbol. Stop it, then start again for the selected chart symbol.")
-        st.info("FYERS WebSocket updates the live quote overlay and redraws the displayed chart every 2 seconds. Historical candles remain the last fetched candle set; the latest price line is live. Stream is read-only and does not place orders.")
-with st.expander("Important: Public Yahoo Finance and market-data limitations", expanded=False):
-    st.warning("Yahoo Finance data accessed through yfinance is best-effort and intended for personal use. Intraday values may be delayed, stale or unavailable; this is not a guaranteed real-time trading feed.")
-    st.write("TradingView embeds, where used elsewhere in the app, have their own exchange coverage and delay rules. Always check the source candle timestamp and verify important prices with your broker or official exchange before trading.")
-    st.markdown("[Yahoo Finance data coverage and delays](https://help.yahoo.com/kb/SLN2310.html) · [TradingView widgets and data coverage](https://www.tradingview.com/widget/)")
-
-if refresh:
-    st.cache_data.clear()
+else:
+    st.info("Connect FYERS from the sidebar to use the selected-stock quick levels panel.")
