@@ -232,6 +232,80 @@ def fyers_live_quotes(app_id: str, access_token: str, symbols: list[str]):
         return [], f"FYERS quote request failed: {exc.__class__.__name__}"
 
 
+def fyers_fundamental_probe(app_id: str, access_token: str, selected_symbol: str):
+    """Inspect FYERS screener fields and test whether the selected stock appears in a fundamentals screen."""
+    headers = {"Authorization": f"{app_id}:{access_token}"}
+    base_url = "https://api-t1.fyers.in/api/v3/screeners"
+    try:
+        config_response = requests.get(f"{base_url}/config", headers=headers, timeout=15)
+        config_payload = config_response.json()
+        if config_response.status_code != 200 or config_payload.get("s") != "ok":
+            message = config_payload.get("message") or config_payload.get("code") or "FYERS config request failed"
+            return {"ok": False, "message": str(message)}
+        data = config_payload.get("data") or {}
+        columns = data.get("columns") or []
+        metric_terms = ("p/e", "pe ", "price earnings", "debt/equity", "debt to equity", "peg", "roe", "roce", "return on equity", "return on capital", "industry p/e")
+        candidate_columns = []
+        for col in columns:
+            name = str(col.get("name", "")).strip()
+            category = str(col.get("category", "")).strip().lower()
+            normalized_name = name.lower()
+            if any(term in normalized_name for term in metric_terms) or category in {
+                "valuation ratios", "margin & profitability", "solvency & liquidity"
+            }:
+                col_id = col.get("id")
+                if col_id and col_id not in [item["id"] for item in candidate_columns]:
+                    candidate_columns.append({"id": col_id, "name": name, "category": category})
+        fields = ",".join(item["id"] for item in candidate_columns[:9])
+        screeners = [
+            item for item in (data.get("screeners") or [])
+            if "fundamental" in str(item.get("category", "")).lower()
+            or "valuation" in str(item.get("name", "")).lower()
+            or "profitability" in str(item.get("name", "")).lower()
+        ]
+        target = selected_symbol.replace("NSE:", "").replace("-EQ", "").replace(".NS", "").strip().upper()
+        checked = []
+        for screener in screeners[:5]:
+            screener_id = screener.get("id")
+            if not screener_id:
+                continue
+            params = {"screener": screener_id}
+            if fields:
+                params["fields"] = fields
+            params["universe"] = "iw010"
+            response = requests.get(f"{base_url}/query", params=params, headers=headers, timeout=15)
+            payload = response.json()
+            if response.status_code != 200 or payload.get("s") != "ok":
+                checked.append({"name": screener.get("name", screener_id), "error": str(payload.get("message") or payload.get("code") or "query failed")})
+                continue
+            result = payload.get("data") or {}
+            result_headers = result.get("header") or []
+            result_body = result.get("body") or []
+            symbol_index = next((i for i, item in enumerate(result_headers) if str(item.get("id", "")).lower() in {"symbolticker", "symbol"}), 0)
+            for row in result_body:
+                if len(row) <= symbol_index:
+                    continue
+                returned_symbol = str(row[symbol_index]).replace("NSE:", "").replace("-EQ", "").upper()
+                if returned_symbol == target:
+                    values = []
+                    for index, column in enumerate(result_headers):
+                        if index < len(row):
+                            values.append({"Field": column.get("name", column.get("id", f"Field {index+1}")), "Value": row[index]})
+                    return {
+                        "ok": True, "message": "Selected stock found in a FYERS fundamentals screener.",
+                        "screener": screener.get("name", screener_id), "values": values,
+                        "columns": candidate_columns, "checked": checked,
+                    }
+            checked.append({"name": screener.get("name", screener_id), "matches": len(result_body)})
+        return {
+            "ok": True,
+            "message": "FYERS configuration loaded, but the selected stock was not found in the first five relevant fundamentals screeners checked. This does not prove the stock's ratios are unavailable.",
+            "columns": candidate_columns, "checked": checked,
+        }
+    except Exception as exc:
+        return {"ok": False, "message": f"FYERS screener test failed: {exc.__class__.__name__}"}
+
+
 def fyers_option_chain(app_id: str, access_token: str, symbol: str, strikecount: int = 10, expiry_timestamp: str = ""):
     """Fetch an authentic FYERS option-chain snapshot; never substitute sample data."""
     try:
@@ -3039,6 +3113,34 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                     metric_html += '</div>'
                     st.markdown(metric_html, unsafe_allow_html=True)
                     st.caption("Fundamentals from Yahoo Finance when available. — means the source did not return a value; industry P/E is not estimated.")
+
+                    with st.expander("Check FYERS fundamental data availability", expanded=False):
+                        st.caption("Diagnostic only: this checks FYERS' available ratio columns and tests up to five relevant screeners. A stock missing from a filtered screener may still have fundamentals available.")
+                        if st.button("Run FYERS data check", key="check_fyers_fundamentals"):
+                            fyers_config = fyers_credentials()
+                            fyers_token = st.session_state.get("fyers_access_token")
+                            if not fyers_config or not fyers_token:
+                                st.warning("Connect FYERS first, then run this check.")
+                            else:
+                                with st.spinner("Checking FYERS screener configuration and results..."):
+                                    fyers_probe = fyers_fundamental_probe(fyers_config[0], fyers_token, selected_symbol)
+                                if not fyers_probe.get("ok"):
+                                    st.warning(fyers_probe.get("message", "FYERS data check could not be completed."))
+                                else:
+                                    st.info(fyers_probe.get("message", "FYERS check completed."))
+                                    available_columns = fyers_probe.get("columns") or []
+                                    if available_columns:
+                                        st.markdown("**Potentially relevant FYERS columns**")
+                                        st.dataframe(pd.DataFrame(available_columns), use_container_width=True, hide_index=True, height=180)
+                                    else:
+                                        st.caption("No matching valuation/profitability columns were listed in the FYERS configuration.")
+                                    if fyers_probe.get("screener"):
+                                        st.caption(f"Matching screener: {fyers_probe['screener']}")
+                                        st.dataframe(pd.DataFrame(fyers_probe.get("values") or []), use_container_width=True, hide_index=True, height=240)
+                                    checked_screens = fyers_probe.get("checked") or []
+                                    if checked_screens:
+                                        st.markdown("**Screeners checked**")
+                                        st.dataframe(pd.DataFrame(checked_screens), use_container_width=True, hide_index=True, height=150)
                 st.markdown("#### Price trend · recent momentum")
                 stock_chart = go.Figure()
                 stock_chart.add_trace(go.Candlestick(
