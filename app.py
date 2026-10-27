@@ -4,6 +4,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import json
 import html
+import queue
+import threading
 
 import numpy as np
 import pandas as pd
@@ -14,24 +16,43 @@ import streamlit as st
 import streamlit.components.v1 as components
 import yfinance as yf
 
+import hashlib
+import hmac
+import secrets
+import time
+import re
+from urllib.parse import urlencode
+
 st.set_page_config(page_title="Market Intelligence Terminal", page_icon="📈", layout="wide")
 st.markdown("""
 <style>
 .block-container{padding-top:1rem;padding-bottom:2rem}
+[data-testid="stMetric"]{border-left:4px solid #64748b}
+.signal-good [data-testid="stMetric"]{border-left-color:#22c55e}
+.signal-bad [data-testid="stMetric"]{border-left-color:#ef4444}
+.signal-neutral [data-testid="stMetric"]{border-left-color:#f59e0b}
+div[data-testid="stExpander"]{border:1px solid rgba(148,163,184,.3);border-radius:12px;overflow:hidden}
+div[data-testid="stExpander"] summary{font-weight:650}
+div[data-testid="stDataFrame"]{border-radius:10px;overflow:hidden}
+
 [data-testid="stMetric"]{background:rgba(100,120,145,.08);border:1px solid rgba(120,140,160,.25);padding:12px;border-radius:12px}
-.small-note{font-size:.85rem;opacity:.8}\n[data-testid='stDataFrame']{max-width:100%}\n@media(max-width:700px){.block-container{padding-left:.7rem;padding-right:.7rem}[data-testid='stMetricValue']{font-size:1.35rem}h1{font-size:1.7rem}h2{font-size:1.35rem}}
+.small-note{font-size:.85rem;opacity:.8}\n[data-testid='stDataFrame']{max-width:100%}
+[data-testid="stMetricDelta"] svg{display:inline-block}
+[data-testid="stMetricDelta"] [data-testid="stMarkdownContainer"]{font-weight:650}
+[data-testid="stMetricDelta"][data-testid*="positive"],[data-testid="stMetricDelta"] svg[fill="green"]{color:#22c55e}
+@media(max-width:700px){.block-container{padding-left:.7rem;padding-right:.7rem}[data-testid='stMetricValue']{font-size:1.35rem}h1{font-size:1.7rem}h2{font-size:1.35rem}}
 </style>
 """, unsafe_allow_html=True)
 
 st.title("📈 Market Intelligence Terminal")
 st.caption("Free hybrid edition · No broker API · Source-labelled data · Missing data stays missing")
-st.warning("Important: public Yahoo Finance data is best-effort and intended for personal use; intraday values may be delayed, stale or unavailable. TradingView embeds have their own exchange coverage and delay rules. This is not a guaranteed real-time trading feed.")
 
 INDEXES = {
     "NIFTY 50": "^NSEI",
     "BANK NIFTY": "^NSEBANK",
     "India VIX": "^INDIAVIX",
     "Brent Crude": "BZ=F",
+    "USD/INR": "INR=X",
     "INFY": "INFY.NS",
     "WIPRO": "WIPRO.NS",
     "RELIANCE": "RELIANCE.NS",
@@ -60,8 +81,293 @@ with st.sidebar:
     st.markdown("- [TradingView widgets](https://www.tradingview.com/widget/)")
     st.markdown("- [Yahoo Finance data coverage/delays](https://help.yahoo.com/kb/SLN2310.html)")
 
-if refresh:
-    st.cache_data.clear()
+
+# FYERS read-only market-data connection. Credentials must live in Streamlit Cloud Secrets.
+def fyers_credentials():
+    try:
+        app_id = str(st.secrets["FYERS_APP_ID"]).strip()
+        app_secret = str(st.secrets["FYERS_APP_SECRET"]).strip()
+        redirect_uri = str(st.secrets["FYERS_REDIRECT_URI"]).strip()
+        if app_id and app_secret and redirect_uri:
+            return app_id, app_secret, redirect_uri
+    except Exception:
+        pass
+    return None
+
+def fyers_make_state(app_secret: str) -> str:
+    issued = str(int(time.time()))
+    nonce = secrets.token_urlsafe(18)
+    message = f"{issued}.{nonce}"
+    signature = hmac.new(app_secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{message}.{signature}"
+
+def fyers_check_state(app_secret: str, state: str) -> bool:
+    try:
+        issued, nonce, signature = state.split(".", 2)
+        message = f"{issued}.{nonce}"
+        expected = hmac.new(app_secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+        return abs(int(time.time()) - int(issued)) <= 600 and hmac.compare_digest(signature, expected)
+    except Exception:
+        return False
+
+def fyers_login_url(app_id: str, redirect_uri: str, state: str) -> str:
+    params = {
+        "client_id": app_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "state": state,
+    }
+    return "https://api-t1.fyers.in/api/v3/generate-authcode?" + urlencode(params)
+
+@st.cache_resource
+def fyers_token_vault():
+    """Process-wide in-memory token cache shared by Streamlit sessions."""
+    return {}
+
+def fyers_access_expiry_iso():
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    cutoff = now.replace(hour=6, minute=30, second=0, microsecond=0)
+    if now >= cutoff:
+        cutoff = cutoff + pd.Timedelta(days=1)
+    return cutoff.isoformat()
+
+def fyers_exchange_auth_code(app_id: str, app_secret: str, auth_code: str):
+    app_hash = hashlib.sha256(f"{app_id}:{app_secret}".encode("utf-8")).hexdigest()
+    try:
+        response = requests.post(
+            "https://api-t1.fyers.in/api/v3/validate-authcode",
+            json={"grant_type": "authorization_code", "appIdHash": app_hash, "code": auth_code},
+            timeout=20,
+        )
+        payload = response.json()
+        if response.ok and payload.get("s") == "ok" and payload.get("access_token"):
+            return payload["access_token"], payload.get("refresh_token"), None
+        return None, None, str(payload.get("message", "FYERS did not return an access token."))
+    except Exception as exc:
+        return None, None, f"FYERS authentication request failed: {exc.__class__.__name__}"
+
+def fyers_refresh_access_token(app_id: str, app_secret: str, refresh_token: str, pin: str):
+    app_hash = hashlib.sha256(f"{app_id}:{app_secret}".encode("utf-8")).hexdigest()
+    try:
+        response = requests.post(
+            "https://api-t1.fyers.in/api/v3/validate-refresh-token",
+            json={"grant_type": "refresh_token", "appIdHash": app_hash, "refresh_token": refresh_token, "pin": pin},
+            timeout=20,
+        )
+        payload = response.json()
+        if response.ok and payload.get("s") == "ok" and payload.get("access_token"):
+            return payload["access_token"], None
+        return None, str(payload.get("message") or payload.get("messageCode") or "FYERS could not refresh the access token.")
+    except Exception as exc:
+        return None, f"FYERS token refresh failed: {exc.__class__.__name__}"
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fyers_nse_equity_symbols():
+    """Load FYERS' public NSE capital-market symbol master; return verified equity symbols only."""
+    try:
+        response = requests.get("https://public.fyers.in/sym_details/NSE_CM_sym_master.json", timeout=20)
+        response.raise_for_status()
+        payload = response.json()
+        symbols = []
+        if isinstance(payload, dict):
+            for symbol, details in payload.items():
+                if not isinstance(symbol, str) or not symbol.startswith("NSE:") or not symbol.endswith("-EQ"):
+                    continue
+                name = ""
+                if isinstance(details, dict):
+                    name = str(details.get("description") or details.get("short_name") or details.get("symbol") or "")
+                symbols.append((symbol, name))
+        return sorted(set(symbols), key=lambda row: (row[1].upper(), row[0])), None
+    except Exception as exc:
+        return [], f"Symbol master unavailable ({exc.__class__.__name__})."
+
+def fyers_history(app_id: str, access_token: str, symbol: str, resolution: str, days: int):
+    date_to = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    date_from = date_to - pd.Timedelta(days=days)
+    try:
+        response = requests.get(
+            "https://api-t1.fyers.in/data/history",
+            params={"symbol": symbol, "resolution": resolution, "date_format": "1",
+                    "range_from": str(date_from), "range_to": str(date_to), "cont_flag": "1"},
+            headers={"Authorization": f"{app_id}:{access_token}"},
+            timeout=25,
+        )
+        payload = response.json()
+        if not response.ok or payload.get("s") != "ok":
+            return pd.DataFrame(), str(payload.get("message", "FYERS historical candle request failed."))
+        candles = payload.get("candles") or []
+        if not candles:
+            return pd.DataFrame(), "FYERS returned no candles for this symbol and interval."
+        frame = pd.DataFrame(candles, columns=["Epoch", "Open", "High", "Low", "Close", "Volume"][:len(candles[0])])
+        frame["Date"] = pd.to_datetime(frame["Epoch"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            if col in frame:
+                frame[col] = pd.to_numeric(frame[col], errors="coerce")
+        return frame.dropna(subset=["Date", "Close"]).sort_values("Date"), None
+    except Exception as exc:
+        return pd.DataFrame(), f"FYERS historical request failed ({exc.__class__.__name__})."
+
+def fyers_live_quotes(app_id: str, access_token: str, symbols: list[str]):
+    try:
+        response = requests.get(
+            "https://api-t1.fyers.in/data/quotes",
+            params={"symbols": ",".join(symbols)},
+            headers={"Authorization": f"{app_id}:{access_token}"},
+            timeout=15,
+        )
+        payload = response.json()
+        if response.ok and payload.get("s") == "ok":
+            return payload.get("d", []), None
+        return [], str(payload.get("message", "FYERS quote request failed."))
+    except Exception as exc:
+        return [], f"FYERS quote request failed: {exc.__class__.__name__}"
+
+
+def fyers_option_chain(app_id: str, access_token: str, symbol: str, strikecount: int = 10, expiry_timestamp: str = ""):
+    """Fetch an authentic FYERS option-chain snapshot; never substitute sample data."""
+    try:
+        params = {"symbol": symbol, "strikecount": str(strikecount), "greeks": "1"}
+        if expiry_timestamp:
+            params["timestamp"] = str(expiry_timestamp)
+        response = requests.get(
+            "https://api-t1.fyers.in/data/options-chain-v3",
+            params=params,
+            headers={"Authorization": f"{app_id}:{access_token}"},
+            timeout=20,
+        )
+        payload = response.json()
+        if not response.ok:
+            return {}, str(payload.get("message") or payload.get("messageCode") or f"HTTP {response.status_code}")
+        if payload.get("s") == "error":
+            return {}, str(payload.get("message") or payload.get("messageCode") or "FYERS rejected the option-chain request.")
+        data = payload.get("data", payload)
+        if not isinstance(data, dict) or not data.get("optionsChain"):
+            return {}, str(payload.get("message") or "FYERS returned no option-chain rows for this symbol/expiry.")
+        return data, None
+    except Exception as exc:
+        return {}, f"FYERS option-chain request failed: {exc.__class__.__name__}"
+
+with st.sidebar:
+    st.divider()
+    st.subheader("FYERS live data")
+    fyers_config = fyers_credentials()
+    token_vault = fyers_token_vault()
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    # Clear expired session tokens so the refresh-token path is offered instead of a stale "connected" state.
+    if st.session_state.get("fyers_access_token"):
+        try:
+            session_expiry = datetime.fromisoformat(token_vault.get("access_expires_at", ""))
+            if now_ist >= session_expiry:
+                st.session_state.pop("fyers_access_token", None)
+        except Exception:
+            # Older session tokens without expiry metadata are not trusted indefinitely.
+            st.session_state.pop("fyers_access_token", None)
+    # Restore the process-wide token into a new browser/session when it is still valid.
+    if not st.session_state.get("fyers_access_token") and token_vault.get("access_token"):
+        try:
+            token_expiry = datetime.fromisoformat(token_vault.get("access_expires_at", ""))
+            if now_ist < token_expiry:
+                st.session_state["fyers_access_token"] = token_vault["access_token"]
+                st.session_state["fyers_connected_at"] = token_vault.get("connected_at", now_ist.isoformat())
+        except Exception:
+            pass
+    if not fyers_config:
+        st.warning("Add FYERS_APP_ID, FYERS_APP_SECRET and FYERS_REDIRECT_URI in Streamlit Cloud Secrets to enable the connection.")
+    else:
+        fyers_app_id, fyers_app_secret, fyers_redirect_uri = fyers_config
+        active_token = st.session_state.get("fyers_access_token")
+        if active_token:
+            st.success("FYERS connected · shared across app sessions until daily token expiry.")
+            if st.button("Disconnect FYERS session", use_container_width=True):
+                st.session_state.pop("fyers_access_token", None)
+                st.session_state.pop("fyers_connected_at", None)
+                token_vault.clear()
+                st.rerun()
+        elif token_vault.get("refresh_token"):
+            st.info("Your access token has expired. Refresh it here without repeating the full FYERS login, if the refresh token is still valid.")
+            fyers_pin = st.text_input("FYERS PIN (used only for refresh)", type="password", key="fyers_refresh_pin")
+            if st.button("Refresh FYERS session", use_container_width=True, disabled=not fyers_pin):
+                with st.spinner("Refreshing FYERS access token…"):
+                    refreshed_token, refresh_error = fyers_refresh_access_token(fyers_app_id, fyers_app_secret, token_vault["refresh_token"], fyers_pin)
+                if refreshed_token:
+                    token_vault["access_token"] = refreshed_token
+                    token_vault["access_expires_at"] = fyers_access_expiry_iso()
+                    st.session_state["fyers_access_token"] = refreshed_token
+                    st.session_state["fyers_connected_at"] = now_ist.isoformat()
+                    st.session_state.pop("fyers_refresh_pin", None)
+                    st.success("FYERS session refreshed.")
+                    st.rerun()
+                else:
+                    st.error(f"Token refresh failed: {refresh_error}. The refresh token may have expired; reconnect FYERS if needed.")
+        else:
+            st.link_button(
+                "Connect FYERS account",
+                fyers_login_url(fyers_app_id, fyers_redirect_uri, fyers_make_state(fyers_app_secret)),
+                use_container_width=True,
+            )
+            st.caption("The token is shared across app sessions in memory. FYERS access tokens expire daily at 6:30 AM; a server restart or expired refresh token may require reconnecting.")
+
+# Handle the redirect from FYERS after user authorization.
+if "auth_code" in st.query_params:
+    fyers_config = fyers_credentials()
+    returned_state = st.query_params.get("state", "")
+    auth_code = st.query_params.get("auth_code", "")
+    if not fyers_config:
+        st.error("FYERS credentials are not configured in Streamlit Secrets.")
+    elif not returned_state or not fyers_check_state(fyers_config[1], returned_state):
+        st.error("FYERS login state could not be verified or has expired. Please click Connect FYERS account and try again.")
+    elif auth_code:
+        with st.spinner("Completing FYERS authorization..."):
+            token, refresh_token, token_error = fyers_exchange_auth_code(fyers_config[0], fyers_config[1], auth_code)
+        if token:
+            connected_at = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
+            token_vault = fyers_token_vault()
+            token_vault["access_token"] = token
+            token_vault["refresh_token"] = refresh_token
+            token_vault["access_expires_at"] = fyers_access_expiry_iso()
+            token_vault["connected_at"] = connected_at
+            st.session_state["fyers_access_token"] = token
+            st.session_state["fyers_connected_at"] = connected_at
+            st.query_params.clear()
+            st.success("FYERS connected. Token is shared across app sessions in memory; refresh token is cached only for this server process.")
+            st.rerun()
+        else:
+            st.error(f"FYERS authorization was not completed: {token_error}")
+            st.query_params.clear()
+    else:
+        st.error("FYERS returned without an authorization code. Please retry the connection.")
+        st.query_params.clear()
+
+if "fyers_access_token" in st.session_state and fyers_credentials():
+    fyers_app_id = fyers_credentials()[0]
+    # Keep the optional live-quote tool available without taking space on the main dashboard.
+    with st.expander("FYERS live market snapshot · optional", expanded=False):
+        fyers_symbols = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:INFY-EQ"]
+        if st.button("Fetch FYERS live quotes", key="fyers_fetch_quotes"):
+            quote_rows, quote_error = fyers_live_quotes(fyers_app_id, st.session_state["fyers_access_token"], fyers_symbols)
+            if quote_error:
+                st.warning(f"FYERS quote data unavailable: {quote_error}")
+            elif not quote_rows:
+                st.info("FYERS returned no quote rows for the selected symbols.")
+            else:
+                normalized = []
+                for item in quote_rows:
+                    values = item.get("v") or {}
+                    normalized.append({
+                        "Symbol": item.get("n", values.get("symbol", "Unknown")),
+                        "Last price": values.get("lp"),
+                        "Change": values.get("ch"),
+                        "Change %": values.get("chp"),
+                        "Open": values.get("open_price"),
+                        "High": values.get("high_price"),
+                        "Low": values.get("low_price"),
+                        "Previous close": values.get("prev_close_price"),
+                        "Volume": values.get("volume"),
+                    })
+                st.dataframe(pd.DataFrame(normalized), use_container_width=True, hide_index=True)
+                st.caption("Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
+
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, str | None]:
@@ -154,11 +460,16 @@ def get_news_rss(query: str, limit: int = 12) -> tuple[pd.DataFrame, str | None]
             pub = (item.findtext("pubDate") or "").strip()
             source = item.find("source")
             publisher = (source.text or "").strip() if source is not None else ""
+            published_at = pd.to_datetime(pub, errors="coerce", utc=True)
             if title and link:
-                rows.append({"Published (RSS)":pub,"Headline":title,"Publisher":publisher,"Source link":link})
+                rows.append({"Published (RSS)":pub,"_published_sort":published_at,"Headline":title,"Publisher":publisher,"Source link":link})
         if not rows:
             return pd.DataFrame(), "RSS returned no headline rows."
-        return pd.DataFrame(rows), None
+        frame = pd.DataFrame(rows)
+        # RSS relevance feeds can return mixed dates; sort newest first, with unparseable dates last.
+        frame = frame.sort_values("_published_sort", ascending=False, na_position="last", kind="stable")
+        frame = frame.drop(columns=["_published_sort"])
+        return frame.reset_index(drop=True), None
     except Exception as exc:
         return pd.DataFrame(), f"News RSS unavailable: {type(exc).__name__}: {str(exc)[:150]}"
 
@@ -197,7 +508,7 @@ def tv_widget(kind: str, config: dict, height: int = 500):
     script = f'''<div class="tradingview-widget-container" style="height:{height}px;width:100%"><div class="tradingview-widget-container__widget" style="height:calc(100% - 28px);width:100%"></div><div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/" rel="noopener nofollow" target="_blank"><span>TradingView</span></a></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-{kind}.js" async>{config_json}</script></div>'''
     components.html(script, height=height + 10, scrolling=False)
 
-def advanced_chart(symbol: str, height: int = 550):
+def advanced_chart(symbol: str, height: int = 720):
     tv_widget("advanced-chart", {"autosize": True, "symbol": symbol, "interval": "D", "timezone": "Asia/Kolkata", "theme": "dark", "style": "1", "locale": "en", "allow_symbol_change": True, "calendar": False, "support_host": "https://www.tradingview.com"}, height)
 
 def quote_snapshot(df: pd.DataFrame):
@@ -218,26 +529,970 @@ with st.spinner("Loading best-effort public market data…"):
         market_data[name], market_errors[name] = hist, err
 
 now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
-st.caption(f"Dashboard refreshed/viewed: {now_ist:%d %b %Y, %H:%M:%S IST} · Yahoo Finance via yfinance for calculations; TradingView for embedded charts. This timestamp is the app refresh time, not an exchange timestamp.")
+# Hidden refresh/source note retained in code to keep the dashboard focused on key headings and values.
 
 # Headline metrics from the latest returned historical bar (not described as real-time).
-cols = st.columns(4)
-for col, name in zip(cols, ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude"]):
+headline_names = ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude", "USD/INR"]
+# Responsive headline cards: keep full numeric values readable on narrow mobile screens.
+st.markdown("""
+<style>
+[data-testid="stMetricValue"] {
+    font-size: clamp(1.05rem, 2.2vw, 1.65rem) !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    line-height: 1.2 !important;
+}
+[data-testid="stMetricLabel"] {
+    font-size: clamp(0.72rem, 1.5vw, 0.9rem) !important;
+    white-space: normal !important;
+}
+[data-testid="stMetricDelta"] {
+    font-size: clamp(0.68rem, 1.35vw, 0.82rem) !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+}
+</style>
+""", unsafe_allow_html=True)
+cols = st.columns(5)
+for col, name in zip(cols, headline_names):
     df = market_data[name]
     snap = quote_snapshot(df)
     if snap:
         last, change, pct = snap
-        col.metric(name, fmt(last["Close"]), f"{fmt(change)} ({fmt(pct)}%)")
-        col.caption(f"Last source bar: {last['Date']:%d %b %Y, %H:%M IST}")
+        # For USD/INR, a falling rate means the rupee appreciates; reverse the colour semantics.
+        if name == "USD/INR":
+            delta_text = f"{fmt(change)} ({fmt(pct)}%)"
+            delta_color = "inverse"
+            delta_text += " · INR stronger" if change < 0 else (" · INR weaker" if change > 0 else "")
+            col.metric(name, fmt(last["Close"]), delta_text, delta_color=delta_color)
+        else:
+            col.metric(name, fmt(last["Close"]), f"{fmt(change)} ({fmt(pct)}%)")
+        # Source-bar timestamp retained in data, but hidden from the compact headline display.
     else:
         col.metric(name, "Unavailable")
-        col.caption(market_errors[name] or "No data returned")
+        # Error details remain available in market_errors; avoid displaying extra helper text here.
 
-st.caption("Headline values are the latest returned daily bar, not guaranteed live quotes. For current market viewing, use the embedded TradingView widgets and check the exchange/data-status label there.")
+# Hidden headline explanation retained here in code; display headline metrics without extra notes.
 
-tabs = st.tabs(["Overview", "Live charts", "Technical analysis", "Sector rotation", "Global markets", "FII/DII & news", "Derivatives", "History & sources"])
+# Daily global-cue sentiment panel is intentionally placed immediately above Market Regime.
+st.subheader("Today's Market Direction · Global Sentiment")
+# Hidden sentiment explanation retained here in code; display the main heading and sentiment output.
+sentiment_parts = []
+sentiment_details = []
+sentiment_errors = []
+def _sentiment_change(label, ticker, weight, inverse=False):
+    try:
+        frame, err = get_history(ticker, "1mo", "1d")
+        snap = quote_snapshot(frame)
+        if not snap:
+            sentiment_errors.append(f"{label}: unavailable")
+            return
+        last, change, pct = snap
+        pct = float(pct)
+        score = -1 if pct > 0 else 1 if pct < 0 else 0 if inverse else (1 if pct > 0 else -1 if pct < 0 else 0)
+        # For crude, rising prices are a headwind for India; for ADRs/GIFT, positive moves are supportive.
+        if inverse:
+            score = -1 if pct > 0 else 1 if pct < 0 else 0
+        else:
+            score = 1 if pct > 0 else -1 if pct < 0 else 0
+        sentiment_parts.append((score, weight))
+        # Signal is India-market impact, not simply whether the instrument rose or fell.
+        # Rising Brent is negative for India; falling Brent is positive. ADRs follow their price move.
+        sentiment_signal = ("Positive" if score > 0 else "Negative" if score < 0 else "Flat")
+        sentiment_details.append({"Factor": label, "Latest change": f"{pct:+.2f}%", "Signal": sentiment_signal, "Source bar": last["Date"].strftime("%d %b %Y")})
+    except Exception:
+        sentiment_errors.append(f"{label}: unavailable")
+
+# Try multiple public GIFT Nifty quote pages because individual sites may block cloud-hosted requests.
+# These public quotes can be delayed/indicative; never silently substitute a different instrument.
+gift_sources = [
+    ("GiftCityNifty.com", "https://giftcitynifty.com/"),
+    ("Investing.com GIFT Nifty futures", "https://www.investing.com/indices/gift-nifty-50-c1-futures"),
+    ("Moneycontrol indicative quote", "https://www.moneycontrol.com/live-index/gift-nifty"),
+]
+gift_loaded = False
+gift_failures = []
+for gift_source_name, gift_url in gift_sources:
+    try:
+        gift_response = requests.get(
+            gift_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36",
+                "Accept-Language": "en-IN,en;q=0.9",
+            },
+            timeout=10,
+        )
+        gift_response.raise_for_status()
+        gift_html = gift_response.text
+        gift_text = html.unescape(re.sub(r"<[^>]+>", " ", gift_html))
+        gift_text = re.sub(r"\s+", " ", gift_text)
+        # First inspect the browser-rendered page's usual text pattern; also search raw HTML
+        # because some site templates keep quote values in embedded JSON/data attributes.
+        gift_upper = gift_text.upper()
+        gift_anchor = gift_upper.find("GIFT NIFTY NSE IFSC")
+        if gift_anchor < 0:
+            gift_anchor = gift_upper.find("GIFT NIFTY")
+        gift_search_text = gift_text[gift_anchor:gift_anchor + 8000] if gift_anchor >= 0 else gift_text[:8000]
+        gift_match = re.search(
+            r"([+-]?\d[\d,]*\.\d{1,2})\s*\(\s*([+-]?\d+\.\d{1,2})\s*%\s*\)",
+            gift_search_text,
+        )
+        if not gift_match:
+            # Fallback: inspect raw HTML/embedded JSON where whitespace or tags may differ.
+            gift_raw = html.unescape(gift_html).replace("\\u002d", "-").replace("\\/", "/")
+            gift_match = re.search(
+                r"([+-]?\d[\d,]*\.\d{1,2})[^0-9]{0,100}\(\s*([+-]?\d+\.\d{1,2})\s*%\s*\)",
+                gift_raw,
+                flags=re.IGNORECASE,
+            )
+        if not gift_match:
+            # Some templates render the point change and percentage in separate adjacent elements.
+            gift_match = re.search(
+                r"(?:GIFT NIFTY.{0,1200}?)([+-]\d[\d,]*\.\d{1,2}).{0,100}?([+-]\d+\.\d{1,2})\s*%",
+                gift_text,
+                flags=re.IGNORECASE,
+            )
+        if not gift_match:
+            gift_failures.append(f"{gift_source_name}: quote pattern not found")
+            continue
+        gift_change_points = float(gift_match.group(1).replace(",", ""))
+        gift_change_pct = float(gift_match.group(2))
+        gift_score = 1 if gift_change_pct > 0 else -1 if gift_change_pct < 0 else 0
+        sentiment_parts.append((gift_score, 0.40))
+        gift_asof_match = re.search(r"Last updated:\s*([^·]{1,80})", gift_search_text, flags=re.IGNORECASE)
+        gift_asof = gift_asof_match.group(1).strip()[:24] if gift_asof_match else "Timestamp unavailable"
+        sentiment_details.append({
+            "Factor": f"GIFT Nifty · {gift_source_name}",
+            "Latest change": f"{gift_change_pct:+.2f}% ({gift_change_points:+,.2f} pts)",
+            "Signal": "Positive" if gift_score > 0 else "Negative" if gift_score < 0 else "Flat",
+            "Source bar": gift_asof,
+        })
+        gift_loaded = True
+        break
+    except Exception as exc:
+        gift_failures.append(f"{gift_source_name}: {exc.__class__.__name__}")
+if not gift_loaded:
+    # Last visibly confirmed GiftCityNifty.com snapshot supplied by the user.
+    # Show it transparently as stale context only; do not add it to the current weighted score.
+    sentiment_details.append({
+        "Factor": "GIFT Nifty · GiftCityNifty.com (last confirmed snapshot; stale)",
+        "Latest change": "-0.32% (-72.50 pts)",
+        "Signal": "Negative",
+        "Source bar": "24 Oct 2026 · stale",
+    })
+    sentiment_errors.append("GIFT Nifty live quote unavailable; showing the last confirmed 24 Oct snapshot for reference only (" + "; ".join(gift_failures) + ")")
+_sentiment_change("Brent crude (inverse impact)", "BZ=F", 0.20, inverse=True)
+_sentiment_change("USD/INR (inverse impact)", "INR=X", 0.10, inverse=True)
+
+# Fetch the latest NSE-published cash-market FII/FPI and DII net flows.
+# Prefer NSE's JSON endpoint; retain HTML-table parsing as a fallback. Never invent values.
+def _nse_fii_dii_latest():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-IN,en;q=0.9",
+        "Referer": "https://www.nseindia.com/reports/fii-dii",
+        "Connection": "keep-alive",
+    }
+
+    def _number(value):
+        if value is None:
+            return np.nan
+        return pd.to_numeric(str(value).replace(",", "").replace("₹", "").strip(), errors="coerce")
+
+    def _date_text(value):
+        parsed = pd.to_datetime(str(value).strip(), errors="coerce", dayfirst=True)
+        return parsed.strftime("%d %b %Y") if pd.notna(parsed) else str(value).strip() or "Date unavailable"
+
+    def _normalize_records(records):
+        if isinstance(records, dict):
+            records = records.get("data", records.get("dataTable", records.get("rows", [records])))
+        if not isinstance(records, list):
+            return {}
+        rows = []
+        for item in records:
+            if not isinstance(item, dict):
+                continue
+            lowered = {str(k).strip().lower(): v for k, v in item.items()}
+            category = str(lowered.get("category", lowered.get("investorcategory", ""))).upper()
+            if "FII" in category or "FPI" in category:
+                key = "FII/FPI"
+            elif "DII" in category:
+                key = "DII"
+            else:
+                # Some NSE API responses provide the two categories as paired fields.
+                continue
+            net_raw = lowered.get("netvalue", lowered.get("net value", lowered.get("net", None)))
+            if net_raw is None:
+                net_raw = lowered.get("fiinet" if key == "FII/FPI" else "diinet")
+            net_value = _number(net_raw)
+            if pd.isna(net_value):
+                continue
+            date_raw = lowered.get("date", lowered.get("tradedate", ""))
+            parsed_date = pd.to_datetime(str(date_raw), errors="coerce", dayfirst=True)
+            rows.append((key, float(net_value), parsed_date, _date_text(date_raw)))
+        if not rows:
+            # Alternate API shape: one record may contain fiinet/diinet and one shared date.
+            for item in records:
+                if not isinstance(item, dict):
+                    continue
+                lowered = {str(k).strip().lower(): v for k, v in item.items()}
+                date_raw = lowered.get("date", "")
+                parsed_date = pd.to_datetime(str(date_raw), errors="coerce", dayfirst=True)
+                for key, field in [("FII/FPI", "fiinet"), ("DII", "diinet")]:
+                    value = _number(lowered.get(field))
+                    if pd.notna(value):
+                        rows.append((key, float(value), parsed_date, _date_text(date_raw)))
+        result = {}
+        for key, net_value, parsed_date, date_label in rows:
+            current = result.get(key)
+            if current is None or (pd.notna(parsed_date) and (pd.isna(current.get("_parsed_date")) or parsed_date > current["_parsed_date"])):
+                result[key] = {"net": net_value, "date": date_label, "_parsed_date": parsed_date}
+        for value in result.values():
+            value.pop("_parsed_date", None)
+        return result if "FII/FPI" in result and "DII" in result else {}
+
+    session = requests.Session()
+    try:
+        # Warm the session to obtain the NSE cookies required by its data endpoint.
+        session.get("https://www.nseindia.com/", headers=headers, timeout=10)
+        api_response = session.get("https://www.nseindia.com/api/fiidiiTradeReact", headers=headers, timeout=15)
+        api_response.raise_for_status()
+        api_data = api_response.json()
+        normalized = _normalize_records(api_data)
+        if normalized:
+            return normalized
+    except Exception:
+        pass
+
+    # Fallback: parse the official NSE report tables if the JSON endpoint is blocked or changes.
+    try:
+        page_response = session.get("https://www.nseindia.com/reports/fii-dii", headers=headers, timeout=15)
+        page_response.raise_for_status()
+        for table in pd.read_html(page_response.text):
+            table = table.copy()
+            if isinstance(table.columns, pd.MultiIndex):
+                table.columns = [" ".join(str(part) for part in col if str(part) != "nan").strip() for col in table.columns]
+            cols = {str(col).strip().lower(): col for col in table.columns}
+            category_col = next((col for name, col in cols.items() if "category" in name), None)
+            net_col = next((col for name, col in cols.items() if "net value" in name), None)
+            date_col = next((col for name, col in cols.items() if name == "date" or name.endswith(" date") or "date" in name), None)
+            if category_col is None or net_col is None:
+                continue
+            records = []
+            for _, row in table.iterrows():
+                category = str(row.get(category_col, "")).strip().upper()
+                if "FII" not in category and "FPI" not in category and "DII" not in category:
+                    continue
+                records.append({
+                    "category": category,
+                    "date": row.get(date_col, "") if date_col is not None else "",
+                    "netValue": row.get(net_col),
+                })
+            normalized = _normalize_records(records)
+            if normalized:
+                return normalized
+    except Exception:
+        pass
+    return {}
+
+fii_dii_flows = _nse_fii_dii_latest()
+for flow_name, flow_weight in [("FII/FPI", 0.075), ("DII", 0.075)]:
+    flow = fii_dii_flows.get(flow_name)
+    if flow is None:
+        sentiment_errors.append(f"{flow_name} cash-market flow: unavailable from NSE")
+        sentiment_details.append({"Factor": f"{flow_name} net flow (NSE cash market)", "Latest change": "Unavailable", "Signal": "Unavailable", "Source bar": "NSE data not retrieved"})
+        continue
+    net_flow = flow["net"]
+    flow_score = 1 if net_flow > 0 else -1 if net_flow < 0 else 0
+    sentiment_parts.append((flow_score, flow_weight))
+    sentiment_details.append({
+        "Factor": f"{flow_name} net flow (NSE cash market)",
+        "Latest change": f"₹{net_flow:+,.2f} crore",
+        "Signal": "Positive" if flow_score > 0 else "Negative" if flow_score < 0 else "Flat",
+        "Source bar": flow["date"],
+    })
+_sentiment_change("Infosys ADR", "INFY", 0.15, inverse=False)
+_sentiment_change("Wipro ADR", "WIT", 0.10, inverse=False)
+_sentiment_change("HDFC Bank ADR", "HDB", 0.075, inverse=False)
+_sentiment_change("ICICI Bank ADR", "IBN", 0.075, inverse=False)
+_sentiment_change("Reliance Industries GDR", "RIGD.L", 0.075, inverse=False)
+# Do not publish a confident full-market direction when the highest-weight GIFT Nifty cue is missing.
+# Partial score remains visible for transparency, but the headline is explicitly marked incomplete.
+gift_available = any(str(item.get("Factor", "")).startswith("GIFT Nifty") for item in sentiment_details)
+sentiment_weight = sum(weight for _, weight in sentiment_parts)
+sentiment_score = sum(score * weight for score, weight in sentiment_parts) / sentiment_weight if sentiment_weight else np.nan
+if not gift_available:
+    sentiment_color, sentiment_label = "#f59e0b", "INCOMPLETE · GIFT Nifty unavailable"
+elif pd.notna(sentiment_score) and sentiment_score >= 0.25:
+    sentiment_color, sentiment_label = "#22c55e", "POSITIVE · Bullish bias"
+elif pd.notna(sentiment_score) and sentiment_score <= -0.25:
+    sentiment_color, sentiment_label = "#ef4444", "NEGATIVE · Bearish bias"
+elif pd.notna(sentiment_score):
+    sentiment_color, sentiment_label = "#f59e0b", "MIXED · Wait for confirmation"
+else:
+    sentiment_color, sentiment_label = "#94a3b8", "UNAVAILABLE · Insufficient market cues"
+# Compact layout: keep the existing font sizes, put the summary in a single horizontal strip,
+# then give the complete factor table the full available width.
+st.markdown(
+    f'<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 22px;'
+    f'border:1px solid #343a46;border-left:5px solid {sentiment_color};border-radius:12px;'
+    f'padding:10px 14px;margin-bottom:10px;">'
+    f'<div style="font-size:13px;color:#aeb6c2;">PREDICTED NIFTY DIRECTION</div>'
+    f'<div style="font-size:clamp(19px,2.8vw,27px);font-weight:750;color:{sentiment_color};">{sentiment_label}</div>'
+    f'<div style="font-size:12px;color:#aeb6c2;">Weighted cue score: {f"{sentiment_score:+.2f}" if pd.notna(sentiment_score) else "—"}</div>'
+    f'<div style="font-size:12px;color:#aeb6c2;">Updated {now_ist:%d %b %Y %H:%M IST}</div>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
+if sentiment_details:
+    sentiment_df = pd.DataFrame(sentiment_details)
+
+    def _sentiment_cell_style(value):
+        text_value = str(value).strip().lower()
+        if text_value == "positive":
+            return "color: #22c55e; font-weight: 700; background-color: rgba(34,197,94,0.10)"
+        if text_value == "negative":
+            return "color: #ef4444; font-weight: 700; background-color: rgba(239,68,68,0.10)"
+        if text_value == "flat":
+            return "color: #f59e0b; font-weight: 700; background-color: rgba(245,158,11,0.10)"
+        return ""
+
+    def _sentiment_change_style(row):
+        signal = str(row.get("Signal", "")).lower()
+        if signal == "positive":
+            color = "#22c55e"
+        elif signal == "negative":
+            color = "#ef4444"
+        else:
+            color = "#f59e0b"
+        return [f"color: {color}; font-weight: 600" if col == "Latest change" else "" for col in row.index]
+
+    styled_sentiment = sentiment_df.style.applymap(_sentiment_cell_style, subset=["Signal"]).apply(_sentiment_change_style, axis=1)
+    st.dataframe(styled_sentiment, use_container_width=True, hide_index=True)
+else:
+    st.warning("No usable global cue data returned. No direction is guessed.")
+# Unavailable-factor details are retained in sentiment_errors but not displayed.
+# Hidden sentiment methodology note retained in code; keep the panel visually concise.
+
+# At-a-glance regime panel is intentionally placed above the navigation tabs.
+st.subheader("Market regime & trend strength")
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_nifty500_symbols() -> tuple[list[str], str | None]:
+    """Fetch the official NIFTY 500 constituent list; return NSE Yahoo Finance tickers."""
+    url = "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv"
+    try:
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        response.raise_for_status()
+        frame = pd.read_csv(pd.io.common.BytesIO(response.content))
+        if "Symbol" not in frame.columns:
+            return [], "The NIFTY 500 constituent file did not contain a Symbol column."
+        symbols = sorted({
+            str(value).strip().upper() + ".NS"
+            for value in frame["Symbol"].dropna()
+            if str(value).strip()
+        })
+        return symbols, None
+    except Exception as exc:
+        return [], f"NIFTY 500 constituent list unavailable ({exc.__class__.__name__})."
+
+nifty500_symbols, nifty500_symbols_error = get_nifty500_symbols()
+regime_options = list(INDEXES.keys())
+if nifty500_symbols:
+    regime_options += [ticker.removesuffix(".NS") for ticker in nifty500_symbols]
+overview_regime_name = st.selectbox(
+    "Regime instrument",
+    regime_options,
+    index=0,
+    key="overview_regime_symbol",
+    help="Includes the standard indices and the current official NIFTY 500 constituent list."
+)
+if overview_regime_name in market_data:
+    overview_regime_df = market_data[overview_regime_name]
+else:
+    overview_regime_df, overview_regime_error = get_history(overview_regime_name + ".NS", period, "1d")
+    if overview_regime_df.empty:
+        st.warning(f"History unavailable for {overview_regime_name}: {overview_regime_error or nifty500_symbols_error or 'No source data returned.'}")
+if overview_regime_df.empty or len(overview_regime_df) < 30:
+    st.warning("Insufficient returned OHLC history to assess regime. No regime label generated.")
+else:
+    overview_rc = indicators(overview_regime_df).copy()
+    if {"High", "Low", "Close"}.issubset(overview_rc.columns):
+        overview_prevc = overview_rc["Close"].shift(1)
+        overview_tr = pd.concat([(overview_rc["High"]-overview_rc["Low"]), (overview_rc["High"]-overview_prevc).abs(), (overview_rc["Low"]-overview_prevc).abs()], axis=1).max(axis=1)
+        overview_up = overview_rc["High"].diff()
+        overview_down = -overview_rc["Low"].diff()
+        overview_plus_dm = overview_up.where((overview_up > overview_down) & (overview_up > 0), 0.0)
+        overview_minus_dm = overview_down.where((overview_down > overview_up) & (overview_down > 0), 0.0)
+        overview_atr14 = overview_tr.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+        overview_pdi = 100 * overview_plus_dm.ewm(alpha=1/14, min_periods=14, adjust=False).mean() / overview_atr14.replace(0, np.nan)
+        overview_mdi = 100 * overview_minus_dm.ewm(alpha=1/14, min_periods=14, adjust=False).mean() / overview_atr14.replace(0, np.nan)
+        overview_dx = 100 * (overview_pdi-overview_mdi).abs() / (overview_pdi+overview_mdi).replace(0, np.nan)
+        overview_adx = overview_dx.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+        overview_last = overview_rc.iloc[-1]
+        overview_adx_value = overview_adx.iloc[-1]
+        overview_rsi_value = overview_last.get("RSI 14", np.nan)
+        overview_close = overview_last["Close"]
+        overview_ema20 = overview_last.get("EMA 20", np.nan)
+        overview_ema50 = overview_last.get("EMA 50", np.nan)
+        overview_regime = "Insufficient indicator history"
+        if pd.notna(overview_adx_value) and pd.notna(overview_ema20) and pd.notna(overview_ema50):
+            if overview_adx_value >= 25 and overview_close > overview_ema20 > overview_ema50:
+                overview_regime = "Trending bullish"
+            elif overview_adx_value >= 25 and overview_close < overview_ema20 < overview_ema50:
+                overview_regime = "Trending bearish"
+            elif overview_adx_value < 20:
+                overview_regime = "Range / weak trend"
+            else:
+                overview_regime = "Transition / mixed"
+        # Return % is in percentage points; convert to decimal before annualizing.
+        overview_vol = overview_rc["Return %"].rolling(20).std().iloc[-1] / 100 * np.sqrt(252)
+        # Weekly EMA 200 distance is always measured for NIFTY 50, regardless of the selected regime instrument.
+        weekly_ema200 = np.nan
+        weekly_nifty_close = np.nan
+        weekly_nifty_timestamp = "Unavailable"
+        weekly_ema_error = None
+        try:
+            weekly_nifty = yf.download("^NSEI", period="10y", interval="1wk", auto_adjust=False, progress=False, threads=False)
+            if not weekly_nifty.empty:
+                if isinstance(weekly_nifty.columns, pd.MultiIndex):
+                    weekly_nifty.columns = weekly_nifty.columns.get_level_values(0)
+                weekly_nifty = weekly_nifty.rename_axis("Date").reset_index()
+                weekly_nifty.columns = [str(c).strip().title() for c in weekly_nifty.columns]
+                if "Close" in weekly_nifty.columns:
+                    weekly_nifty["Close"] = pd.to_numeric(weekly_nifty["Close"], errors="coerce")
+                    weekly_nifty = weekly_nifty.dropna(subset=["Close"]).sort_values("Date")
+                    if len(weekly_nifty) >= 200:
+                        weekly_nifty_close = float(weekly_nifty["Close"].iloc[-1])
+                        weekly_ema200 = float(weekly_nifty["Close"].ewm(span=200, adjust=False, min_periods=200).mean().iloc[-1])
+                        weekly_nifty_timestamp = pd.to_datetime(weekly_nifty["Date"].iloc[-1]).strftime("%d %b %Y")
+                    else:
+                        weekly_ema_error = "Fewer than 200 weekly closes returned"
+                else:
+                    weekly_ema_error = "Weekly Close column unavailable"
+            else:
+                weekly_ema_error = "Yahoo Finance returned no weekly NIFTY data"
+        except Exception as exc:
+            weekly_ema_error = f"Weekly data unavailable ({exc.__class__.__name__})"
+        weekly_ema_gap_pct = ((weekly_nifty_close / weekly_ema200) - 1) * 100 if pd.notna(weekly_nifty_close) and pd.notna(weekly_ema200) and weekly_ema200 != 0 else np.nan
+
+        # NIFTY 50 PCR uses actual aggregate put/call open interest from FYERS; no guessed fallback.
+        nifty_pcr = np.nan
+        nifty_pcr_status = "Connect FYERS for live option-chain PCR"
+        nifty_pcr_source_time = "Unavailable"
+        if st.session_state.get("fyers_access_token") and fyers_credentials():
+            try:
+                pcr_app_id = fyers_credentials()[0]
+                pcr_token = st.session_state["fyers_access_token"]
+                pcr_chain, pcr_error = fyers_option_chain(pcr_app_id, pcr_token, "NSE:NIFTY50-INDEX", strikecount=10)
+                if not pcr_error:
+                    pcr_rows = pcr_chain.get("optionsChain") or pcr_chain.get("options_chain") or []
+                    pcr_calls = [row for row in pcr_rows if str(row.get("option_type", "")).upper() == "CE"]
+                    pcr_puts = [row for row in pcr_rows if str(row.get("option_type", "")).upper() == "PE"]
+                    pcr_call_oi = pcr_chain.get("callOi")
+                    pcr_put_oi = pcr_chain.get("putOi")
+                    if pcr_call_oi is None:
+                        pcr_call_oi = sum(float(row.get("oi") or 0) for row in pcr_calls)
+                    if pcr_put_oi is None:
+                        pcr_put_oi = sum(float(row.get("oi") or 0) for row in pcr_puts)
+                    if float(pcr_call_oi or 0) > 0:
+                        nifty_pcr = float(pcr_put_oi or 0) / float(pcr_call_oi)
+                        nifty_pcr_status = "Bounce-back chances are high" if nifty_pcr < 0.6 else "Coming-down chances are high" if nifty_pcr > 1.4 else "Neutral PCR range"
+                        nifty_pcr_source_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y %H:%M IST")
+                    else:
+                        nifty_pcr_status = "PCR unavailable: call OI is zero or missing"
+                else:
+                    nifty_pcr_status = "FYERS option-chain unavailable"
+            except Exception:
+                nifty_pcr_status = "FYERS option-chain unavailable"
+        if pd.notna(nifty_pcr) and nifty_pcr < 0.6:
+            nifty_pcr_color = "#22c55e"
+        elif pd.notna(nifty_pcr) and nifty_pcr > 1.4:
+            nifty_pcr_color = "#ef4444"
+        elif pd.notna(nifty_pcr):
+            nifty_pcr_color = "#f59e0b"
+        else:
+            nifty_pcr_color = "#94a3b8"
+
+        if pd.notna(weekly_ema_gap_pct) and weekly_ema_gap_pct >= 13:
+            weekly_ema_color = "#ef4444"
+            weekly_ema_status = "Extended · elevated pullback risk"
+        elif pd.notna(weekly_ema_gap_pct) and weekly_ema_gap_pct <= 3:
+            weekly_ema_color = "#22c55e"
+            weekly_ema_status = "Near weekly EMA 200"
+        elif pd.notna(weekly_ema_gap_pct) and weekly_ema_gap_pct < 0:
+            weekly_ema_color = "#22c55e"
+            weekly_ema_status = "Below weekly EMA 200"
+        elif pd.notna(weekly_ema_gap_pct):
+            weekly_ema_color = "#f59e0b"
+            weekly_ema_status = "Moderately above weekly EMA 200"
+        else:
+            weekly_ema_color = "#94a3b8"
+            weekly_ema_status = "Insufficient weekly history"
+        regime_cols = st.columns([1.1, 0.8, 0.8, 1.15, 1.15])
+        regime_color = "#22c55e" if overview_regime == "Trending bullish" else "#ef4444" if overview_regime == "Trending bearish" else "#f59e0b"
+        regime_cols[0].markdown(
+            f'<div style="border:1px solid #343a46;border-radius:12px;padding:12px 14px;min-height:92px;">'
+            f'<div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">Market regime</div>'
+            f'<div style="font-size:clamp(16px,2.8vw,25px);line-height:1.25;font-weight:650;color:{regime_color};overflow-wrap:anywhere;">{overview_regime}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        adx_color = "#22c55e" if pd.notna(overview_adx_value) and overview_adx_value >= 25 else "#f59e0b" if pd.notna(overview_adx_value) and overview_adx_value >= 20 else "#94a3b8"
+        rsi_color = "#ef4444" if pd.notna(overview_rsi_value) and overview_rsi_value < 30 else "#22c55e" if pd.notna(overview_rsi_value) and overview_rsi_value > 70 else "#f59e0b" if pd.notna(overview_rsi_value) and (overview_rsi_value >= 60 or overview_rsi_value <= 40) else "#94a3b8"
+        regime_cols[1].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {adx_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">ADX 14 · trend strength</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{adx_color};">{fmt(overview_adx_value)}</div><div style="font-size:12px;color:#aeb6c2;">{ "Strong trend" if pd.notna(overview_adx_value) and overview_adx_value >= 25 else "Trend building" if pd.notna(overview_adx_value) and overview_adx_value >= 20 else "Weak trend" }</div></div>', unsafe_allow_html=True)
+        regime_cols[2].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {rsi_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">RSI 14 · momentum</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{rsi_color};">{fmt(overview_rsi_value)}</div><div style="font-size:12px;color:#aeb6c2;">{ "Oversold" if pd.notna(overview_rsi_value) and overview_rsi_value < 30 else "Overbought" if pd.notna(overview_rsi_value) and overview_rsi_value > 70 else "Bullish momentum" if pd.notna(overview_rsi_value) and overview_rsi_value >= 60 else "Bearish momentum" if pd.notna(overview_rsi_value) and overview_rsi_value <= 40 else "Neutral" }</div></div>', unsafe_allow_html=True)
+        weekly_close_text = f"{weekly_nifty_close:,.2f}" if pd.notna(weekly_nifty_close) else "—"
+        weekly_ema_text = f"{weekly_ema200:,.2f}" if pd.notna(weekly_ema200) else "—"
+        weekly_gap_text = f"{weekly_ema_gap_pct:+.2f}%" if pd.notna(weekly_ema_gap_pct) else "—"
+        weekly_subtext = weekly_ema_status if pd.notna(weekly_ema_gap_pct) else weekly_ema_error or weekly_ema_status
+        regime_cols[3].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {weekly_ema_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY · Weekly EMA 200 gap</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{weekly_ema_color};">{weekly_gap_text}</div><div style="font-size:12px;color:#aeb6c2;">Close {weekly_close_text} · EMA {weekly_ema_text}</div><div style="font-size:12px;color:{weekly_ema_color};margin-top:4px;">{weekly_subtext}</div></div>', unsafe_allow_html=True)
+        nifty_pcr_text = f"{nifty_pcr:.2f}" if pd.notna(nifty_pcr) else "—"
+        regime_cols[4].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {nifty_pcr_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY 50 · PCR (OI)</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{nifty_pcr_color};">{nifty_pcr_text}</div><div style="font-size:12px;color:{nifty_pcr_color};margin-top:4px;">{nifty_pcr_status}</div><div style="font-size:11px;color:#aeb6c2;margin-top:4px;">Source: FYERS · {nifty_pcr_source_time}</div></div>', unsafe_allow_html=True)
+        # Compact Fear & Greed proxy beside the existing price trend chart.
+        # This is an explicitly labelled dashboard-derived proxy, not an official NSE index.
+        st.markdown("#### Price trend")
+        trend_col, fear_col = st.columns([2, 1], gap="small")
+        trend_fig = go.Figure()
+        trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["Close"], name="Close", mode="lines", line=dict(color="#60a5fa", width=2)))
+        if "EMA 20" in overview_rc:
+            trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 20"], name="EMA 20", mode="lines", line=dict(color="#f59e0b", width=1.5)))
+        if "EMA 50" in overview_rc:
+            trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 50"], name="EMA 50", mode="lines", line=dict(color="#a78bfa", width=1.5)))
+        trend_fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified", xaxis_title="Source candle date", yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0))
+        with trend_col:
+            st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
+        with fear_col:
+            fear_score = np.nan
+            fear_components = []
+            recent_rc = overview_rc.dropna(subset=["Close"]).copy()
+            if len(recent_rc) >= 20:
+                # RSI contribution: RSI 50 maps to neutral; 0..100 maps to the same scale.
+                rsi_series = recent_rc["RSI 14"] if "RSI 14" in recent_rc.columns else pd.Series(dtype=float)
+                if not rsi_series.dropna().empty:
+                    fear_components.append((float(np.clip(rsi_series.dropna().iloc[-1], 0, 100)), 0.35))
+                # Trend contribution: close vs EMA 20 and EMA 50, mapped around neutral.
+                trend_parts = []
+                for ema_col in ["EMA 20", "EMA 50"]:
+                    if ema_col in recent_rc.columns and pd.notna(recent_rc[ema_col].iloc[-1]) and recent_rc[ema_col].iloc[-1] != 0:
+                        gap_pct = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc[ema_col].iloc[-1]) - 1) * 100
+                        trend_parts.append(float(np.clip(50 + gap_pct * 12, 0, 100)))
+                if trend_parts:
+                    fear_components.append((float(np.mean(trend_parts)), 0.40))
+                # Medium-term momentum: 20-session return mapped around neutral.
+                if len(recent_rc) >= 21 and recent_rc["Close"].iloc[-21] != 0:
+                    ret20 = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc["Close"].iloc[-21]) - 1) * 100
+                    fear_components.append((float(np.clip(50 + ret20 * 8, 0, 100)), 0.15))
+                # India VIX: higher volatility tilts the proxy toward fear.
+                vix_frame = market_data.get("India VIX", pd.DataFrame())
+                vix_snap = quote_snapshot(vix_frame) if not vix_frame.empty else None
+                if vix_snap:
+                    vix_value = float(vix_snap[0]["Close"])
+                    fear_components.append((float(np.clip(100 - vix_value * 3, 0, 100)), 0.10))
+                if fear_components:
+                    fear_weight = sum(weight for _, weight in fear_components)
+                    fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
+            if pd.notna(fear_score):
+                fear_score = int(round(float(np.clip(fear_score, 0, 100))))
+                fear_label = "Extreme Fear" if fear_score < 20 else "Fear" if fear_score < 40 else "Neutral" if fear_score < 60 else "Greed" if fear_score < 80 else "Extreme Greed"
+                fear_color = "#ef4444" if fear_score < 20 else "#f97316" if fear_score < 40 else "#f59e0b" if fear_score < 60 else "#84cc16" if fear_score < 80 else "#16a34a"
+                gauge_fig = go.Figure(go.Indicator(
+                    mode="gauge+number",
+                    value=fear_score,
+                    number={"font": {"size": 30, "color": fear_color}, "suffix": "/100"},
+                    title={"text": "Fear & Greed<br><span style='font-size:11px;color:#aeb6c2'>Market proxy</span>", "font": {"size": 15}},
+                    gauge={
+                        "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 20, 40, 60, 80, 100], "ticktext": ["0", "20", "40", "60", "80", "100"], "tickfont": {"size": 9}},
+                        "bar": {"color": fear_color, "thickness": 0.22},
+                        "bgcolor": "#11151d",
+                        "borderwidth": 0,
+                        "steps": [
+                            {"range": [0, 20], "color": "#7f1d1d"},
+                            {"range": [20, 40], "color": "#c2410c"},
+                            {"range": [40, 60], "color": "#b45309"},
+                            {"range": [60, 80], "color": "#4d7c0f"},
+                            {"range": [80, 100], "color": "#047857"},
+                        ],
+                        "threshold": {"line": {"color": "#e5e7eb", "width": 2}, "thickness": 0.8, "value": fear_score},
+                    },
+                ))
+                gauge_fig.update_layout(template="plotly_dark", height=250, margin=dict(l=8,r=8,t=48,b=8), paper_bgcolor="rgba(0,0,0,0)")
+                fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
+                fear_col.markdown(f'<div style="text-align:center;font-weight:700;color:{fear_color};font-size:16px;margin-top:-8px;">{fear_label}</div>', unsafe_allow_html=True)
+                fear_col.caption("Proxy score from RSI, EMA trend, 20-session momentum and India VIX. Not an official index or trading signal.")
+            else:
+                fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
+
+# Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
+st.markdown("### Leading sectors vs NIFTY 50")
+st.caption("Top 3 sectors ranked by relative performance versus NIFTY 50 over the latest 5 trading sessions. Cards are ranked by weekly outperformance; 1-month relative performance is shown for confirmation.")
+leading_sector_rows = []
+with st.spinner("Checking weekly sector momentum…"):
+    weekly_nifty_df, weekly_nifty_err = get_history("^NSEI", "3mo", "1d")
+    weekly_nifty_close = weekly_nifty_df["Close"].dropna() if not weekly_nifty_df.empty else pd.Series(dtype=float)
+    if len(weekly_nifty_close) >= 6:
+        nifty_week_return = (float(weekly_nifty_close.iloc[-1]) / float(weekly_nifty_close.iloc[-6]) - 1) * 100
+        nifty_month_return = (float(weekly_nifty_close.iloc[-1]) / float(weekly_nifty_close.iloc[-22]) - 1) * 100 if len(weekly_nifty_close) >= 22 else np.nan
+        for sector, ticker in SECTOR_TICKERS.items():
+            sector_df, sector_err = get_history(ticker, "3mo", "1d")
+            if not sector_df.empty:
+                sector_close = sector_df["Close"].dropna()
+                if len(sector_close) >= 6 and len(weekly_nifty_close) >= 6:
+                    sector_week_return = (float(sector_close.iloc[-1]) / float(sector_close.iloc[-6]) - 1) * 100
+                    sector_month_return = (float(sector_close.iloc[-1]) / float(sector_close.iloc[-22]) - 1) * 100 if len(sector_close) >= 22 else np.nan
+                    relative_week = sector_week_return - nifty_week_return
+                    relative_month = sector_month_return - nifty_month_return if pd.notna(sector_month_return) and pd.notna(nifty_month_return) else np.nan
+                    if pd.notna(relative_week):
+                        leading_sector_rows.append({
+                            "Sector": sector,
+                            "Sector 1W (%)": sector_week_return,
+                            "NIFTY 1W (%)": nifty_week_return,
+                            "1W outperformance (pp)": relative_week,
+                            "1M outperformance (pp)": relative_month,
+                        })
+if leading_sector_rows:
+    leading_df = pd.DataFrame(leading_sector_rows)
+    ranked_sectors = leading_df.sort_values("1W outperformance (pp)", ascending=False).copy()
+    leaders = ranked_sectors[ranked_sectors["1W outperformance (pp)"] > 0].head(3).copy()
+    current_top_names = leaders["Sector"].tolist()
+    previous_top_names = st.session_state.get("previous_top_3_sectors")
+    if previous_top_names is not None:
+        entered = [name for name in current_top_names if name not in previous_top_names]
+        exited = [name for name in previous_top_names if name not in current_top_names]
+        if entered or exited:
+            alert_parts = []
+            if entered:
+                alert_parts.append("New sector(s) entering top 3: " + ", ".join(entered))
+            if exited:
+                alert_parts.append("Sector(s) leaving top 3: " + ", ".join(exited))
+            st.warning("🔔 Sector leadership changed · " + " · ".join(alert_parts))
+    st.session_state["previous_top_3_sectors"] = current_top_names
+    if leaders.empty:
+        st.info("No sector is outperforming NIFTY 50 over the latest 5 trading sessions.")
+    else:
+        leader_cols = st.columns(len(leaders))
+        for leader_col, (_, leader) in zip(leader_cols, leaders.iterrows()):
+            month_confirmation = f'{leader["1M outperformance (pp)"]:+.2f} pp' if pd.notna(leader["1M outperformance (pp)"]) else "N/A"
+            leader_col.markdown(
+                f'<div style="border:1px solid #166534;border-left:4px solid #22c55e;border-radius:12px;padding:12px 14px;min-height:118px;background:rgba(34,197,94,0.08);">'
+                f'<div style="font-size:13px;color:#86efac;margin-bottom:8px;">{leader["Sector"]}</div>'
+                f'<div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:#22c55e;">+{leader["1W outperformance (pp)"]:.2f} pp</div>'
+                f'<div style="font-size:12px;color:#a7f3d0;">1W: sector {leader["Sector 1W (%)"]:+.2f}% · NIFTY {leader["NIFTY 1W (%)"]:+.2f}%</div>'
+                f'<div style="font-size:12px;color:#a7f3d0;">1M relative strength: {month_confirmation}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+else:
+    st.info("Weekly sector momentum is temporarily unavailable because usable 3-month daily history was not returned.")
+
+st.markdown("""<div style="font-size:clamp(28px,4vw,42px);font-weight:850;letter-spacing:-1.2px;line-height:1.15;margin:8px 0 6px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Liquidity Board</div>""", unsafe_allow_html=True)
+st.caption("Ranked daily-candle setups · green = bullish, red = bearish. Public data may be delayed.")
+with st.expander("Scan bullish/bearish setups and liquidity sweeps", expanded=False):
+    ob_lookback = st.selectbox("Structure lookback", ["20 sessions", "40 sessions", "60 sessions"], index=0, key="ob_lookback")
+    ob_volume_mode = st.selectbox(
+        "Volume confirmation",
+        ["Off", "On — require at least 1.2× 20-day average"],
+        index=0,
+        key="ob_volume_mode_select",
+        help="When On, liquidity-sweep signals are confirmed only when the latest volume is at least 1.2 times the previous 20-session average."
+    )
+    ob_volume_filter = ob_volume_mode.startswith("On")
+    ob_scan = st.button("Scan NIFTY 50 liquid stocks", key="ob_scan_button", type="primary")
+    if ob_scan:
+        ob_days = int(ob_lookback.split()[0])
+        ob_symbols = [
+            "SBIN.NS", "AXISBANK.NS", "TITAN.NS", "INFY.NS", "WIPRO.NS",
+            "HCLTECH.NS", "HDFCBANK.NS", "ICICIBANK.NS", "RELIANCE.NS", "TCS.NS",
+            "LT.NS", "BHARTIARTL.NS", "BAJFINANCE.NS", "TRENT.NS", "BEL.NS",
+            "SUNPHARMA.NS", "MARUTI.NS", "TATAMOTORS.NS", "NTPC.NS", "ADANIPORTS.NS"
+        ]
+        ob_rows = []
+        with st.spinner("Scanning daily candles and volume…"):
+            for ob_symbol in ob_symbols:
+                ob_df, ob_error = get_history(ob_symbol, "6mo", "1d")
+                if ob_df.empty or len(ob_df) < max(ob_days + 2, 25) or not {"Open","High","Low","Close","Volume"}.issubset(ob_df.columns):
+                    continue
+                ob_df = ob_df.dropna(subset=["Open","High","Low","Close"]).copy()
+                last = ob_df.iloc[-1]
+                prior = ob_df.iloc[-ob_days-1:-1]
+                if prior.empty:
+                    continue
+                prev_high = float(prior["High"].max())
+                prev_low = float(prior["Low"].min())
+                close = float(last["Close"])
+                open_ = float(last["Open"])
+                high = float(last["High"])
+                low = float(last["Low"])
+                prev_close = float(ob_df["Close"].iloc[-2])
+                day_change = (close / prev_close - 1) * 100 if prev_close else np.nan
+                avg_vol = pd.to_numeric(ob_df["Volume"].iloc[-21:-1], errors="coerce").mean()
+                last_vol = pd.to_numeric(last.get("Volume"), errors="coerce")
+                volume_ratio = float(last_vol / avg_vol) if pd.notna(last_vol) and pd.notna(avg_vol) and avg_vol > 0 else np.nan
+                sweep_low = low < prev_low and close > prev_low
+                sweep_high = high > prev_high and close < prev_high
+                volume_ok = (pd.notna(volume_ratio) and volume_ratio >= 1.2) if ob_volume_filter else True
+                # Heuristic demand/supply zones: last opposing candle before a 3-candle displacement.
+                recent = ob_df.tail(8).reset_index(drop=True)
+                demand_zone = None
+                supply_zone = None
+                for j in range(len(recent)-2, 0, -1):
+                    candle = recent.iloc[j]
+                    next_candle = recent.iloc[j+1]
+                    if float(candle["Close"]) < float(candle["Open"]) and float(next_candle["Close"]) > float(candle["High"]):
+                        demand_zone = (float(candle["Low"]), float(max(candle["Open"], candle["Close"])))
+                        break
+                for j in range(len(recent)-2, 0, -1):
+                    candle = recent.iloc[j]
+                    next_candle = recent.iloc[j+1]
+                    if float(candle["Close"]) > float(candle["Open"]) and float(next_candle["Close"]) < float(candle["Low"]):
+                        supply_zone = (float(min(candle["Open"], candle["Close"])), float(candle["High"]))
+                        break
+                if sweep_low and volume_ok:
+                    bias, reason = "Bullish", "Sell-side liquidity sweep"
+                elif sweep_high and volume_ok:
+                    bias, reason = "Bearish", "Buy-side liquidity sweep"
+                elif close > prev_high and day_change > 0:
+                    bias, reason = "Bullish", f"Breakout above {ob_days}-session high"
+                elif close < prev_low and day_change < 0:
+                    bias, reason = "Bearish", f"Breakdown below {ob_days}-session low"
+                elif close > open_ and day_change > 0:
+                    bias, reason = "Bullish", "Positive daily candle"
+                elif close < open_ and day_change < 0:
+                    bias, reason = "Bearish", "Negative daily candle"
+                else:
+                    bias, reason = "Mixed", "No clear daily direction"
+                ob_rows.append({
+                    "Symbol": ob_symbol.removesuffix(".NS"),
+                    "Bias": bias,
+                    "Daily change (%)": day_change,
+                    "Volume / 20D avg": volume_ratio,
+                    "Liquidity event": "Sweep low · bullish reversal proxy" if sweep_low else "Sweep high · bearish reversal proxy" if sweep_high else "None detected",
+                    "Setup": reason,
+                    "Demand zone (approx.)": f"{demand_zone[0]:.2f}–{demand_zone[1]:.2f}" if demand_zone else "Not detected",
+                    "Supply zone (approx.)": f"{supply_zone[0]:.2f}–{supply_zone[1]:.2f}" if supply_zone else "Not detected",
+                    "Latest candle": last["Date"].strftime("%d %b %Y"),
+                })
+        ob_results = pd.DataFrame(ob_rows)
+        if ob_results.empty:
+            st.warning("No usable OHLCV data returned. Try again later; no sample values are substituted.")
+        else:
+            ob_results = ob_results.sort_values("Daily change (%)", ascending=False, na_position="last")
+            st.session_state["ob_scan_results"] = ob_results
+    if "ob_scan_results" in st.session_state:
+        ob_results = st.session_state["ob_scan_results"]
+        bull, bear = st.columns(2)
+        bullish = ob_results[ob_results["Bias"] == "Bullish"].sort_values("Daily change (%)", ascending=False).head(3)
+        bearish = ob_results[ob_results["Bias"] == "Bearish"].sort_values("Daily change (%)", ascending=True).head(3)
+        with bull:
+            st.markdown("""<div style="font-size:20px;font-weight:750;color:#20dda0;margin:8px 0 12px;">↗ Strongest bullish setups</div>""", unsafe_allow_html=True)
+            if bullish.empty:
+                st.info("No bullish setups detected.")
+            else:
+                for rank, (_, item) in enumerate(bullish.iterrows(), 1):
+                    vol_label = f"{item['Volume / 20D avg']:.2f}× 20D avg volume" if pd.notna(item["Volume / 20D avg"]) else "Volume unavailable"
+                    st.markdown(
+                        f'<div style="background:#0d1219;border:1px solid #24313d;border-left:4px solid #20dda0;border-radius:18px;padding:14px 16px;margin:0 0 10px 0;">'
+                        f'<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">'
+                        f'<span style="font-size:17px;font-weight:750;color:#f3f6fa;">{rank}. {item["Symbol"]}</span>'
+                        f'<span style="font-size:17px;font-weight:750;color:#20dda0;">{item["Daily change (%)"]:+.2f}%</span></div>'
+                        f'<div style="color:#c5d0dc;font-size:13px;margin-top:8px;">{item["Setup"]}</div>'
+                        f'<div style="color:#7eeac1;font-size:12px;margin-top:5px;">✓ {vol_label}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+        with bear:
+            st.markdown("""<div style="font-size:20px;font-weight:750;color:#ff647c;margin:8px 0 12px;">↘ Strongest bearish setups</div>""", unsafe_allow_html=True)
+            if bearish.empty:
+                st.info("No bearish setups detected.")
+            else:
+                for rank, (_, item) in enumerate(bearish.iterrows(), 1):
+                    vol_label = f"{item['Volume / 20D avg']:.2f}× 20D avg volume" if pd.notna(item["Volume / 20D avg"]) else "Volume unavailable"
+                    st.markdown(
+                        f'<div style="background:#0d1219;border:1px solid #24313d;border-left:4px solid #ff647c;border-radius:18px;padding:14px 16px;margin:0 0 10px 0;">'
+                        f'<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">'
+                        f'<span style="font-size:17px;font-weight:750;color:#f3f6fa;">{rank}. {item["Symbol"]}</span>'
+                        f'<span style="font-size:17px;font-weight:750;color:#ff647c;">{item["Daily change (%)"]:+.2f}%</span></div>'
+                        f'<div style="color:#c5d0dc;font-size:13px;margin-top:8px;">{item["Setup"]}</div>'
+                        f'<div style="color:#ff9aaa;font-size:12px;margin-top:5px;">✓ {vol_label}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+        st.markdown("""<div style="font-size:clamp(26px,3.5vw,36px);font-weight:850;letter-spacing:-1px;margin:20px 0 10px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Order Block Charts</div>""", unsafe_allow_html=True)
+        zone_cols = st.columns(2)
+        with zone_cols[0]:
+            st.markdown("""<div style="background:#0d1219;border:1px solid #24313d;border-radius:16px;padding:13px 15px;margin-bottom:8px;"><span style="color:#20dda0;font-weight:750;">✓ Demand zones</span><div style="color:#c5d0dc;font-size:13px;margin-top:5px;">Potential support areas from bullish displacement candles</div></div>""", unsafe_allow_html=True)
+        with zone_cols[1]:
+            st.markdown("""<div style="background:#0d1219;border:1px solid #24313d;border-radius:16px;padding:13px 15px;margin-bottom:8px;"><span style="color:#ff647c;font-weight:750;">✓ Supply zones</span><div style="color:#c5d0dc;font-size:13px;margin-top:5px;">Potential resistance areas from bearish displacement candles</div></div>""", unsafe_allow_html=True)
+        st.dataframe(ob_results, use_container_width=True, hide_index=True)
+        st.download_button("Download liquidity scan (CSV)", ob_results.to_csv(index=False).encode("utf-8"), "liquidity_order_block_watchlist.csv", "text/csv", key="ob_scan_download")
+        st.warning("Order blocks and liquidity sweeps here are simplified OHLCV heuristics, not confirmed institutional orders, market depth or guaranteed reversal signals. Data may be delayed. Use a stop-loss and verify prices with your broker.")
+
+
+st.markdown("### Small-cap fundamental research screener")
+st.caption("Research watchlist only · public Yahoo Finance fundamentals may be delayed, incomplete or incorrectly mapped. Verify all figures against NSE filings and annual reports before acting.")
+with st.expander("Build / refresh a small-cap watchlist", expanded=False):
+    screener_symbols_text = st.text_input(
+        "NSE symbols (comma-separated; .NS is added when omitted)",
+        value="",
+        placeholder="e.g. DATAPATTNS, KAYNES, ELECON",
+        help="Enter a manageable list of NSE-listed companies. The screener does not automatically cover every small-cap stock."
+    )
+    screener_market_cap_limit = st.select_slider(
+        "Maximum market capitalisation (₹ crore)",
+        options=[1000, 2000, 5000, 10000, 20000],
+        value=5000,
+        help="A practical screening cutoff, not an official classification. Market-cap classifications can change."
+    )
+    screener_run = st.button("Analyse entered stocks", key="run_smallcap_screener", type="primary")
+    if screener_run:
+        screener_symbols = []
+        for raw_symbol in screener_symbols_text.split(","):
+            cleaned = raw_symbol.strip().upper()
+            if not cleaned:
+                continue
+            if not cleaned.endswith(".NS"):
+                cleaned += ".NS"
+            if cleaned not in screener_symbols:
+                screener_symbols.append(cleaned)
+        if not screener_symbols:
+            st.warning("Enter one or more NSE symbols to run the screener.")
+        elif len(screener_symbols) > 30:
+            st.warning("Please analyse 30 or fewer symbols at a time to reduce timeouts and incomplete responses.")
+        else:
+            screener_rows = []
+            with st.spinner("Retrieving public company fundamentals and price history…"):
+                for screener_symbol in screener_symbols:
+                    try:
+                        stock = yf.Ticker(screener_symbol)
+                        info = stock.get_info()
+                        hist = stock.history(period="1y", auto_adjust=True)
+                        market_cap = pd.to_numeric(info.get("marketCap"), errors="coerce")
+                        market_cap_cr = float(market_cap) / 1e7 if pd.notna(market_cap) else np.nan
+                        revenue_growth = pd.to_numeric(info.get("revenueGrowth"), errors="coerce") * 100
+                        earnings_growth = pd.to_numeric(info.get("earningsGrowth"), errors="coerce") * 100
+                        profit_margin = pd.to_numeric(info.get("profitMargins"), errors="coerce") * 100
+                        roe = pd.to_numeric(info.get("returnOnEquity"), errors="coerce") * 100
+                        debt_equity = pd.to_numeric(info.get("debtToEquity"), errors="coerce")
+                        pe = pd.to_numeric(info.get("trailingPE"), errors="coerce")
+                        price = float(hist["Close"].dropna().iloc[-1]) if not hist.empty and hist["Close"].dropna().size else np.nan
+                        ret_1y = (float(hist["Close"].dropna().iloc[-1]) / float(hist["Close"].dropna().iloc[0]) - 1) * 100 if not hist.empty and hist["Close"].dropna().size >= 2 and float(hist["Close"].dropna().iloc[0]) else np.nan
+                        cashflow = stock.cashflow
+                        op_cashflow = np.nan
+                        if isinstance(cashflow, pd.DataFrame) and not cashflow.empty:
+                            for candidate in ["Operating Cash Flow", "OperatingCashFlow", "Total Cash From Operating Activities"]:
+                                if candidate in cashflow.index:
+                                    op_cashflow = pd.to_numeric(cashflow.loc[candidate].iloc[0], errors="coerce")
+                                    break
+                        score = 0
+                        checks = 0
+                        for value, threshold, condition in [
+                            (revenue_growth, 0, "gt"), (earnings_growth, 0, "gt"),
+                            (profit_margin, 0, "gt"), (roe, 12, "ge"),
+                            (debt_equity, 100, "le"), (pe, 0, "gt"),
+                            (op_cashflow, 0, "gt"), (ret_1y, 0, "gt")
+                        ]:
+                            if pd.notna(value):
+                                checks += 1
+                                passed = value > threshold if condition == "gt" else value >= threshold if condition == "ge" else value <= threshold
+                                score += int(passed)
+                        if pd.isna(market_cap_cr):
+                            cap_status = "Market cap unavailable"
+                        elif market_cap_cr > screener_market_cap_limit:
+                            cap_status = "Above cap limit"
+                        else:
+                            cap_status = "Within cap limit"
+                        if checks < 4:
+                            label = "Insufficient data"
+                        elif score >= 6 and cap_status == "Within cap limit":
+                            label = "Research candidate"
+                        elif score >= 4 and cap_status == "Within cap limit":
+                            label = "Needs review"
+                        else:
+                            label = "Fails preliminary screen"
+                        screener_rows.append({
+                            "Symbol": screener_symbol.removesuffix(".NS"),
+                            "Company": info.get("shortName") or info.get("longName") or screener_symbol,
+                            "Market cap (₹ cr)": market_cap_cr,
+                            "Screen": label,
+                            "Checks passed": f"{score}/{checks}",
+                            "Revenue growth (%)": revenue_growth,
+                            "Earnings growth (%)": earnings_growth,
+                            "Profit margin (%)": profit_margin,
+                            "ROE (%)": roe,
+                            "Debt/equity": debt_equity,
+                            "P/E": pe,
+                            "Operating cash flow (₹)": op_cashflow,
+                            "1Y price return (%)": ret_1y,
+                            "Price": price,
+                        })
+                    except Exception:
+                        screener_rows.append({"Symbol": screener_symbol.removesuffix(".NS"), "Company": "Data retrieval failed", "Screen": "Insufficient data"})
+            screener_df = pd.DataFrame(screener_rows)
+            st.session_state["smallcap_screener_results"] = screener_df
+    if "smallcap_screener_results" in st.session_state:
+        screener_df = st.session_state["smallcap_screener_results"]
+        if not screener_df.empty:
+            if "Screen" in screener_df.columns:
+                candidates = screener_df[screener_df["Screen"] == "Research candidate"]
+                st.metric("Preliminary research candidates", len(candidates))
+            st.dataframe(screener_df, use_container_width=True, hide_index=True)
+            st.download_button(
+                "Download screening results (CSV)",
+                data=screener_df.to_csv(index=False).encode("utf-8"),
+                file_name="smallcap_research_screen.csv",
+                mime="text/csv",
+                key="download_smallcap_screen"
+            )
+            st.warning("This score is a first-pass filter, not a buy signal. It does not automatically detect auditor qualifications, promoter pledging, related-party transactions, litigation or accounting manipulation. Manually verify these using exchange filings and annual reports. Missing values are not treated as passing checks.")
+            st.markdown("[SEBI investor due-diligence guidance](https://investor.sebi.gov.in/due_diligence.html) · [SEBI SME-segment advisory](https://investor.sebi.gov.in/advisory-investment-sme-segment.html)")
+
+st.markdown("### NIFTY 50 stock heatmap")
+st.caption("NIFTY 50 constituents only · Tile size is equal-weighted in this view · Green = positive daily change, red = negative daily change")
+NIFTY50_HEATMAP_SYMBOLS = [
+    "ADANIENT.NS", "ADANIPORTS.NS", "APOLLOHOSP.NS", "ASIANPAINT.NS", "AXISBANK.NS",
+    "BAJAJ-AUTO.NS", "BAJFINANCE.NS", "BAJAJFINSV.NS", "BEL.NS", "BHARTIARTL.NS",
+    "CIPLA.NS", "COALINDIA.NS", "DRREDDY.NS", "EICHERMOT.NS", "ETERNAL.NS",
+    "GRASIM.NS", "HCLTECH.NS", "HDFCBANK.NS", "HDFCLIFE.NS", "HINDALCO.NS",
+    "HINDUNILVR.NS", "ICICIBANK.NS", "INDUSINDBK.NS", "INFY.NS", "ITC.NS",
+    "JIOFIN.NS", "JSWSTEEL.NS", "KOTAKBANK.NS", "LT.NS", "M&M.NS",
+    "MARUTI.NS", "NESTLEIND.NS", "NTPC.NS", "ONGC.NS", "POWERGRID.NS",
+    "RELIANCE.NS", "SBILIFE.NS", "SBIN.NS", "SHRIRAMFIN.NS", "SUNPHARMA.NS",
+    "TATACONSUM.NS", "TATAMOTORS.NS", "TATASTEEL.NS", "TCS.NS", "TECHM.NS",
+    "TITAN.NS", "TRENT.NS", "ULTRACEMCO.NS", "WIPRO.NS", "TMPV.NS"
+]
+@st.cache_data(ttl=300, show_spinner=False)
+def _nifty50_heatmap_data(symbols: tuple[str, ...]):
+    raw = yf.download(list(symbols), period="5d", interval="1d", group_by="ticker", auto_adjust=False, progress=False, threads=True)
+    rows = []
+    for symbol in symbols:
+        try:
+            frame = raw[symbol].dropna(subset=["Close"])
+            closes = frame["Close"].dropna()
+            if len(closes) >= 2 and float(closes.iloc[-2]) != 0:
+                last_close = float(closes.iloc[-1])
+                change_pct = (last_close / float(closes.iloc[-2]) - 1) * 100
+                rows.append({"Symbol": symbol.removesuffix(".NS"), "Close": last_close, "Change (%)": change_pct})
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+    return pd.DataFrame(rows)
+with st.spinner("Loading NIFTY 50 constituent performance…"):
+    heatmap_df = _nifty50_heatmap_data(tuple(NIFTY50_HEATMAP_SYMBOLS))
+if heatmap_df.empty:
+    st.warning("NIFTY 50 heatmap data is temporarily unavailable from the public data source.")
+else:
+    heatmap_df["Direction"] = np.where(heatmap_df["Change (%)"] >= 0, "Positive", "Negative")
+    heatmap_df["Color"] = heatmap_df["Change (%)"]
+    heatmap_fig = px.treemap(
+        heatmap_df, path=["Direction", "Symbol"], values=np.ones(len(heatmap_df)),
+        color="Change (%)", color_continuous_scale=["#ef4444", "#252a34", "#16a34a"],
+        color_continuous_midpoint=0, hover_data={"Close": ":,.2f", "Change (%)": ":.2f", "Direction": False, "Color": False}
+    )
+    heatmap_fig.update_traces(texttemplate="%{label}<br>%{color:.2f}%", textfont_size=12)
+    heatmap_fig.update_layout(template="plotly_dark", height=520, margin=dict(l=4, r=4, t=8, b=4), coloraxis_colorbar_title="Daily %")
+    st.plotly_chart(heatmap_fig, use_container_width=True, config={"displaylogo": False}, key="nifty50_only_treemap")
+st.divider()
+
+tabs = [st.expander(label, expanded=False) for label in ["Overview · market snapshot", "Live charts", "Technical analysis", "Sector rotation", "Global markets", "FII/DII & news", "Derivatives", "History & sources", "NIFTY historical returns"]]
 with tabs[0]:
-    st.subheader("Market snapshot")
+    st.subheader("Market snapshot and historical source data")
     rows = []
     for name, df in market_data.items():
         snap = quote_snapshot(df)
@@ -247,32 +1502,104 @@ with tabs[0]:
         else:
             rows.append({"Instrument": name, "Ticker": INDEXES[name], "Latest returned close": np.nan, "Change vs previous bar": np.nan, "Change %": np.nan, "Source bar timestamp (IST)": "Unavailable", "Source": market_errors[name] or "No data"})
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    st.markdown("#### Global market and news widgets")
-    tv_widget("market-overview", {"colorTheme": "dark", "dateRange": "1D", "showChart": True, "locale": "en", "width": "100%", "height": 420, "isTransparent": False, "showSymbolLogo": True, "showFloatingTooltip": False, "tabs": [{"title": "Indices", "symbols": [{"s": "NSE:NIFTY"}, {"s": "NSE:BANKNIFTY"}, {"s": "TVC:VIX"}, {"s": "TVC:UKOIL"}, {"s": "NASDAQ:NDX"}, {"s": "SP:SPX"}]}]}, 430)
-    st.markdown("#### Market news feed (provided by TradingView)")
-    tv_widget("news", {"feedMode": "market", "colorTheme": "dark", "isTransparent": False, "displayMode": "regular", "width": "100%", "height": 450, "locale": "en"}, 460)
-
+    snapshot_df = pd.DataFrame(rows)
+    if not snapshot_df.empty and "Change %" in snapshot_df:
+        snapshot_plot = snapshot_df.dropna(subset=["Change %"]).copy()
+        if not snapshot_plot.empty:
+            snapshot_plot["Direction"] = np.where(snapshot_plot["Change %"] >= 0, "Positive", "Negative")
+            snap_fig = px.bar(snapshot_plot.sort_values("Change %"), x="Change %", y="Instrument", color="Direction", color_discrete_map={"Positive":"#22c55e","Negative":"#ef4444"}, orientation="h", template="plotly_dark", title="Market snapshot · change vs previous returned bar")
+            snap_fig.update_layout(height=max(260, 36 * len(snapshot_plot)), margin=dict(l=10,r=10,t=45,b=10), showlegend=False, xaxis_title="Change (%)", yaxis_title="")
+            st.plotly_chart(snap_fig, use_container_width=True, config={"displaylogo": False}, key="overview_snapshot_change_chart")
 with tabs[1]:
-    st.subheader("Embedded interactive charts")
-    chart_choice = st.selectbox("Choose chart", ["NIFTY 50", "BANK NIFTY", "INFY", "WIPRO", "Brent Crude", "India VIX"])
-    tv_symbols = {"NIFTY 50": "NSE:NIFTY", "BANK NIFTY": "NSE:BANKNIFTY", "INFY": "NSE:INFY", "WIPRO": "NSE:WIPRO", "Brent Crude": "TVC:UKOIL", "India VIX": "NSE:INDIAVIX"}
-    advanced_chart(tv_symbols[chart_choice], 600)
-    st.caption("TradingView supplies the chart data independently. Availability and delay vary by symbol/exchange; this app does not override those settings.")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**NIFTY 50**")
-        advanced_chart("NSE:NIFTY", 440)
-    with c2:
-        st.markdown("**BANK NIFTY**")
-        advanced_chart("NSE:BANKNIFTY", 440)
+    st.subheader("Market charts")
+    st.caption("Clean, full-width charts built from the data already loaded by this dashboard. Source is Yahoo Finance via yfinance; daily bars can be delayed or stale. For FYERS-sourced charts, use the FYERS stock charts section below.")
+    available_chart_names = [name for name in ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude", "USD/INR", "INFY", "WIPRO", "RELIANCE", "HDFCBANK"] if name in market_data and not market_data[name].empty]
+    if not available_chart_names:
+        st.warning("No chart history was returned by the source. Refresh market data or try again later.")
+    else:
+        chart_choice = st.selectbox("Choose instrument", available_chart_names, key="market_chart_choice")
+        chart_frame = market_data[chart_choice].copy().sort_values("Date")
+        chart_frame = chart_frame.dropna(subset=["Date", "Open", "High", "Low", "Close"])
+        chart_window = st.selectbox("Chart history", ["1 month", "3 months", "6 months", "1 year", "All loaded"], index=2, key="market_chart_window")
+        window_days = {"1 month": 31, "3 months": 92, "6 months": 183, "1 year": 365}
+        if chart_window != "All loaded" and not chart_frame.empty:
+            cutoff = chart_frame["Date"].max() - pd.Timedelta(days=window_days[chart_window])
+            chart_frame = chart_frame[chart_frame["Date"] >= cutoff]
+        if chart_frame.empty:
+            st.info("No valid OHLC candles are available for this instrument.")
+        else:
+            chart_fig = go.Figure()
+            chart_fig.add_trace(go.Candlestick(
+                x=chart_frame["Date"], open=chart_frame["Open"], high=chart_frame["High"],
+                low=chart_frame["Low"], close=chart_frame["Close"], name=chart_choice,
+                increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+                increasing_fillcolor="#22c55e", decreasing_fillcolor="#ef4444",
+            ))
+            if "Volume" in chart_frame and chart_frame["Volume"].notna().any():
+                chart_fig.add_trace(go.Bar(x=chart_frame["Date"], y=chart_frame["Volume"], name="Volume", yaxis="y2", marker_color="#64748b", opacity=0.28))
+            chart_fig.update_layout(
+                template="plotly_dark", height=620, autosize=True,
+                title=f"{chart_choice} · OHLC candles",
+                margin=dict(l=12, r=18, t=55, b=18),
+                xaxis=dict(title="", rangeslider=dict(visible=False), showgrid=False),
+                yaxis=dict(title="Price", domain=[0.22, 1], showgrid=True, gridcolor="rgba(148,163,184,.12)"),
+                yaxis2=dict(title="Volume", overlaying="y", side="right", showgrid=False, rangemode="tozero", domain=[0, .18]),
+                legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1),
+                hovermode="x unified",
+            )
+            st.plotly_chart(chart_fig, use_container_width=True, config={"displaylogo": False, "scrollZoom": True}, key="market_candlestick_chart")
+            latest_snap = quote_snapshot(chart_frame)
+            if latest_snap:
+                latest_bar, latest_change, latest_pct = latest_snap
+                st.caption(f"Latest returned bar: {latest_bar['Date']:%d %b %Y, %H:%M IST} · Change vs previous bar: {latest_change:,.2f} ({latest_pct:,.2f}%) · Not guaranteed live.")
 
 with tabs[2]:
-    st.subheader("Technical analysis from returned daily OHLC data")
-    chosen = st.selectbox("Instrument for technicals", list(INDEXES.keys()), index=0, key="tech_symbol")
-    source_df = market_data[chosen]
-    if source_df.empty:
-        st.error(f"No technicals calculated: {market_errors[chosen] or 'no source rows'}")
+    st.subheader("Technical analysis from returned OHLC data")
+    technical_symbols = {}
+    for instrument_name, ticker in INDEXES.items():
+        technical_symbols[instrument_name] = ("yahoo", instrument_name, ticker)
+    fyers_symbols_for_technicals = []
+    if st.session_state.get("fyers_access_token") and fyers_credentials():
+        fyers_symbols_for_technicals, fyers_symbols_error = fyers_nse_equity_symbols()
+        for symbol, company_name in fyers_symbols_for_technicals:
+            label = f"{company_name or symbol} · {symbol}"
+            technical_symbols[label] = ("fyers", symbol, symbol)
+    technical_choice = st.selectbox(
+        "Instrument for technicals",
+        list(technical_symbols.keys()),
+        index=0,
+        key="tech_symbol",
+        help="Connect FYERS in the sidebar to unlock the full NSE cash-equity symbol list.",
+    )
+    source_kind, source_key, source_ticker = technical_symbols[technical_choice]
+    source_df = pd.DataFrame()
+    source_error = None
+    if source_kind == "yahoo":
+        source_df = market_data[source_key]
+        source_error = market_errors.get(source_key)
+    elif not st.session_state.get("fyers_access_token"):
+        st.info("Connect your FYERS account in the sidebar to load technicals for NSE stocks.")
     else:
+        @st.cache_data(ttl=300, show_spinner=False)
+        def _cached_fyers_technicals(app_id: str, access_token: str, symbol: str):
+            return fyers_history(app_id, access_token, symbol, "1D", 365)
+        fyers_config_for_technicals = fyers_credentials()
+        with st.spinner(f"Loading daily FYERS candles for {source_ticker}..."):
+            source_df, source_error = _cached_fyers_technicals(
+                fyers_config_for_technicals[0], st.session_state["fyers_access_token"], source_ticker
+            )
+    if source_error:
+        st.warning(f"Technical data unavailable: {source_error}")
+    elif source_df.empty:
+        st.info("No technical data returned for this selection.")
+    else:
+        source_df = source_df.copy()
+        if "Date" not in source_df.columns and "Datetime" in source_df.columns:
+            source_df = source_df.rename(columns={"Datetime": "Date"})
+        source_df["Date"] = pd.to_datetime(source_df["Date"], errors="coerce")
+        source_df = source_df.dropna(subset=["Date", "Close"]).sort_values("Date")
+        if len(source_df) < 30:
+            st.warning("Fewer than 30 source candles were returned; longer-period indicators may be unavailable.")
         calc = indicators(source_df)
         last = calc.iloc[-1]
         metric_cols = st.columns(5)
@@ -282,12 +1609,18 @@ with tabs[2]:
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=calc["Date"], y=calc["Close"], name="Close", line={"width": 2}))
         for ma in ["SMA 20", "SMA 50", "EMA 20", "EMA 50"]:
-            if ma in calc and calc[ma].notna().any(): fig.add_trace(go.Scatter(x=calc["Date"], y=calc[ma], name=ma, line={"width": 1.3}))
+            if ma in calc and calc[ma].notna().any():
+                fig.add_trace(go.Scatter(x=calc["Date"], y=calc[ma], name=ma, line={"width": 1.3}))
         fig.update_layout(template="plotly_dark", height=470, margin={"l": 10, "r": 10, "t": 25, "b": 10}, xaxis_title="Source candle time", yaxis_title="Price")
         st.plotly_chart(fig, use_container_width=True)
-        rsi_fig = go.Figure(go.Scatter(x=calc["Date"], y=calc["RSI 14"], name="RSI 14"))
-        rsi_fig.add_hline(y=70, line_dash="dash"); rsi_fig.add_hline(y=30, line_dash="dash")
-        rsi_fig.update_layout(template="plotly_dark", height=260, yaxis={"range": [0,100]}, margin={"l":10,"r":10,"t":20,"b":10})
+        rsi_fig = go.Figure()
+        rsi_fig.add_hrect(y0=0, y1=30, fillcolor="rgba(239,68,68,.16)", line_width=0)
+        rsi_fig.add_hrect(y0=70, y1=100, fillcolor="rgba(34,197,94,.16)", line_width=0)
+        rsi_fig.add_hrect(y0=30, y1=70, fillcolor="rgba(245,158,11,.06)", line_width=0)
+        rsi_fig.add_trace(go.Scatter(x=calc["Date"], y=calc["RSI 14"], name="RSI 14", line={"color":"#60a5fa","width":2.5}))
+        rsi_fig.add_hline(y=70, line_dash="dash", line_color="#22c55e", annotation_text="Overbought > 70")
+        rsi_fig.add_hline(y=30, line_dash="dash", line_color="#ef4444", annotation_text="Oversold < 30")
+        rsi_fig.update_layout(template="plotly_dark", height=280, yaxis={"range": [0,100]}, margin={"l":10,"r":10,"t":25,"b":10}, title="RSI 14 · green > 70, red < 30")
         st.plotly_chart(rsi_fig, use_container_width=True)
         pivot = None
         if len(calc) >= 2 and {"High", "Low", "Close"}.issubset(calc.columns):
@@ -297,9 +1630,12 @@ with tabs[2]:
                 p = (h+l+c)/3
                 pivot = pd.DataFrame([("Previous candle high",h),("R2",p+h-l),("R1",2*p-l),("Pivot",p),("S1",2*p-h),("S2",p-h+l),("Previous candle low",l)],columns=["Level","Value"])
         st.markdown("#### Classic pivot levels (calculated from previous returned candle)")
-        if pivot is not None: st.dataframe(pivot.style.format({"Value":"{:,.2f}"}), use_container_width=True, hide_index=True)
-        else: st.info("Pivot levels unavailable: source data lacks sufficient OHLC rows.")
-        st.caption(f"Calculations use {len(calc):,} returned daily bars. Last source candle: {last['Date']:%d %b %Y, %H:%M IST}. Indicators are only as reliable as the source data and its coverage.")
+        if pivot is not None:
+            st.dataframe(pivot.style.format({"Value":"{:,.2f}"}), use_container_width=True, hide_index=True)
+        else:
+            st.info("Pivot levels unavailable: source data lacks sufficient OHLC rows.")
+        source_label = "FYERS historical data" if source_kind == "fyers" else "Yahoo Finance / yfinance"
+        st.caption(f"Source: {source_label} · {len(calc):,} returned candles. Last source candle: {last['Date']:%d %b %Y, %H:%M IST}. Indicators depend on source coverage and are not guaranteed live signals.")
 
 with tabs[3]:
     st.subheader("Sector rotation — best-effort public index history")
@@ -317,13 +1653,13 @@ with tabs[3]:
     if sector_rows:
         sec = pd.DataFrame(sector_rows).sort_values("Relative return vs NIFTY (pp)", ascending=False)
         st.dataframe(sec, use_container_width=True, hide_index=True)
-        fig = px.bar(sec, x="Sector", y="Relative return vs NIFTY (pp)", color="Relative return vs NIFTY (pp)", template="plotly_dark", title="Relative sector performance over selected lookback")
+        sec["Direction"] = np.where(sec["Relative return vs NIFTY (pp)"] >= 0, "Outperforming", "Underperforming")
+        fig = px.bar(sec.sort_values("Relative return vs NIFTY (pp)"), x="Relative return vs NIFTY (pp)", y="Sector", color="Direction", color_discrete_map={"Outperforming":"#22c55e","Underperforming":"#ef4444"}, orientation="h", template="plotly_dark", title="Sector relative performance vs NIFTY")
         fig.update_layout(height=440)
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.warning("No sector index series were returned by the public source. No values have been substituted.")
-    st.markdown("#### TradingView stock heatmap (global coverage; exchange coverage may vary)")
-    tv_widget("stock-heatmap", {"dataSource": "SPX500", "blockSize": "market_cap_basic", "blockColor": "change", "grouping": "sector", "locale": "en", "colorTheme": "dark", "hasTopBar": False, "isDataSetEnabled": False, "isZoomEnabled": True, "hasSymbolTooltip": True, "isMonoSize": False, "width": "100%", "height": 520}, 530)
+
 
 with tabs[4]:
     st.subheader("Global markets and commodities")
@@ -371,59 +1707,463 @@ with tabs[7]:
     else:
         st.info("No data to export for this instrument.")
 
+with tabs[8]:
+    st.subheader("NIFTY 50 historical returns")
+    st.caption("Calendar-year returns and monthly return heatmap, calculated from returned daily NIFTY 50 closing prices. Historical performance is not a prediction.")
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def _nifty_long_history(ticker: str):
+        return get_history(ticker, "10y", "1d")
+    with st.spinner("Loading up to 10 years of NIFTY 50 daily history…"):
+        nifty_long, nifty_long_error = _nifty_long_history(INDEXES["NIFTY 50"])
+    if nifty_long.empty or "Close" not in nifty_long.columns:
+        st.warning(f"Long-history data unavailable: {nifty_long_error or 'No usable NIFTY 50 daily closes returned.'}")
+    else:
+        hist = nifty_long.copy()
+        hist["Date"] = pd.to_datetime(hist["Date"], errors="coerce")
+        hist = hist.dropna(subset=["Date", "Close"]).sort_values("Date")
+        hist["Year"] = hist["Date"].dt.year
+        hist["Month"] = hist["Date"].dt.month
+        annual_closes = hist.groupby("Year", as_index=False).tail(1).sort_values("Year").set_index("Year")["Close"]
+        annual_rows = []
+        current_year = int(hist["Year"].max())
+        for year in range(max(2018, int(hist["Year"].min()) + 1), current_year + 1):
+            if year in annual_closes.index and (year - 1) in annual_closes.index:
+                ref_close = float(annual_closes.loc[year - 1])
+                end_close = float(annual_closes.loc[year])
+                annual_rows.append({"Year": f"{year} YTD" if year == current_year and hist["Date"].max().month < 12 else str(year), "Reference close": ref_close, "Year-end/latest close": end_close, "Return (%)": (end_close / ref_close - 1) * 100})
+        if annual_rows:
+            annual_df = pd.DataFrame(annual_rows)
+            st.markdown("#### Comparative yearly performance")
+            st.dataframe(annual_df.style.format({"Reference close": "{:,.2f}", "Year-end/latest close": "{:,.2f}", "Return (%)": "{:+.2f}"}).map(lambda v: "color: #22c55e; font-weight: 700" if isinstance(v, (int, float, np.number)) and v > 0 else "color: #ef4444; font-weight: 700" if isinstance(v, (int, float, np.number)) and v < 0 else "", subset=["Return (%)"]), use_container_width=True, hide_index=True)
+            annual_fig = go.Figure(go.Bar(x=annual_df["Year"], y=annual_df["Return (%)"], marker_color=["#22c55e" if v >= 0 else "#ef4444" for v in annual_df["Return (%)"]], text=[f"{v:+.2f}%" for v in annual_df["Return (%)"]], textposition="outside", cliponaxis=False))
+            annual_fig.add_hline(y=0, line_color="#9ca3af", line_width=1)
+            annual_fig.update_layout(template="plotly_dark", title="NIFTY 50 Calendar-Year Returns (latest year is YTD)", yaxis_title="Return (%)", height=360, margin=dict(l=10, r=10, t=55, b=10), showlegend=False)
+            st.plotly_chart(annual_fig, use_container_width=True, config={"displaylogo": False}, key="nifty_annual_returns")
+        else:
+            st.info("Not enough prior year-end data to calculate calendar-year returns.")
+        month_ends = hist.groupby(["Year", "Month"], as_index=False).tail(1).sort_values("Date").copy()
+        month_ends["Monthly return (%)"] = month_ends["Close"].pct_change() * 100
+        month_ends.loc[month_ends.index[0], "Monthly return (%)"] = np.nan
+        month_ends = month_ends[month_ends["Year"] >= 2018]
+        years = list(range(2018, current_year + 1))
+        heat = pd.DataFrame(index=years, columns=range(1, 13), dtype=float)
+        for _, row in month_ends.iterrows():
+            y, m, val = int(row["Year"]), int(row["Month"]), row["Monthly return (%)"]
+            if y in heat.index and pd.notna(val):
+                heat.loc[y, m] = float(val)
+        st.markdown("#### Monthly percentage returns heat map")
+        st.caption("Each cell compares the month-end close with the previous available month-end close. Green = positive; red = negative; blank = unavailable. The first displayed month may use a prior-year reference close.")
+        month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        z = heat.to_numpy(dtype=float)
+        text_values = [[("" if pd.isna(v) else f"{v:.1f}") for v in row] for row in z]
+        heat_fig = go.Figure(go.Heatmap(z=z, x=month_names, y=[str(y) for y in years], colorscale=[[0, "#991b1b"], [0.5, "#4b5563"], [1, "#047857"]], zmin=-10, zmax=10, zmid=0, text=text_values, texttemplate="%{text}", textfont={"size": 10}, colorbar={"title": "Monthly return (%)"}, hovertemplate="Year %{y}<br>%{x}: %{z:.2f}%<extra></extra>", xgap=2, ygap=2))
+        heat_fig.update_layout(template="plotly_dark", title="Monthly NIFTY 50 Returns (%)", height=max(360, 38 * len(years) + 100), margin=dict(l=10, r=10, t=50, b=10), xaxis_title="", yaxis_title="Year")
+        st.plotly_chart(heat_fig, use_container_width=True, config={"displaylogo": False}, key="nifty_monthly_return_heatmap")
+        st.markdown("#### Interpretation and limitations")
+        st.write("Returns are calculated from the daily closing prices returned by the public data source. The latest year is year-to-date when the calendar year is incomplete. Price returns exclude dividends and do not guarantee future performance.")
+        st.caption(f"Source: Yahoo Finance via yfinance · Last returned daily bar: {hist['Date'].max():%d %b %Y} · app retrieval timestamp is not an exchange timestamp.")
+
+with st.expander("Chartink scanners & alert inbox", expanded=False):
+    st.subheader("Chartink scanner workspace")
+    st.write("Use Chartink’s free stock screeners here, then bring a scan snapshot into this dashboard for review. Your current free account does not include Chartink Alerts or webhook delivery, so this inbox cannot receive automatic alert pushes until the Chartink plan supports alerts.")
+    st.markdown("[Open Chartink Stock Screener](https://chartink.com/screener/) · [Explore popular scans](https://chartink.com/screener/) · [Chartink alert feature details](https://chartink.com/articles/alerts/alerts-guide/)")
+    chartink_scan_url = st.text_input("Optional: paste the URL of your saved/public Chartink scan", placeholder="https://chartink.com/screener/your-scan-name", key="chartink_scan_url")
+    if chartink_scan_url.strip():
+        if chartink_scan_url.strip().startswith("https://chartink.com/"):
+            st.link_button("Open my Chartink scan", chartink_scan_url.strip(), use_container_width=False)
+        else:
+            st.warning("For safety, use a URL beginning with https://chartink.com/.")
+    st.markdown("#### Import a scan snapshot")
+    st.caption("Paste the JSON body of a Chartink webhook payload if you already have one, or paste a simple JSON object with stocks and trigger_prices. This is a manual import only; it does not connect to Chartink or poll for alerts.")
+    chartink_payload = st.text_area(
+        "Chartink payload JSON",
+        placeholder='{"stocks":"RELIANCE,TCS,INFY","trigger_prices":"1450,3800,1600","triggered_at":"10:30 am","scan_name":"Example scan","scan_url":"example-scan"}',
+        height=130,
+        key="chartink_payload_json",
+    )
+    if st.button("Parse scan snapshot", key="chartink_parse_payload"):
+        try:
+            payload = json.loads(chartink_payload)
+            if not isinstance(payload, dict):
+                raise ValueError("Expected a JSON object.")
+            stocks_raw = payload.get("stocks", payload.get("stock", ""))
+            prices_raw = payload.get("trigger_prices", payload.get("trigger_price", ""))
+            stocks = [str(x).strip() for x in stocks_raw] if isinstance(stocks_raw, list) else [x.strip() for x in str(stocks_raw).split(",") if x.strip()]
+            prices = [str(x).strip() for x in prices_raw] if isinstance(prices_raw, list) else [x.strip() for x in str(prices_raw).split(",") if x.strip()]
+            rows = []
+            for i, stock in enumerate(stocks):
+                price = prices[i] if i < len(prices) else ""
+                try:
+                    price = float(price.replace(",", "")) if price else np.nan
+                except (TypeError, ValueError):
+                    price = np.nan
+                rows.append({"Stock": stock, "Trigger price": price})
+            if not rows:
+                st.session_state["chartink_import_rows"] = []
+                st.warning("No stocks were found. Check that the payload contains a 'stocks' field.")
+            else:
+                st.session_state["chartink_import_rows"] = rows
+                st.session_state["chartink_import_meta"] = {
+                    "scan_name": str(payload.get("scan_name", payload.get("alert_name", "Imported scan"))),
+                    "triggered_at": str(payload.get("triggered_at", "Not provided")),
+                    "scan_url": str(payload.get("scan_url", "")),
+                }
+        except Exception as exc:
+            st.error(f"Could not parse JSON: {exc}")
+    imported_rows = st.session_state.get("chartink_import_rows", [])
+    if imported_rows:
+        meta = st.session_state.get("chartink_import_meta", {})
+        st.markdown(f"**Scan:** {meta.get('scan_name', 'Imported scan')}  ·  **Triggered at:** {meta.get('triggered_at', 'Not provided')}")
+        if meta.get("scan_url"):
+            st.caption("Scan slug: " + meta["scan_url"])
+        st.dataframe(pd.DataFrame(imported_rows), use_container_width=True, hide_index=True)
+        csv_data = pd.DataFrame(imported_rows).to_csv(index=False).encode("utf-8")
+        st.download_button("Download imported scan as CSV", data=csv_data, file_name="chartink_scan_snapshot.csv", mime="text/csv", key="chartink_download_csv")
+    st.info("To enable automatic delivery later, Chartink requires a paid Alerts subscription with webhook support, plus a separate public HTTPS endpoint and persistent storage. This Streamlit page alone is not a public webhook receiver. No broker order placement is included.")
+
 st.divider()
 st.caption("For research and monitoring only. Verify exchange timestamps and official sources before trading. Public widgets and public-source data may be delayed, incomplete or unavailable; this dashboard is not an execution system or investment advice.")
 
 # Expanded research modules (13–22). Calculations use public-source data; personal journal data remains user-controlled.
-extra_tabs = st.tabs([
-    "13 Regime", "14 Options status", "15 Risk", "16 Backtest", "17 Breadth",
-    "18 Events", "19 Trade journal", "20 Data quality", "21 Cross-asset", "22 Signals"
-])
+extra_tabs = [st.expander(label, expanded=False) for label in [
+    "13 Regime & trend strength", "14 Options analytics", "15 Risk & position sizing",
+    "16 Strategy backtest", "17 Market breadth", "18 Events & gap risk",
+    "19 Trade journal", "20 Data quality", "21 Cross-asset performance", "22 Technical signals"
+]]
 
 with extra_tabs[0]:
-    st.subheader("13 · Market regime & trend strength")
-    regime_name = st.selectbox("Instrument", list(INDEXES.keys()), key="regime_symbol")
-    rdf = market_data[regime_name]
-    if rdf.empty or len(rdf) < 30:
-        st.warning("Insufficient returned OHLC history to assess regime. No regime label generated.")
-    else:
-        rc = indicators(rdf).copy()
-        if {"High", "Low", "Close"}.issubset(rc.columns):
-            prevc = rc["Close"].shift(1)
-            tr = pd.concat([(rc["High"]-rc["Low"]), (rc["High"]-prevc).abs(), (rc["Low"]-prevc).abs()], axis=1).max(axis=1)
-            up = rc["High"].diff(); down = -rc["Low"].diff()
-            plus_dm = up.where((up > down) & (up > 0), 0.0)
-            minus_dm = down.where((down > up) & (down > 0), 0.0)
-            atr14 = tr.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-            pdi = 100 * plus_dm.ewm(alpha=1/14, min_periods=14, adjust=False).mean() / atr14.replace(0, np.nan)
-            mdi = 100 * minus_dm.ewm(alpha=1/14, min_periods=14, adjust=False).mean() / atr14.replace(0, np.nan)
-            dx = 100 * (pdi-mdi).abs() / (pdi+mdi).replace(0, np.nan)
-            rc["ADX 14"] = dx.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-            rc["Realized volatility 20d %"] = rc["Return %"].rolling(20).std() * np.sqrt(252)
-            last = rc.iloc[-1]
-            adx = last.get("ADX 14", np.nan); rsi = last.get("RSI 14", np.nan)
-            close = last["Close"]; ema20 = last.get("EMA 20", np.nan); ema50 = last.get("EMA 50", np.nan)
-            regime = "Insufficient indicator history"
-            if pd.notna(adx) and pd.notna(ema20) and pd.notna(ema50):
-                if adx >= 25 and close > ema20 > ema50: regime = "Trending bullish"
-                elif adx >= 25 and close < ema20 < ema50: regime = "Trending bearish"
-                elif adx < 20: regime = "Range / weak trend"
-                else: regime = "Transition / mixed"
-            a,b,c,d = st.columns(4)
-            a.metric("Regime framework", regime)
-            b.metric("ADX 14", fmt(adx))
-            c.metric("RSI 14", fmt(rsi))
-            d.metric("Realized vol 20d annualized", fmt(last.get("Realized volatility 20d %")) + "%")
-            st.caption(f"Based on {len(rc)} source bars; last source candle {last['Date']:%d %b %Y %H:%M IST}. Thresholds are heuristic, not predictions.")
-            st.dataframe(rc[["Date","Close","EMA 20","EMA 50","RSI 14","ADX 14","ATR 14","Realized volatility 20d %"]].tail(30), use_container_width=True, hide_index=True)
+    st.caption("Market regime and trend strength are displayed in the main dashboard above.")
 
 with extra_tabs[1]:
     st.subheader("14 · Options analytics")
-    st.write("PCR, max pain, open interest and implied volatility require a genuine option-chain snapshot.")
-    st.selectbox("Underlying",["NIFTY","BANKNIFTY","FINNIFTY"],key="auto_opt_underlying")
-    st.warning("No authorized free machine-readable NSE option-chain API is configured. Scripted scraping is not used, and no option values are fabricated.")
-    st.markdown("[Open official NSE option chain](https://www.nseindia.com/option-chain) · [NSE derivatives reports](https://www.nseindia.com/all-reports-derivatives)")
-    st.caption("Price history and technical modules continue to work automatically. Derivatives analytics require an explicitly permitted source; no broker API is used.")
+    st.write("Option-chain data for NIFTY-family indices and a broad list of F&O stocks is fetched from the authenticated FYERS Market Data API. Choose an underlying and expiry; availability depends on FYERS contract coverage.")
+    # FYERS accepts the underlying equity symbol for stock-option chains.
+    # Keep the list explicit so unsupported/expired contracts fail transparently rather than showing guessed data.
+    option_underlying_labels = {
+        "Index · NIFTY": "NSE:NIFTY50-INDEX",
+        "Index · BANKNIFTY": "NSE:NIFTYBANK-INDEX",
+        "Index · FINNIFTY": "NSE:FINNIFTY-INDEX",
+        "Stock · 360ONE": "NSE:360ONE-EQ",
+        "Stock · ABB": "NSE:ABB-EQ",
+        "Stock · ABCAPITAL": "NSE:ABCAPITAL-EQ",
+        "Stock · ABFRL": "NSE:ABFRL-EQ",
+        "Stock · ACC": "NSE:ACC-EQ",
+        "Stock · ADANIENSOL": "NSE:ADANIENSOL-EQ",
+        "Stock · ADANIENT": "NSE:ADANIENT-EQ",
+        "Stock · ADANIGREEN": "NSE:ADANIGREEN-EQ",
+        "Stock · ADANIPORTS": "NSE:ADANIPORTS-EQ",
+        "Stock · ALKEM": "NSE:ALKEM-EQ",
+        "Stock · AMBER": "NSE:AMBER-EQ",
+        "Stock · AMBUJACEM": "NSE:AMBUJACEM-EQ",
+        "Stock · ANGELONE": "NSE:ANGELONE-EQ",
+        "Stock · APLAPOLLO": "NSE:APLAPOLLO-EQ",
+        "Stock · APOLLOHOSP": "NSE:APOLLOHOSP-EQ",
+        "Stock · ASHOKLEY": "NSE:ASHOKLEY-EQ",
+        "Stock · ASIANPAINT": "NSE:ASIANPAINT-EQ",
+        "Stock · ASTRAL": "NSE:ASTRAL-EQ",
+        "Stock · ATGL": "NSE:ATGL-EQ",
+        "Stock · AUBANK": "NSE:AUBANK-EQ",
+        "Stock · AUROPHARMA": "NSE:AUROPHARMA-EQ",
+        "Stock · AXISBANK": "NSE:AXISBANK-EQ",
+        "Stock · BAJAJ-AUTO": "NSE:BAJAJ-AUTO-EQ",
+        "Stock · BAJAJFINSV": "NSE:BAJAJFINSV-EQ",
+        "Stock · BAJFINANCE": "NSE:BAJFINANCE-EQ",
+        "Stock · BALKRISIND": "NSE:BALKRISIND-EQ",
+        "Stock · BANDHANBNK": "NSE:BANDHANBNK-EQ",
+        "Stock · BANKBARODA": "NSE:BANKBARODA-EQ",
+        "Stock · BANKINDIA": "NSE:BANKINDIA-EQ",
+        "Stock · BEL": "NSE:BEL-EQ",
+        "Stock · BHARATFORG": "NSE:BHARATFORG-EQ",
+        "Stock · BHARTIARTL": "NSE:BHARTIARTL-EQ",
+        "Stock · BHEL": "NSE:BHEL-EQ",
+        "Stock · BIOCON": "NSE:BIOCON-EQ",
+        "Stock · BPCL": "NSE:BPCL-EQ",
+        "Stock · BRITANNIA": "NSE:BRITANNIA-EQ",
+        "Stock · BSE": "NSE:BSE-EQ",
+        "Stock · CANBK": "NSE:CANBK-EQ",
+        "Stock · CANFINHOME": "NSE:CANFINHOME-EQ",
+        "Stock · CDSL": "NSE:CDSL-EQ",
+        "Stock · CGPOWER": "NSE:CGPOWER-EQ",
+        "Stock · CHAMBLFERT": "NSE:CHAMBLFERT-EQ",
+        "Stock · CHOLAFIN": "NSE:CHOLAFIN-EQ",
+        "Stock · CIPLA": "NSE:CIPLA-EQ",
+        "Stock · COALINDIA": "NSE:COALINDIA-EQ",
+        "Stock · COFORGE": "NSE:COFORGE-EQ",
+        "Stock · COLPAL": "NSE:COLPAL-EQ",
+        "Stock · CONCOR": "NSE:CONCOR-EQ",
+        "Stock · CROMPTON": "NSE:CROMPTON-EQ",
+        "Stock · CUMMINSIND": "NSE:CUMMINSIND-EQ",
+        "Stock · DABUR": "NSE:DABUR-EQ",
+        "Stock · DALBHARAT": "NSE:DALBHARAT-EQ",
+        "Stock · DELHIVERY": "NSE:DELHIVERY-EQ",
+        "Stock · DEVYANI": "NSE:DEVYANI-EQ",
+        "Stock · DIXON": "NSE:DIXON-EQ",
+        "Stock · DLF": "NSE:DLF-EQ",
+        "Stock · DMART": "NSE:DMART-EQ",
+        "Stock · DRREDDY": "NSE:DRREDDY-EQ",
+        "Stock · EICHERMOT": "NSE:EICHERMOT-EQ",
+        "Stock · ETERNAL": "NSE:ETERNAL-EQ",
+        "Stock · EXIDEIND": "NSE:EXIDEIND-EQ",
+        "Stock · FEDERALBNK": "NSE:FEDERALBNK-EQ",
+        "Stock · FORTIS": "NSE:FORTIS-EQ",
+        "Stock · GAIL": "NSE:GAIL-EQ",
+        "Stock · GLENMARK": "NSE:GLENMARK-EQ",
+        "Stock · GMRINFRA": "NSE:GMRINFRA-EQ",
+        "Stock · GMRAIRPORT": "NSE:GMRAIRPORT-EQ",
+        "Stock · GNFC": "NSE:GNFC-EQ",
+        "Stock · GODREJCP": "NSE:GODREJCP-EQ",
+        "Stock · GODREJPROP": "NSE:GODREJPROP-EQ",
+        "Stock · GRANULES": "NSE:GRANULES-EQ",
+        "Stock · GRASIM": "NSE:GRASIM-EQ",
+        "Stock · HAL": "NSE:HAL-EQ",
+        "Stock · HAVELLS": "NSE:HAVELLS-EQ",
+        "Stock · HCLTECH": "NSE:HCLTECH-EQ",
+        "Stock · HDFCAMC": "NSE:HDFCAMC-EQ",
+        "Stock · HDFCBANK": "NSE:HDFCBANK-EQ",
+        "Stock · HDFCLIFE": "NSE:HDFCLIFE-EQ",
+        "Stock · HEROMOTOCO": "NSE:HEROMOTOCO-EQ",
+        "Stock · HINDALCO": "NSE:HINDALCO-EQ",
+        "Stock · HINDCOPPER": "NSE:HINDCOPPER-EQ",
+        "Stock · HINDPETRO": "NSE:HINDPETRO-EQ",
+        "Stock · HINDUNILVR": "NSE:HINDUNILVR-EQ",
+        "Stock · HINDZINC": "NSE:HINDZINC-EQ",
+        "Stock · HUDCO": "NSE:HUDCO-EQ",
+        "Stock · ICICIBANK": "NSE:ICICIBANK-EQ",
+        "Stock · ICICIGI": "NSE:ICICIGI-EQ",
+        "Stock · ICICIPRULI": "NSE:ICICIPRULI-EQ",
+        "Stock · IDEA": "NSE:IDEA-EQ",
+        "Stock · IDFCFIRSTB": "NSE:IDFCFIRSTB-EQ",
+        "Stock · IEX": "NSE:IEX-EQ",
+        "Stock · IIFL": "NSE:IIFL-EQ",
+        "Stock · INDHOTEL": "NSE:INDHOTEL-EQ",
+        "Stock · INDIANB": "NSE:INDIANB-EQ",
+        "Stock · INDIGO": "NSE:INDIGO-EQ",
+        "Stock · INDUSINDBK": "NSE:INDUSINDBK-EQ",
+        "Stock · INDUSTOWER": "NSE:INDUSTOWER-EQ",
+        "Stock · INFY": "NSE:INFY-EQ",
+        "Stock · INOXWIND": "NSE:INOXWIND-EQ",
+        "Stock · IOC": "NSE:IOC-EQ",
+        "Stock · IRB": "NSE:IRB-EQ",
+        "Stock · IRCTC": "NSE:IRCTC-EQ",
+        "Stock · IREDA": "NSE:IREDA-EQ",
+        "Stock · IRFC": "NSE:IRFC-EQ",
+        "Stock · ITC": "NSE:ITC-EQ",
+        "Stock · JINDALSTEL": "NSE:JINDALSTEL-EQ",
+        "Stock · JIOFIN": "NSE:JIOFIN-EQ",
+        "Stock · JKCEMENT": "NSE:JKCEMENT-EQ",
+        "Stock · JSWENERGY": "NSE:JSWENERGY-EQ",
+        "Stock · JSWSTEEL": "NSE:JSWSTEEL-EQ",
+        "Stock · JUBLFOOD": "NSE:JUBLFOOD-EQ",
+        "Stock · KALYANKJIL": "NSE:KALYANKJIL-EQ",
+        "Stock · KEI": "NSE:KEI-EQ",
+        "Stock · KFINTECH": "NSE:KFINTECH-EQ",
+        "Stock · KOTAKBANK": "NSE:KOTAKBANK-EQ",
+        "Stock · KPITTECH": "NSE:KPITTECH-EQ",
+        "Stock · LALPATHLAB": "NSE:LALPATHLAB-EQ",
+        "Stock · LAURUSLABS": "NSE:LAURUSLABS-EQ",
+        "Stock · LICHSGFIN": "NSE:LICHSGFIN-EQ",
+        "Stock · LICI": "NSE:LICI-EQ",
+        "Stock · LODHA": "NSE:LODHA-EQ",
+        "Stock · LT": "NSE:LT-EQ",
+        "Stock · LTIM": "NSE:LTIM-EQ",
+        "Stock · LTTS": "NSE:LTTS-EQ",
+        "Stock · LUPIN": "NSE:LUPIN-EQ",
+        "Stock · M&M": "NSE:M&M-EQ",
+        "Stock · MANAPPURAM": "NSE:MANAPPURAM-EQ",
+        "Stock · MANKIND": "NSE:MANKIND-EQ",
+        "Stock · MARICO": "NSE:MARICO-EQ",
+        "Stock · MARUTI": "NSE:MARUTI-EQ",
+        "Stock · MAXHEALTH": "NSE:MAXHEALTH-EQ",
+        "Stock · MAZDOC": "NSE:MAZDOC-EQ",
+        "Stock · MCX": "NSE:MCX-EQ",
+        "Stock · METROPOLIS": "NSE:METROPOLIS-EQ",
+        "Stock · MFSL": "NSE:MFSL-EQ",
+        "Stock · MOTHERSON": "NSE:MOTHERSON-EQ",
+        "Stock · MPHASIS": "NSE:MPHASIS-EQ",
+        "Stock · MRF": "NSE:MRF-EQ",
+        "Stock · MUTHOOTFIN": "NSE:MUTHOOTFIN-EQ",
+        "Stock · NATIONALUM": "NSE:NATIONALUM-EQ",
+        "Stock · NAUKRI": "NSE:NAUKRI-EQ",
+        "Stock · NBCC": "NSE:NBCC-EQ",
+        "Stock · NCC": "NSE:NCC-EQ",
+        "Stock · NESTLEIND": "NSE:NESTLEIND-EQ",
+        "Stock · NHPC": "NSE:NHPC-EQ",
+        "Stock · NMDC": "NSE:NMDC-EQ",
+        "Stock · NTPC": "NSE:NTPC-EQ",
+        "Stock · NYKAA": "NSE:NYKAA-EQ",
+        "Stock · OBEROIRLTY": "NSE:OBEROIRLTY-EQ",
+        "Stock · OFSS": "NSE:OFSS-EQ",
+        "Stock · OIL": "NSE:OIL-EQ",
+        "Stock · ONGC": "NSE:ONGC-EQ",
+        "Stock · PAYTM": "NSE:PAYTM-EQ",
+        "Stock · PEL": "NSE:PEL-EQ",
+        "Stock · PERSISTENT": "NSE:PERSISTENT-EQ",
+        "Stock · PETRONET": "NSE:PETRONET-EQ",
+        "Stock · PFC": "NSE:PFC-EQ",
+        "Stock · PGEL": "NSE:PGEL-EQ",
+        "Stock · PHOENIXLTD": "NSE:PHOENIXLTD-EQ",
+        "Stock · PIDILITIND": "NSE:PIDILITIND-EQ",
+        "Stock · PIIND": "NSE:PIIND-EQ",
+        "Stock · PNB": "NSE:PNB-EQ",
+        "Stock · POLICYBZR": "NSE:POLICYBZR-EQ",
+        "Stock · POLYCAB": "NSE:POLYCAB-EQ",
+        "Stock · POONAWALLA": "NSE:POONAWALLA-EQ",
+        "Stock · POWERGRID": "NSE:POWERGRID-EQ",
+        "Stock · PRESTIGE": "NSE:PRESTIGE-EQ",
+        "Stock · RBLBANK": "NSE:RBLBANK-EQ",
+        "Stock · RECLTD": "NSE:RECLTD-EQ",
+        "Stock · RELIANCE": "NSE:RELIANCE-EQ",
+        "Stock · SAIL": "NSE:SAIL-EQ",
+        "Stock · SBICARD": "NSE:SBICARD-EQ",
+        "Stock · SBILIFE": "NSE:SBILIFE-EQ",
+        "Stock · SBIN": "NSE:SBIN-EQ",
+        "Stock · SHREECEM": "NSE:SHREECEM-EQ",
+        "Stock · SHRIRAMFIN": "NSE:SHRIRAMFIN-EQ",
+        "Stock · SIEMENS": "NSE:SIEMENS-EQ",
+        "Stock · SONACOMS": "NSE:SONACOMS-EQ",
+        "Stock · SRF": "NSE:SRF-EQ",
+        "Stock · SUNPHARMA": "NSE:SUNPHARMA-EQ",
+        "Stock · SUPREMEIND": "NSE:SUPREMEIND-EQ",
+        "Stock · SYNGENE": "NSE:SYNGENE-EQ",
+        "Stock · TATACONSUM": "NSE:TATACONSUM-EQ",
+        "Stock · TATAELXSI": "NSE:TATAELXSI-EQ",
+        "Stock · TATAMOTORS": "NSE:TATAMOTORS-EQ",
+        "Stock · TATAPOWER": "NSE:TATAPOWER-EQ",
+        "Stock · TATASTEEL": "NSE:TATASTEEL-EQ",
+        "Stock · TCS": "NSE:TCS-EQ",
+        "Stock · TECHM": "NSE:TECHM-EQ",
+        "Stock · TIINDIA": "NSE:TIINDIA-EQ",
+        "Stock · TITAGARH": "NSE:TITAGARH-EQ",
+        "Stock · TITAN": "NSE:TITAN-EQ",
+        "Stock · TORNTPHARM": "NSE:TORNTPHARM-EQ",
+        "Stock · TORNTPOWER": "NSE:TORNTPOWER-EQ",
+        "Stock · TRENT": "NSE:TRENT-EQ",
+        "Stock · TVSMOTOR": "NSE:TVSMOTOR-EQ",
+        "Stock · UBL": "NSE:UBL-EQ",
+        "Stock · ULTRACEMCO": "NSE:ULTRACEMCO-EQ",
+        "Stock · UNOMINDA": "NSE:UNOMINDA-EQ",
+        "Stock · UPL": "NSE:UPL-EQ",
+        "Stock · VBL": "NSE:VBL-EQ",
+        "Stock · VEDL": "NSE:VEDL-EQ",
+        "Stock · VOLTAS": "NSE:VOLTAS-EQ",
+        "Stock · WIPRO": "NSE:WIPRO-EQ",
+        "Stock · YESBANK": "NSE:YESBANK-EQ",
+        "Stock · ZOMATO": "NSE:ZOMATO-EQ",
+        "Stock · ZYDUSLIFE": "NSE:ZYDUSLIFE-EQ",
+        "Stock · ADANIPOWER": "NSE:ADANIPOWER-EQ",
+        "Stock · COCHINSHIP": "NSE:COCHINSHIP-EQ",
+        "Stock · HYUNDAI": "NSE:HYUNDAI-EQ",
+        "Stock · MOTILALOFS": "NSE:MOTILALOFS-EQ",
+        "Stock · NAM-INDIA": "NSE:NAM-INDIA-EQ",
+        "Stock · VMM": "NSE:VMM-EQ",
+        "Stock · ARE&M": "NSE:ARE&M-EQ",
+        "Stock · PATANJALI": "NSE:PATANJALI-EQ",
+    }
+    # Searchable selector with simple index/stock filters; the full mapping remains available.
+    selector_col1, selector_col2 = st.columns([2, 1])
+    option_search = selector_col1.text_input(
+        "Search F&O stock or index",
+        placeholder="Type a symbol, e.g. RELIANCE, HDFCBANK, NIFTY",
+        key="option_chain_symbol_search",
+    ).strip().upper()
+    option_category = selector_col2.selectbox(
+        "Instrument type",
+        ["All", "Stocks only", "Indices only"],
+        key="option_chain_instrument_filter",
+    )
+    filtered_underlyings = [
+        label for label in option_underlying_labels
+        if (not option_search or option_search in label.upper())
+        and (
+            option_category == "All"
+            or (option_category == "Stocks only" and label.startswith("Stock · "))
+            or (option_category == "Indices only" and label.startswith("Index · "))
+        )
+    ]
+    if not filtered_underlyings:
+        st.warning("No matching instrument. Try another symbol or select All.")
+        st.stop()
+    option_underlying = st.selectbox(
+        f"Underlying ({len(filtered_underlyings)} matches)",
+        filtered_underlyings,
+        key="auto_opt_underlying_searchable",
+    )
+    if not st.session_state.get("fyers_access_token") or not fyers_credentials():
+        st.warning("Connect FYERS in the sidebar to load the live option chain, PCR, open interest, max pain and Greeks. No values are estimated when disconnected.")
+    else:
+        app_id = fyers_credentials()[0]
+        access_token = st.session_state["fyers_access_token"]
+        with st.spinner("Fetching available expiries from FYERS…"):
+            base_chain, base_error = fyers_option_chain(app_id, access_token, option_underlying_labels[option_underlying], strikecount=10)
+        if base_error:
+            st.error(f"FYERS option-chain data unavailable: {base_error}")
+            st.caption("Check that your FYERS API app has market-data access and that your session token is still valid.")
+        else:
+            expiry_rows = base_chain.get("expiryData") or []
+            expiry_labels = {f'{row.get("date", "Unknown expiry")} · {row.get("expiry", "")}': str(row.get("expiry", "")) for row in expiry_rows if row.get("expiry") is not None}
+            if expiry_labels:
+                selected_expiry_label = st.selectbox("Expiry", list(expiry_labels.keys()), key="fyers_option_expiry")
+                selected_expiry = expiry_labels[selected_expiry_label]
+                with st.spinner("Loading selected FYERS option chain…"):
+                    chain_data, chain_error = fyers_option_chain(app_id, access_token, option_underlying_labels[option_underlying], strikecount=10, expiry_timestamp=selected_expiry)
+            else:
+                chain_data, chain_error = base_chain, None
+                st.info("FYERS did not provide a separate expiry list; displaying the returned chain.")
+            if chain_error:
+                st.error(f"Could not load selected expiry: {chain_error}")
+            else:
+                chain_rows = chain_data.get("optionsChain") or []
+                call_rows = [row for row in chain_rows if str(row.get("option_type", "")).upper() == "CE"]
+                put_rows = [row for row in chain_rows if str(row.get("option_type", "")).upper() == "PE"]
+                spot_row = next((row for row in chain_rows if row.get("option_type", "") == "" or float(row.get("strike_price", 0) or 0) < 0), {})
+                calls_by_strike = {float(row["strike_price"]): row for row in call_rows if row.get("strike_price") is not None}
+                puts_by_strike = {float(row["strike_price"]): row for row in put_rows if row.get("strike_price") is not None}
+                strikes = sorted(set(calls_by_strike) | set(puts_by_strike))
+                call_oi = chain_data.get("callOi")
+                put_oi = chain_data.get("putOi")
+                if call_oi is None:
+                    call_oi = sum(float(row.get("oi") or 0) for row in call_rows)
+                if put_oi is None:
+                    put_oi = sum(float(row.get("oi") or 0) for row in put_rows)
+                pcr = float(put_oi) / float(call_oi) if call_oi and float(call_oi) != 0 else np.nan
+                spot = spot_row.get("ltp", spot_row.get("fp"))
+                a, b, c, d = st.columns(4)
+                a.metric("Underlying LTP", fmt(spot))
+                b.metric("Put/Call OI ratio", fmt(pcr), help="Aggregate put open interest divided by aggregate call open interest for the returned chain.")
+                c.metric("Call open interest", fmt(call_oi, 0))
+                d.metric("Put open interest", fmt(put_oi, 0))
+                # Max pain: settlement price that minimizes combined intrinsic payout using returned strike-level OI.
+                pain_rows = []
+                for settlement in strikes:
+                    call_payout = sum(float(row.get("oi") or 0) * max(settlement - strike, 0) for strike, row in calls_by_strike.items())
+                    put_payout = sum(float(row.get("oi") or 0) * max(strike - settlement, 0) for strike, row in puts_by_strike.items())
+                    pain_rows.append({"Settlement candidate": settlement, "Combined payout": call_payout + put_payout})
+                max_pain = min(pain_rows, key=lambda row: row["Combined payout"])["Settlement candidate"] if pain_rows else np.nan
+                nearest_atm = min(strikes, key=lambda strike: abs(strike - float(spot))) if strikes and spot is not None else None
+                atm_call = calls_by_strike.get(nearest_atm, {})
+                atm_put = puts_by_strike.get(nearest_atm, {})
+                straddle = float(atm_call.get("ltp") or 0) + float(atm_put.get("ltp") or 0) if nearest_atm is not None and (atm_call or atm_put) else np.nan
+                e, f = st.columns(2)
+                e.metric("Max pain (returned strikes)", fmt(max_pain))
+                f.metric("ATM straddle premium", fmt(straddle), help="Call plus put LTP at the nearest returned strike to the underlying LTP.")
+                table_rows = []
+                for strike in strikes:
+                    ce, pe = calls_by_strike.get(strike, {}), puts_by_strike.get(strike, {})
+                    ce_g, pe_g = ce.get("greeks") or {}, pe.get("greeks") or {}
+                    table_rows.append({
+                        "Strike": strike,
+                        "CE LTP": ce.get("ltp"), "CE Chg %": ce.get("ltpchp"), "CE OI": ce.get("oi"), "CE OI chg": ce.get("oich"), "CE IV": ce_g.get("iv"), "CE Delta": ce_g.get("delta"),
+                        "PE LTP": pe.get("ltp"), "PE Chg %": pe.get("ltpchp"), "PE OI": pe.get("oi"), "PE OI chg": pe.get("oich"), "PE IV": pe_g.get("iv"), "PE Delta": pe_g.get("delta"),
+                    })
+                chain_frame = pd.DataFrame(table_rows)
+                if nearest_atm is not None:
+                    chain_frame["ATM"] = chain_frame["Strike"].eq(nearest_atm).map({True: "ATM", False: ""})
+                    ordered = ["ATM", "Strike"] + [col for col in chain_frame.columns if col not in {"ATM", "Strike"}]
+                    chain_frame = chain_frame[ordered]
+                st.dataframe(chain_frame, use_container_width=True, hide_index=True)
+                st.download_button("Download FYERS option chain CSV", chain_frame.to_csv(index=False).encode("utf-8"), f"{option_underlying.split(' · ')[-1].lower()}_fyers_option_chain.csv", "text/csv")
+                st.caption(f"Source: FYERS Option Chain API · selected {option_underlying} ({option_underlying_labels[option_underlying]}) · returned strikes: {len(strikes)} · retrieved {datetime.now(ZoneInfo('Asia/Kolkata')):%d %b %Y %H:%M:%S IST}. Max pain is calculated only across the returned strikes, not the entire market chain.")
+    st.markdown("[FYERS Option Chain API documentation](https://fyers.in/api-docs/v3/api/market-data/option-chain) · [Official NSE option chain](https://www.nseindia.com/option-chain)")
 
 with extra_tabs[2]:
     st.subheader("15 · Risk and position-sizing calculator")
@@ -508,10 +2248,10 @@ with extra_tabs[5]:
         headlines,news_error=get_news_rss(news_query,15)
     if news_error: st.warning(news_error)
     elif not headlines.empty:
-        st.dataframe(headlines,use_container_width=True,hide_index=True,column_config={"Source link":st.column_config.LinkColumn("Source link")})
-        st.download_button("Download event-risk headlines",headlines.to_csv(index=False).encode("utf-8"),"event_risk_headlines.csv","text/csv")
-    st.markdown("**Official release calendars and primary sources**")
-    st.markdown("- [RBI](https://www.rbi.org.in/) · [MOSPI](https://mospi.gov.in/) · [Federal Reserve](https://www.federalreserve.gov/monetarypolicy.htm) · [US BLS release schedule](https://www.bls.gov/schedule/news_release/) · [EIA](https://www.eia.gov/petroleum/supply/weekly/)")
+        # Keep the headline table readable on mobile; hide long raw Google News redirect URLs.
+        display_headlines = headlines.drop(columns=["Source link"], errors="ignore")
+        st.dataframe(display_headlines,use_container_width=True,hide_index=True)
+        st.download_button("Download event-risk headlines",display_headlines.to_csv(index=False).encode("utf-8"),"event_risk_headlines.csv","text/csv")
     gap_name=st.selectbox("Instrument for previous-bar gap check",["NIFTY 50","BANK NIFTY","INFY","WIPRO"],key="gap_symbol")
     gdf=market_data[gap_name]
     if len(gdf)>=2:
@@ -580,7 +2320,7 @@ with extra_tabs[9]:
 
 
 # Additional research modules inspired by the user's reference dashboard.
-research_tabs = st.tabs(["23 Industry intelligence", "24 Delivery & money-flow proxies", "25 Daily briefing"])
+research_tabs = [st.expander(label, expanded=False) for label in ["23 Industry intelligence", "24 Delivery & money-flow proxies", "25 Daily briefing"]]
 
 with research_tabs[0]:
     st.subheader("23 · Industry intelligence and rotation")
@@ -678,14 +2418,14 @@ with research_tabs[2]:
 
 
 # Additional modules completing the major workflows shown in the reference screenshots.
-advanced_tabs = st.tabs([
-    "26 Macro & event log",
+advanced_tabs = [st.expander(label, expanded=False) for label in [
+    "26 Macro & event monitor",
     "27 Breadth & stock scanner",
     "28 Derivatives lab",
     "29 Stock deep-dive",
     "30 Strategy backtest",
     "31 Data quality"
-])
+]]
 
 with advanced_tabs[0]:
     st.subheader("26 · Automatic macro & geopolitical event monitor")
@@ -794,9 +2534,9 @@ with advanced_tabs[1]:
 with advanced_tabs[2]:
     st.subheader("28 · Derivatives lab")
     st.write("This module does not scrape NSE or fabricate derivatives data.")
-    st.warning("No authorized free machine-readable NSE derivatives API is configured. Option-chain PCR, max pain, IV, futures OI and participant positioning are therefore unavailable automatically.")
+    st.info("Options analytics now use the authenticated FYERS Option Chain API when connected. Futures-chain OI and participant-level FII/DII positioning are separate data sets and may remain unavailable.")
     st.markdown("[Official NSE option chain](https://www.nseindia.com/option-chain) · [NSE derivatives reports](https://www.nseindia.com/all-reports-derivatives)")
-    st.caption("Market prices and technical indicators continue to load automatically. Derivatives data requires an explicitly permitted source; no broker API is used.")
+    st.caption("Read-only FYERS market-data access is used for option-chain analysis; this module does not place orders. FII/DII participant positioning is not inferred from option-chain data.")
 
 with advanced_tabs[3]:
     st.subheader("29 · Automatic stock deep-dive")
@@ -882,3 +2622,232 @@ with advanced_tabs[5]:
     st.write("- TradingView embedded charts are a separate provider and may have exchange-specific delays.")
     st.write("- Public daily price history does not provide real option-chain OI, implied volatility, max pain, FII/DII flows or verified geopolitical causes.")
     st.write("- Calculations are only as sound as the dates, adjustments, universe membership and source rows supplied.")
+
+
+# FYERS chart workspace: all NSE cash-market equity symbols from FYERS Symbol Master.
+if "fyers_access_token" in st.session_state and fyers_credentials():
+    st.divider()
+    st.subheader("FYERS stock charts")
+    st.caption("Choose any symbol from FYERS' NSE capital-market symbol master. Candles are from FYERS Historical Data; the current quote is fetched separately. This is not a continuously updating WebSocket chart.")
+    symbols_list, symbols_error = fyers_nse_equity_symbols()
+    if symbols_error:
+        st.warning(symbols_error)
+    elif not symbols_list:
+        st.warning("The FYERS symbol master returned no NSE equity symbols.")
+    else:
+        symbol_labels = {f"{name or symbol} · {symbol}": symbol for symbol, name in symbols_list}
+        selected_label = st.selectbox("Search/select NSE stock", list(symbol_labels.keys()), index=0, key="fyers_chart_symbol")
+        col_res, col_period = st.columns(2)
+        with col_res:
+            chart_resolution = st.selectbox("Candle interval", ["1", "5", "15", "30", "60", "120", "240", "1D", "1W"], index=2, key="fyers_chart_resolution", format_func=lambda value: {"1":"1 minute","5":"5 minutes","15":"15 minutes","30":"30 minutes","60":"1 hour","120":"2 hours","240":"4 hours","1D":"1 day","1W":"1 week"}[value])
+        with col_period:
+            chart_days_label = st.selectbox("History window", ["5 days", "1 month", "3 months", "6 months", "1 year", "2 years", "5 years"], index=2, key="fyers_chart_days")
+        chart_days = {"5 days": 5, "1 month": 31, "3 months": 92, "6 months": 183, "1 year": 365, "2 years": 730, "5 years": 1825}[chart_days_label]
+        if chart_resolution in {"1", "5"} and chart_days > 5:
+            st.warning("For 1-minute and 5-minute candles, the chart automatically limits history to the most recent 5 calendar days to avoid oversized or unsupported requests.")
+            chart_days = 5
+        st.markdown("**Chart tools**")
+        ind1, ind2, ind3, ind4, ind5 = st.columns(5)
+        with ind1:
+            show_ema21 = st.checkbox("EMA 21", value=True, key="fyers_ema21")
+        with ind2:
+            show_ema50 = st.checkbox("EMA 50", value=False, key="fyers_ema50")
+        with ind3:
+            show_ema200 = st.checkbox("EMA 200", value=False, key="fyers_ema200")
+        with ind4:
+            show_rsi = st.checkbox("RSI", value=False, key="fyers_rsi")
+        with ind5:
+            show_stoch_rsi = st.checkbox("Stochastic RSI", value=False, key="fyers_stoch_rsi")
+        show_volume = st.checkbox("Volume", value=False, key="fyers_volume")
+        st.caption("After the chart loads, use the Plotly toolbar to draw lines, rectangles, circles, and annotations. These drawings are temporary and reset when the chart is rebuilt.")
+        if st.button("Load / refresh FYERS chart", key="fyers_load_chart"):
+            chart_symbol = symbol_labels[selected_label]
+            with st.spinner(f"Fetching FYERS candles for {chart_symbol}..."):
+                candles, candle_error = fyers_history(fyers_credentials()[0], st.session_state["fyers_access_token"], chart_symbol, chart_resolution, chart_days)
+            if candle_error:
+                st.warning(f"Chart data unavailable: {candle_error}")
+            else:
+                candles = candles.copy()
+                candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
+                candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
+                if candles.empty:
+                    st.warning("FYERS returned no valid OHLC candles for this selection.")
+                else:
+                    st.session_state["fyers_chart_data"] = candles.to_json(date_format="iso", orient="split")
+                    st.session_state["fyers_chart_symbol_loaded"] = chart_symbol
+                    st.session_state["fyers_chart_resolution_loaded"] = chart_resolution
+                    st.session_state["fyers_chart_loaded_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
+                    st.session_state.pop("fyers_chart_error", None)
+
+        # Start a single FYERS Data Socket for the currently selected chart symbol.
+        st.markdown("**Live market stream**")
+        live_symbol = symbol_labels[selected_label]
+        stream_symbol = st.session_state.get("fyers_stream_symbol")
+        stream_active = bool(st.session_state.get("fyers_stream_active"))
+        live_col1, live_col2 = st.columns(2)
+        with live_col1:
+            if not stream_active and st.button("▶ Start live updates", key="fyers_start_stream"):
+                try:
+                    import queue
+                    import threading
+                    from fyers_apiv3.FyersWebsocket import data_ws
+
+                    tick_queue = queue.Queue(maxsize=2000)
+                    app_id = fyers_credentials()[0]
+                    access_token = st.session_state["fyers_access_token"]
+                    def _push_tick(message):
+                        if isinstance(message, dict) and message.get("symbol") and message.get("ltp") is not None:
+                            try:
+                                tick_queue.put_nowait(dict(message, received_at=datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()))
+                            except Exception:
+                                pass
+                    def _socket_error(message):
+                        try:
+                            tick_queue.put_nowait({"_error": str(message), "received_at": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()})
+                        except Exception:
+                            pass
+                    socket_holder = {"socket": None}
+                    def _on_connect():
+                        connected_socket = socket_holder.get("socket")
+                        if connected_socket:
+                            connected_socket.subscribe(symbols=[live_symbol], data_type="SymbolUpdate")
+                            connected_socket.keep_running()
+                    socket_ref = data_ws.FyersDataSocket(
+                        access_token=f"{app_id}:{access_token}",
+                        log_path="",
+                        litemode=False,
+                        write_to_file=False,
+                        reconnect=True,
+                        reconnect_retry=10,
+                        on_connect=_on_connect,
+                        on_close=_socket_error,
+                        on_error=_socket_error,
+                        on_message=_push_tick,
+                    )
+                    socket_holder["socket"] = socket_ref
+                    st.session_state["fyers_tick_queue"] = tick_queue
+                    st.session_state["fyers_socket_ref"] = socket_ref
+                    st.session_state["fyers_stream_symbol"] = live_symbol
+                    st.session_state["fyers_stream_active"] = True
+                    thread = threading.Thread(target=socket_ref.connect, daemon=True)
+                    st.session_state["fyers_socket_thread"] = thread
+                    thread.start()
+                    st.success(f"Started FYERS live stream for {live_symbol}.")
+                except Exception as exc:
+                    st.session_state["fyers_stream_active"] = False
+                    st.error(f"Could not start FYERS live stream ({exc.__class__.__name__}). Check app deployment and FYERS session.")
+        with live_col2:
+            if stream_active and st.button("■ Stop live updates", key="fyers_stop_stream"):
+                try:
+                    socket_ref = st.session_state.get("fyers_socket_ref")
+                    if socket_ref:
+                        socket_ref.close_connection()
+                except Exception:
+                    pass
+                st.session_state["fyers_stream_active"] = False
+                st.session_state.pop("fyers_socket_ref", None)
+                st.session_state.pop("fyers_socket_thread", None)
+                st.session_state.pop("fyers_tick_queue", None)
+                st.session_state.pop("fyers_live_tick", None)
+                st.rerun()
+
+        @st.fragment(run_every=2)
+        def _fyers_live_chart_fragment():
+            import queue as _queue
+            tick_queue = st.session_state.get("fyers_tick_queue")
+            if tick_queue is not None:
+                while True:
+                    try:
+                        tick = tick_queue.get_nowait()
+                    except _queue.Empty:
+                        break
+                    if tick.get("_error"):
+                        st.session_state["fyers_stream_error"] = tick["_error"]
+                    elif tick.get("symbol") == st.session_state.get("fyers_stream_symbol"):
+                        st.session_state["fyers_live_tick"] = tick
+                        st.session_state["fyers_stream_error"] = None
+
+            tick = st.session_state.get("fyers_live_tick")
+            if tick and tick.get("symbol") == st.session_state.get("fyers_stream_symbol"):
+                tick_time = tick.get("exch_feed_time") or tick.get("last_traded_time")
+                try:
+                    tick_time_text = datetime.fromtimestamp(float(tick_time), ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") if tick_time else tick.get("received_at", "time unavailable")
+                except Exception:
+                    tick_time_text = tick.get("received_at", "time unavailable")
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    st.metric("FYERS live LTP", f"{float(tick['ltp']):,.2f}", f"{float(tick.get('chp', 0)):+.2f}%" if tick.get("chp") is not None else None)
+                with m2:
+                    st.metric("Day high", f"{float(tick['high_price']):,.2f}" if tick.get("high_price") is not None else "—")
+                with m3:
+                    st.metric("Day low", f"{float(tick['low_price']):,.2f}" if tick.get("low_price") is not None else "—")
+                st.caption(f"WebSocket feed time: {tick_time_text} · Last received by app: {tick.get('received_at', 'unknown')}")
+            elif st.session_state.get("fyers_stream_error"):
+                st.warning("FYERS stream message: " + str(st.session_state["fyers_stream_error"])[:300])
+            elif st.session_state.get("fyers_stream_active"):
+                st.info("Connecting to FYERS Data Socket; waiting for the first market update.")
+            else:
+                st.caption("Live stream is stopped. Start it during market hours to receive updates.")
+
+            chart_json = st.session_state.get("fyers_chart_data")
+            if chart_json:
+                chart_symbol_loaded = st.session_state.get("fyers_chart_symbol_loaded", live_symbol)
+                candles = pd.read_json(chart_json, orient="split")
+                candles["Date"] = pd.to_datetime(candles["Date"], errors="coerce")
+                candles = candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
+                if not candles.empty:
+                    tick = st.session_state.get("fyers_live_tick")
+                    current_ltp = tick.get("ltp") if tick and tick.get("symbol") == chart_symbol_loaded else None
+                    fig = go.Figure(data=[go.Candlestick(x=candles["Date"], open=candles["Open"], high=candles["High"], low=candles["Low"], close=candles["Close"], name=chart_symbol_loaded)])
+                    for span, enabled in [(21, show_ema21), (50, show_ema50), (200, show_ema200)]:
+                        if enabled:
+                            ema_values = candles["Close"].ewm(span=span, adjust=False).mean()
+                            fig.add_trace(go.Scatter(x=candles["Date"], y=ema_values, name="EMA " + str(span), mode="lines", line=dict(width=1.4)))
+                    if show_volume and "Volume" in candles:
+                        volume_fig = go.Figure(go.Bar(x=candles["Date"], y=candles["Volume"], name="Volume"))
+                        volume_fig.update_layout(title="Volume", template="plotly_dark", height=220, margin=dict(l=20,r=20,t=40,b=20), xaxis_title="Time (IST)")
+                        st.plotly_chart(volume_fig, use_container_width=True, config={"displaylogo": False}, key="fyers_volume_plot")
+                    if current_ltp is not None:
+                        fig.add_hline(y=float(current_ltp), line_dash="dot", annotation_text=f"Live FYERS LTP: {float(current_ltp):,.2f}")
+                    fig.update_layout(title=f"{chart_symbol_loaded} · FYERS candles", xaxis_title="Time (IST)", yaxis_title="Price", xaxis_rangeslider_visible=False, height=650, hovermode="x unified", margin=dict(l=20, r=20, t=60, b=20))
+                    fig.update_xaxes(type="date", tickformat="%d %b %H:%M" if st.session_state.get("fyers_chart_resolution_loaded") != "1D" else "%d %b %Y", showspikes=True, spikemode="across", spikesnap="cursor")
+                    fig.update_yaxes(fixedrange=False)
+                    st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False, "modeBarButtonsToAdd": ["drawline", "drawopenpath", "drawclosedpath", "drawcircle", "drawrect", "eraseshape"]}, key="fyers_live_chart_plot")
+                    st.caption(f"Historical candles: FYERS · fetched: {st.session_state.get('fyers_chart_loaded_at', 'unknown')} · live quote overlay refreshes every 2 seconds while connected.")
+                    delta = candles["Close"].diff()
+                    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                    rs = gain / loss.replace(0, np.nan)
+                    rsi = (100 - (100 / (1 + rs))).fillna(50)
+                    if show_rsi:
+                        rsi_fig = go.Figure(go.Scatter(x=candles["Date"], y=rsi, name="RSI 14", line=dict(width=1.5)))
+                        rsi_fig.add_hline(y=70, line_dash="dash")
+                        rsi_fig.add_hline(y=30, line_dash="dash")
+                        rsi_fig.update_layout(title="RSI (14)", template="plotly_dark", height=240, margin=dict(l=20,r=20,t=45,b=20), yaxis=dict(range=[0,100]), xaxis_title="Time (IST)")
+                        st.plotly_chart(rsi_fig, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_rsi_plot")
+                    if show_stoch_rsi:
+                        rsi_low = rsi.rolling(14, min_periods=14).min()
+                        rsi_high = rsi.rolling(14, min_periods=14).max()
+                        stoch = ((rsi-rsi_low)/(rsi_high-rsi_low).replace(0, np.nan))*100
+                        stoch_k = stoch.rolling(3, min_periods=3).mean()
+                        stoch_d = stoch_k.rolling(3, min_periods=3).mean()
+                        sf = go.Figure()
+                        sf.add_trace(go.Scatter(x=candles["Date"], y=stoch_k, name="Stoch RSI %K"))
+                        sf.add_trace(go.Scatter(x=candles["Date"], y=stoch_d, name="Stoch RSI %D"))
+                        sf.add_hline(y=80, line_dash="dash")
+                        sf.add_hline(y=20, line_dash="dash")
+                        sf.update_layout(title="Stochastic RSI (14,14,3,3)", template="plotly_dark", height=240, margin=dict(l=20,r=20,t=45,b=20), yaxis=dict(range=[0,100]), xaxis_title="Time (IST)")
+                        st.plotly_chart(sf, use_container_width=True, config={"scrollZoom": True, "displaylogo": False}, key="fyers_live_stoch_rsi_plot")
+
+        _fyers_live_chart_fragment()
+
+        if st.session_state.get("fyers_stream_active") and st.session_state.get("fyers_stream_symbol") != live_symbol:
+            st.warning("The active stream is subscribed to a different symbol. Stop it, then start again for the selected chart symbol.")
+        st.info("FYERS WebSocket updates the live quote overlay and redraws the displayed chart every 2 seconds. Historical candles remain the last fetched candle set; the latest price line is live. Stream is read-only and does not place orders.")
+with st.expander("Important: Public Yahoo Finance and market-data limitations", expanded=False):
+    st.warning("Yahoo Finance data accessed through yfinance is best-effort and intended for personal use. Intraday values may be delayed, stale or unavailable; this is not a guaranteed real-time trading feed.")
+    st.write("TradingView embeds, where used elsewhere in the app, have their own exchange coverage and delay rules. Always check the source candle timestamp and verify important prices with your broker or official exchange before trading.")
+    st.markdown("[Yahoo Finance data coverage and delays](https://help.yahoo.com/kb/SLN2310.html) · [TradingView widgets and data coverage](https://www.tradingview.com/widget/)")
+
+if refresh:
+    st.cache_data.clear()
