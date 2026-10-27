@@ -2844,7 +2844,7 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                     (stock_candles["Low"].astype(float) - prev_close_series).abs(),
                 ], axis=1).max(axis=1)
                 atr14 = float(true_range.ewm(alpha=1/14, min_periods=14, adjust=False).mean().iloc[-1]) if len(stock_candles) >= 14 else float(true_range.mean())
-                trend_label = "Bullish" if close_price > ema20 > ema50 and ema20 > ema20 * 0 + ema50 else "Bearish" if close_price < ema20 < ema50 else "Mixed"
+                trend_label = "Bullish" if close_price > ema20 > ema50 else "Bearish" if close_price < ema20 < ema50 else "Mixed"
                 # Use the latest bar only if it is from an earlier session; during today's session use the prior completed candle for pivots.
                 today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
                 latest_date = pd.to_datetime(latest_stock["Date"], errors="coerce")
