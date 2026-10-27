@@ -2996,7 +2996,7 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         mode="gauge+number",
                         value=technical_score * 25,
                         number={"suffix": "/100", "font": {"size": 26, "color": consensus_color}},
-                        title={"text": "Technical confluence<br><span style='font-size:10px;color:#aeb6c2'>4 simple checks · not a forecast</span>", "font": {"size": 14}},
+                        title={"text": f"Technical confluence<br><span style='font-size:10px;color:#aeb6c2'>{technical_score}/4 bullish checks · not a forecast</span>", "font": {"size": 14}},
                         gauge={
                             "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 25, 50, 75, 100], "ticktext": ["0", "25", "50", "75", "100"], "tickfont": {"size": 9}},
                             "bar": {"color": consensus_color, "thickness": .22},
@@ -3015,6 +3015,7 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         f'<div style="text-align:center;font-size:17px;font-weight:800;color:{consensus_color};margin-top:-8px;">{consensus_label}</div>',
                         unsafe_allow_html=True,
                     )
+                    st.caption(f"Score: {technical_score}/4 bullish checks. A score of 0 means all four checks currently lean bearish; it does not mean the data is missing.")
                     for check_name, is_positive, check_detail in technical_checks:
                         check_color = "#22c55e" if is_positive else "#ef4444"
                         check_icon = "✓" if is_positive else "×"
