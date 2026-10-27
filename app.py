@@ -3076,12 +3076,69 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         except (TypeError, ValueError):
                             return "—"
 
-                    pe_value = fundamentals.get("trailingPE")
-                    industry_pe_value = fundamentals.get("industryPE")
-                    debt_equity_value = fundamentals.get("debtToEquity")
-                    peg_value = fundamentals.get("pegRatio") or fundamentals.get("trailingPegRatio")
-                    roe_value = fundamentals.get("returnOnEquity")
-                    roce_value = fundamentals.get("returnOnCapitalEmployed")
+                    # Screener.in does not publish a supported public API. Use a user-exported CSV instead of scraping pages.
+                    screener_row = None
+                    with st.expander("Use Screener.in fundamentals (CSV export)", expanded=False):
+                        st.caption("On Screener.in, open the company/screen, add the desired ratio columns, then export the results to CSV and upload that file here. This avoids relying on an unofficial scraping endpoint.")
+                        screener_file = st.file_uploader("Upload Screener.in CSV export", type=["csv"], key="screener_fundamentals_csv")
+                        if screener_file is not None:
+                            try:
+                                screener_df = pd.read_csv(screener_file)
+                                normalized_columns = {
+                                    re.sub(r"[^a-z0-9]", "", str(col).lower()): col
+                                    for col in screener_df.columns
+                                }
+                                ticker = selected_symbol.replace("NSE:", "").replace("-EQ", "").replace(".NS", "").strip().upper()
+                                ticker_col = next((normalized_columns[k] for k in normalized_columns if k in {"nsecode", "nsesymbol", "symbol", "ticker"}), None)
+                                name_col = next((normalized_columns[k] for k in normalized_columns if k in {"name", "company", "companyname"}), None)
+                                matched = pd.Series(False, index=screener_df.index)
+                                if ticker_col:
+                                    matched = matched | screener_df[ticker_col].astype(str).str.upper().str.strip().eq(ticker)
+                                if name_col:
+                                    company_name = ticker.replace("-", " ").replace("_", " ")
+                                    matched = matched | screener_df[name_col].astype(str).str.upper().str.contains(re.escape(company_name), na=False)
+                                if matched.any():
+                                    screener_row = screener_df.loc[matched].iloc[0]
+                                    st.success(f"Matched {ticker} in the uploaded Screener.in file.")
+                                else:
+                                    st.warning(f"{ticker} was not found in the uploaded CSV. Include the NSE Code or company name column and export the selected stock.")
+                            except Exception as exc:
+                                st.warning(f"Could not read this CSV: {exc.__class__.__name__}")
+
+                    def _screener_csv_value(row, *labels):
+                        if row is None:
+                            return None
+                        for col in row.index:
+                            key = re.sub(r"[^a-z0-9]", "", str(col).lower())
+                            for label in labels:
+                                wanted = re.sub(r"[^a-z0-9]", "", label.lower())
+                                if key == wanted:
+                                    value = row[col]
+                                    try:
+                                        numeric = float(str(value).replace(",", "").replace("%", "").replace("₹", "").strip())
+                                        return numeric if np.isfinite(numeric) else None
+                                    except (TypeError, ValueError):
+                                        continue
+                        return None
+
+                    pe_value = _screener_csv_value(screener_row, "Stock P/E", "Price to earning", "P/E") 
+                    if pe_value is None:
+                        pe_value = fundamentals.get("trailingPE")
+                    industry_pe_value = _screener_csv_value(screener_row, "Industry PE", "Industry P/E")
+                    if industry_pe_value is None:
+                        industry_pe_value = fundamentals.get("industryPE")
+                    debt_equity_value = _screener_csv_value(screener_row, "Debt to equity", "Debt/Equity")
+                    if debt_equity_value is None:
+                        debt_equity_value = fundamentals.get("debtToEquity")
+                    peg_value = _screener_csv_value(screener_row, "PEG Ratio", "PEG")
+                    if peg_value is None:
+                        peg_value = fundamentals.get("pegRatio") or fundamentals.get("trailingPegRatio")
+                    roe_value = _screener_csv_value(screener_row, "Return on equity", "ROE")
+                    if roe_value is None:
+                        roe_value = fundamentals.get("returnOnEquity")
+                    roce_value = _screener_csv_value(screener_row, "Return on capital employed", "ROCE")
+                    if roce_value is None:
+                        roce_value = fundamentals.get("returnOnCapitalEmployed")
 
                     # Some Yahoo Finance snapshots omit ROCE; calculate it only when the required annual statement rows exist.
                     if roce_value is None:
@@ -3126,35 +3183,8 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         )
                     metric_html += '</div>'
                     st.markdown(metric_html, unsafe_allow_html=True)
-                    st.caption("Fundamentals from Yahoo Finance when available. — means the source did not return a value; industry P/E is not estimated.")
+                    st.caption("Screener.in CSV values take priority when uploaded; remaining values use Yahoo Finance when available. — means the source did not return a value.")
 
-                    with st.expander("Check FYERS fundamental data availability", expanded=False):
-                        st.caption("Diagnostic only: this checks FYERS' available ratio columns and tests up to five relevant screeners. A stock missing from a filtered screener may still have fundamentals available.")
-                        if st.button("Run FYERS data check", key="check_fyers_fundamentals"):
-                            fyers_config = fyers_credentials()
-                            fyers_token = st.session_state.get("fyers_access_token")
-                            if not fyers_config or not fyers_token:
-                                st.warning("Connect FYERS first, then run this check.")
-                            else:
-                                with st.spinner("Checking FYERS screener configuration and results..."):
-                                    fyers_probe = fyers_fundamental_probe(fyers_config[0], fyers_token, selected_symbol)
-                                if not fyers_probe.get("ok"):
-                                    st.warning(fyers_probe.get("message", "FYERS data check could not be completed."))
-                                else:
-                                    st.info(fyers_probe.get("message", "FYERS check completed."))
-                                    available_columns = fyers_probe.get("columns") or []
-                                    if available_columns:
-                                        st.markdown("**Potentially relevant FYERS columns**")
-                                        st.dataframe(pd.DataFrame(available_columns), use_container_width=True, hide_index=True, height=180)
-                                    else:
-                                        st.caption("No matching valuation/profitability columns were listed in the FYERS configuration.")
-                                    if fyers_probe.get("screener"):
-                                        st.caption(f"Matching screener: {fyers_probe['screener']}")
-                                        st.dataframe(pd.DataFrame(fyers_probe.get("values") or []), use_container_width=True, hide_index=True, height=240)
-                                    checked_screens = fyers_probe.get("checked") or []
-                                    if checked_screens:
-                                        st.markdown("**Screeners checked**")
-                                        st.dataframe(pd.DataFrame(checked_screens), use_container_width=True, hide_index=True, height=150)
                 st.markdown("#### Price trend · recent momentum")
                 stock_chart = go.Figure()
                 stock_chart.add_trace(go.Candlestick(
