@@ -79,8 +79,23 @@ def upstox_oauth_credentials():
     except Exception:
         return None
 
-def upstox_make_state() -> str:
-    return secrets.token_urlsafe(32)
+def upstox_make_state(client_secret: str) -> str:
+    # Signed state survives OAuth redirects even if Streamlit creates a fresh session.
+    payload = str(int(time.time())) + "." + secrets.token_urlsafe(24)
+    signature = hmac.new(client_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return payload + "." + signature
+
+def upstox_verify_state(state: str, client_secret: str, max_age_seconds: int = 900) -> bool:
+    try:
+        payload, signature = state.rsplit(".", 1)
+        timestamp_text, nonce = payload.split(".", 1)
+        timestamp = int(timestamp_text)
+        if not nonce or abs(int(time.time()) - timestamp) > max_age_seconds:
+            return False
+        expected = hmac.new(client_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return secrets.compare_digest(signature, expected)
+    except Exception:
+        return False
 
 def upstox_login_url(client_id: str, redirect_uri: str, state: str) -> str:
     params = {"client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code", "state": state}
@@ -149,8 +164,7 @@ with st.sidebar:
         st.caption("Add UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI in Streamlit Secrets.")
     else:
         if st.button("Connect / refresh Upstox login", use_container_width=True, key="upstox_start_oauth"):
-            upstox_state = upstox_make_state()
-            st.session_state["upstox_oauth_state"] = upstox_state
+            upstox_state = upstox_make_state(upstox_config[1])
             st.link_button("Continue to Upstox login", upstox_login_url(upstox_config[0], upstox_config[2], upstox_state), use_container_width=True)
         current_upstox_token = upstox_token_vault().get("access_token")
         if not current_upstox_token:
@@ -530,12 +544,11 @@ with st.sidebar:
 if "code" in st.query_params and "state" in st.query_params:
     upstox_config = upstox_oauth_credentials()
     returned_state = st.query_params.get("state", "")
-    expected_state = st.session_state.get("upstox_oauth_state", "")
     auth_code = st.query_params.get("code", "")
     if not upstox_config:
         st.error("Upstox credentials are not configured in Streamlit Secrets.")
         st.query_params.clear()
-    elif not expected_state or not secrets.compare_digest(returned_state, expected_state):
+    elif not upstox_verify_state(returned_state, upstox_config[1]):
         st.error("Upstox login state could not be verified or has expired. Please start Connect / refresh Upstox login again.")
         st.query_params.clear()
     elif auth_code:
