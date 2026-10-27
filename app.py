@@ -67,6 +67,59 @@ SECTOR_TICKERS = {
     "Consumption": "^CNXCONSUM",
 }
 
+# Upstox read-only OAuth integration. Secrets stay in Streamlit Cloud Secrets.
+def upstox_credentials():
+    try:
+        values = (
+            str(st.secrets["UPSTOX_API_KEY"]).strip(),
+            str(st.secrets["UPSTOX_API_SECRET"]).strip(),
+            str(st.secrets["UPSTOX_REDIRECT_URI"]).strip(),
+        )
+        return values if all(values) else None
+    except Exception:
+        return None
+
+def upstox_make_state() -> str:
+    return secrets.token_urlsafe(32)
+
+def upstox_login_url(client_id: str, redirect_uri: str, state: str) -> str:
+    params = {"client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code", "state": state}
+    return "https://api.upstox.com/v2/login/authorization/dialog?" + urlencode(params)
+
+@st.cache_resource
+def upstox_token_vault():
+    return {}
+
+def upstox_exchange_auth_code(client_id: str, client_secret: str, redirect_uri: str, code: str):
+    try:
+        response = requests.post(
+            "https://api.upstox.com/v2/login/authorization/token",
+            headers={"accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"},
+            data={"code": code, "client_id": client_id, "client_secret": client_secret,
+                  "redirect_uri": redirect_uri, "grant_type": "authorization_code"},
+            timeout=20,
+        )
+        payload = response.json()
+        if response.ok and payload.get("access_token"):
+            return payload["access_token"], None
+        return None, str(payload.get("errors") or payload.get("message") or "Upstox did not return an access token.")
+    except Exception as exc:
+        return None, f"Upstox token exchange failed ({exc.__class__.__name__})."
+
+def upstox_get_profile(access_token: str):
+    try:
+        response = requests.get(
+            "https://api.upstox.com/v2/user/profile",
+            headers={"Accept": "application/json", "Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        payload = response.json()
+        if response.ok and payload.get("status") == "success":
+            return payload.get("data") or {}, None
+        return None, str(payload.get("errors") or payload.get("message") or f"HTTP {response.status_code}")
+    except Exception as exc:
+        return None, f"Upstox profile request failed ({exc.__class__.__name__})."
+
 with st.sidebar:
     st.header("Dashboard controls")
     period = st.selectbox("Historical lookback", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=2)
@@ -88,6 +141,30 @@ with st.sidebar:
     st.markdown("- [RBI](https://www.rbi.org.in/)")
     st.markdown("- [TradingView widgets](https://www.tradingview.com/widget/)")
     st.markdown("- [Yahoo Finance data coverage/delays](https://help.yahoo.com/kb/SLN2310.html)")
+
+    st.divider()
+    st.markdown("**Upstox API · read-only connection**")
+    upstox_config = upstox_credentials()
+    if not upstox_config:
+        st.caption("Add UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI in Streamlit Secrets.")
+    else:
+        if st.button("Connect / refresh Upstox login", use_container_width=True, key="upstox_start_oauth"):
+            upstox_state = upstox_make_state()
+            st.session_state["upstox_oauth_state"] = upstox_state
+            st.link_button("Continue to Upstox login", upstox_login_url(upstox_config[0], upstox_config[2], upstox_state), use_container_width=True)
+        current_upstox_token = upstox_token_vault().get("access_token")
+        if not current_upstox_token:
+            try:
+                configured_token = str(st.secrets.get("UPSTOX_ACCESS_TOKEN", "")).strip()
+            except Exception:
+                configured_token = ""
+            if configured_token:
+                upstox_token_vault()["access_token"] = configured_token
+                current_upstox_token = configured_token
+        if current_upstox_token:
+            st.caption("Upstox access token is configured in this app process.")
+        else:
+            st.caption("Upstox is not connected in this app process yet.")
 
 
 # FYERS read-only market-data connection. Credentials must live in Streamlit Cloud Secrets.
@@ -403,6 +480,39 @@ with st.sidebar:
                 use_container_width=True,
             )
             st.caption("The token is shared across app sessions in memory. FYERS access tokens expire daily at 6:30 AM; a server restart or expired refresh token may require reconnecting.")
+
+# Handle Upstox OAuth callback. The redirect URI must match the registered URL exactly.
+if "code" in st.query_params and "state" in st.query_params:
+    upstox_config = upstox_credentials()
+    returned_state = st.query_params.get("state", "")
+    expected_state = st.session_state.get("upstox_oauth_state", "")
+    auth_code = st.query_params.get("code", "")
+    if not upstox_config:
+        st.error("Upstox credentials are not configured in Streamlit Secrets.")
+        st.query_params.clear()
+    elif not expected_state or not secrets.compare_digest(returned_state, expected_state):
+        st.error("Upstox login state could not be verified or has expired. Please start Connect / refresh Upstox login again.")
+        st.query_params.clear()
+    elif auth_code:
+        with st.spinner("Completing Upstox authorization..."):
+            token, token_error = upstox_exchange_auth_code(upstox_config[0], upstox_config[1], upstox_config[2], auth_code)
+        if token:
+            upstox_token_vault()["access_token"] = token
+            profile, profile_error = upstox_get_profile(token)
+            st.session_state["upstox_connected_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
+            st.session_state["upstox_profile_name"] = str(profile.get("user_name") or profile.get("user_id") or "Connected") if profile else "Connected"
+            st.query_params.clear()
+            if profile_error:
+                st.warning("Upstox token was received, but profile verification failed. Check token access.")
+            else:
+                st.success("Upstox OAuth connected and profile verified.")
+            st.rerun()
+        else:
+            st.error(f"Upstox authorization failed: {token_error}")
+            st.query_params.clear()
+    else:
+        st.error("Upstox returned without an authorization code. Please retry.")
+        st.query_params.clear()
 
 # Handle the redirect from FYERS after user authorization.
 if "auth_code" in st.query_params:
