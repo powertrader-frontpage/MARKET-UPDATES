@@ -160,6 +160,28 @@ with st.sidebar:
     st.markdown("- [Yahoo Finance data coverage/delays](https://help.yahoo.com/kb/SLN2310.html)")
 
     st.divider()
+    st.markdown("**Upstox API · read-only connection**")
+    upstox_config = upstox_oauth_credentials()
+    if not upstox_config:
+        st.caption("Add UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI in Streamlit Secrets.")
+    else:
+        if st.button("Connect / refresh Upstox login", use_container_width=True, key="upstox_start_oauth"):
+            upstox_state = upstox_make_state(upstox_config[1])
+            st.session_state["upstox_oauth_started_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
+            st.link_button("Continue to Upstox login", upstox_login_url(upstox_config[0], upstox_config[2], upstox_state), use_container_width=True)
+        current_upstox_token = upstox_token_vault().get("access_token")
+        if not current_upstox_token:
+            try:
+                configured_token = str(st.secrets.get("UPSTOX_ACCESS_TOKEN", "")).strip()
+            except Exception:
+                configured_token = ""
+            if configured_token:
+                upstox_token_vault()["access_token"] = configured_token
+                current_upstox_token = configured_token
+        if current_upstox_token:
+            st.caption("Upstox access token is configured in this app process.")
+        else:
+            st.caption("Upstox is not connected in this app process yet.")
 
 
 # Upstox read-only market-data connection. Keep credentials in Streamlit Cloud Secrets.
@@ -521,7 +543,84 @@ with st.sidebar:
             )
             st.caption("The token is shared across app sessions in memory. FYERS access tokens expire daily at 6:30 AM; a server restart or expired refresh token may require reconnecting.")
 
+# Handle Upstox OAuth callback, including provider-side errors and incomplete redirects.
+if any(key in st.query_params for key in ("code", "state", "error", "error_description")):
+    upstox_config = upstox_oauth_credentials()
+    returned_state = st.query_params.get("state", "")
+    auth_code = st.query_params.get("code", "")
+    oauth_error = st.query_params.get("error", "")
+    oauth_error_description = st.query_params.get("error_description", "")
+    if oauth_error:
+        st.error("Upstox rejected the authorization request: " + str(oauth_error))
+        if oauth_error_description:
+            st.caption("Upstox detail: " + str(oauth_error_description))
+        st.caption("Check the API Key / Client ID and exact redirect URI registered for the same Upstox app.")
+        st.query_params.clear()
+    elif not auth_code:
+        st.error("Returned from the Upstox authorization page without an authorization code.")
+        st.caption("The provider did not complete the login. Check that the API Key / Client ID belongs to this app and that the app is enabled for OAuth login.")
+        st.query_params.clear()
+    elif not upstox_config:
+        st.error("Upstox credentials are not configured in Streamlit Secrets.")
+        st.query_params.clear()
+    elif not returned_state:
+        st.error("Upstox returned an authorization code but no state value. Restart login from the dashboard.")
+        st.query_params.clear()
+    elif not upstox_verify_state(returned_state, upstox_config[1]):
+        st.error("Upstox OAuth state validation failed. Restart login using the current link.")
+        st.caption("The state signature did not match the configured app secret. No credential values are displayed.")
+        st.query_params.clear()
+    elif auth_code:
+        with st.spinner("Completing Upstox authorization..."):
+            token, token_error = upstox_exchange_auth_code(upstox_config[0], upstox_config[1], upstox_config[2], auth_code)
+        if token:
+            upstox_token_vault()["access_token"] = token
+            profile, profile_error = upstox_get_profile(token)
+            st.session_state["upstox_connected_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
+            st.session_state["upstox_profile_name"] = str(profile.get("user_name") or profile.get("user_id") or "Connected") if profile else "Connected"
+            st.query_params.clear()
+            if profile_error:
+                st.warning("Upstox token was received, but profile verification failed. Check token access.")
+            else:
+                st.success("Upstox OAuth connected and profile verified.")
+            st.rerun()
+        else:
+            st.error(f"Upstox authorization failed: {token_error}")
+            st.query_params.clear()
+    else:
+        st.error("Upstox returned without an authorization code. Please retry.")
+        st.query_params.clear()
 
+# Optional Upstox read-only connection check. FYERS and the main dashboard remain unchanged.
+with st.expander("Upstox API · read-only connection test", expanded=False):
+    upstox_config, upstox_missing = upstox_credentials()
+    if not upstox_config:
+        st.warning("Upstox secrets are missing or empty: " + ", ".join(upstox_missing))
+        st.caption("Open Streamlit Cloud → app Settings → Secrets. Check the exact uppercase names and save; do not share the values.")
+    else:
+        st.caption("All four required Upstox secrets were read successfully. Secret values are never displayed.")
+        st.write("Configured API key: " + upstox_config[0][:4] + "••••")
+        if st.button("Test Upstox market data", key="upstox_test_market_data"):
+            with st.spinner("Checking Upstox LTP endpoint..."):
+                upstox_data, upstox_error = upstox_ltp(
+                    upstox_config[3],
+                    ["NSE_INDEX|Nifty 50", "NSE_EQ|INE002A01018"],
+                )
+            if upstox_error:
+                st.error(upstox_error)
+            elif not upstox_data:
+                st.warning("Upstox responded successfully but returned no quote rows for the test instruments.")
+            else:
+                upstox_rows = []
+                for instrument_key, quote in upstox_data.items():
+                    upstox_rows.append({
+                        "Instrument": quote.get("instrument_token", instrument_key),
+                        "Last traded price": quote.get("last_price"),
+                        "Close price": quote.get("cp"),
+                    })
+                st.dataframe(pd.DataFrame(upstox_rows), use_container_width=True, hide_index=True)
+                st.success("Upstox read-only market-data request succeeded.")
+                st.caption("Tested at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") + ". This confirms the quote endpoint only; it does not yet switch dashboard calculations to Upstox.")
 
 # Handle the redirect from FYERS after user authorization.
 if "auth_code" in st.query_params:
@@ -585,8 +684,321 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
 
 
 # Side-by-side provider comparison. This is diagnostic only and does not alter dashboard calculations.
+with st.expander("FYERS vs Upstox · quote comparison", expanded=False):
+    upstox_config, upstox_missing = upstox_credentials()
+    fyers_config = fyers_credentials()
+    fyers_access = st.session_state.get("fyers_access_token")
+    status_cols = st.columns(2)
+    with status_cols[0]:
+        st.write("**Upstox**")
+        st.caption("Credentials configured" if upstox_config else "Secrets missing: " + ", ".join(upstox_missing))
+    with status_cols[1]:
+        st.write("**FYERS**")
+        st.caption("Connected" if fyers_config and fyers_access else "Connect FYERS first to compare both providers")
+    if st.button("Compare live quotes", key="compare_fyers_upstox_quotes"):
+        if not upstox_config:
+            st.error("Upstox secrets missing: " + ", ".join(upstox_missing))
+        elif not (fyers_config and fyers_access):
+            st.warning("Upstox is configured, but FYERS is not connected in this session. Connect FYERS and retry.")
+        else:
+            with st.spinner("Requesting quotes from both providers..."):
+                up_data, up_error = upstox_ltp(
+                    upstox_config[3],
+                    ["NSE_INDEX|Nifty 50", "NSE_INDEX|Nifty Bank", "NSE_EQ|INE002A01018"],
+                )
+                fy_data, fy_error = fyers_live_quotes(
+                    fyers_config[0],
+                    fyers_access,
+                    ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:RELIANCE-EQ"],
+                )
+            if up_error:
+                st.warning("Upstox: " + up_error)
+            if fy_error:
+                st.warning("FYERS: " + fy_error)
+            up_norm = {}
+            for key, quote in (up_data or {}).items():
+                raw_key = str(key).lower()
+                if "nifty 50" in raw_key:
+                    label = "NIFTY 50"
+                elif "nifty bank" in raw_key:
+                    label = "BANK NIFTY"
+                elif "ine002a01018" in raw_key or "reliance" in raw_key:
+                    label = "RELIANCE"
+                else:
+                    continue
+                up_norm[label] = quote.get("last_price")
+            fy_norm = {}
+            for item in (fy_data or []):
+                name = str(item.get("n", "")).upper()
+                values = item.get("v") or {}
+                if "NIFTY50" in name:
+                    label = "NIFTY 50"
+                elif "NIFTYBANK" in name:
+                    label = "BANK NIFTY"
+                elif "RELIANCE" in name:
+                    label = "RELIANCE"
+                else:
+                    continue
+                fy_norm[label] = values.get("lp")
+            labels = ["NIFTY 50", "BANK NIFTY", "RELIANCE"]
+            rows = []
+            for label in labels:
+                up_price = up_norm.get(label)
+                fy_price = fy_norm.get(label)
+                diff = (float(up_price) - float(fy_price)) if up_price is not None and fy_price is not None else None
+                diff_pct = (diff / float(fy_price) * 100) if diff is not None and float(fy_price) != 0 else None
+                rows.append({
+                    "Instrument": label,
+                    "FYERS LTP": fy_price,
+                    "Upstox LTP": up_price,
+                    "Upstox − FYERS": diff,
+                    "Difference %": diff_pct,
+                    "Comparison": "Both returned" if diff is not None else "One or both quotes missing",
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.caption("Requested at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") + ". Requests are sequential, so small timing differences are expected. This diagnostic does not switch dashboard data sources.")
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, str | None]:
+    """Fetch best-effort market history from Yahoo Finance via yfinance; never synthesize rows."""
+    try:
+        data = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False, actions=False, raise_errors=True)
+        if data is None or data.empty:
+            return pd.DataFrame(), "Source returned no rows for this ticker/period/interval."
+        data = data.reset_index()
+        date_col = "Datetime" if "Datetime" in data.columns else "Date"
+        data = data.rename(columns={date_col: "Date"})
+        data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
+        if data["Date"].dt.tz is None:
+            data["Date"] = data["Date"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
+        else:
+            data["Date"] = data["Date"].dt.tz_convert("Asia/Kolkata")
+        for c in ["Open", "High", "Low", "Close", "Volume"]:
+            if c in data.columns:
+                data[c] = pd.to_numeric(data[c], errors="coerce")
+        data = data.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
+        return data.reset_index(drop=True), None
+    except Exception as exc:
+        return pd.DataFrame(), f"Fetch failed: {type(exc).__name__}: {str(exc)[:240]}"
+
+# Public-data universe used to make stock research less manual. Industry labels are static classifications,
+# while prices are fetched live from Yahoo Finance and must be verified against source timestamps.
+AUTO_UNIVERSE = {
+    "RELIANCE.NS": "Energy", "TCS.NS": "IT", "INFY.NS": "IT", "HCLTECH.NS": "IT",
+    "WIPRO.NS": "IT", "TECHM.NS": "IT", "HDFCBANK.NS": "Financials", "ICICIBANK.NS": "Financials",
+    "SBIN.NS": "Financials", "KOTAKBANK.NS": "Financials", "AXISBANK.NS": "Financials",
+    "BAJFINANCE.NS": "Financials", "BAJAJFINSV.NS": "Financials", "BHARTIARTL.NS": "Telecom",
+    "ITC.NS": "FMCG", "HINDUNILVR.NS": "FMCG", "NESTLEIND.NS": "FMCG", "TATAMOTORS.NS": "Auto",
+    "M&M.NS": "Auto", "MARUTI.NS": "Auto", "SUNPHARMA.NS": "Pharma", "DRREDDY.NS": "Pharma",
+    "CIPLA.NS": "Pharma", "LT.NS": "Industrials", "ULTRACEMCO.NS": "Cement", "TATASTEEL.NS": "Metals",
+    "JSWSTEEL.NS": "Metals", "NTPC.NS": "Utilities", "POWERGRID.NS": "Utilities", "ONGC.NS": "Energy",
+    "COALINDIA.NS": "Energy", "ASIANPAINT.NS": "Consumer", "TITAN.NS": "Consumer", "ADANIPORTS.NS": "Infrastructure",
+    "TRENT.NS": "Retail", "BEL.NS": "Industrials", "INDUSINDBK.NS": "Financials",
+}
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_auto_universe(period: str = "2y") -> pd.DataFrame:
+    """Fetch actual daily OHLCV for a fixed large-cap universe; return empty data on source failure."""
+    tickers = list(AUTO_UNIVERSE)
+    try:
+        raw = yf.download(tickers, period=period, interval="1d", auto_adjust=False, group_by="ticker",
+                          threads=True, progress=False, actions=False)
+        if raw is None or raw.empty:
+            return pd.DataFrame()
+        rows=[]
+        for ticker in tickers:
+            try:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    if ticker not in raw.columns.get_level_values(0):
+                        continue
+                    part=raw[ticker].copy()
+                else:
+                    part=raw.copy()
+                part=part.reset_index()
+                date_col="Date" if "Date" in part.columns else "Datetime"
+                if date_col not in part.columns or "Close" not in part.columns:
+                    continue
+                part=part.rename(columns={date_col:"Date"})
+                part["Date"]=pd.to_datetime(part["Date"],errors="coerce")
+                part["Symbol"]=ticker.replace(".NS","")
+                part["Industry"]=AUTO_UNIVERSE[ticker]
+                for c in ["Open","High","Low","Close","Volume"]:
+                    if c in part.columns: part[c]=pd.to_numeric(part[c],errors="coerce")
+                part=part.dropna(subset=["Date","Close"])
+                if not part.empty:
+                    rows.append(part[[c for c in ["Date","Symbol","Industry","Open","High","Low","Close","Volume"] if c in part.columns]])
+            except Exception:
+                continue
+        return pd.concat(rows,ignore_index=True) if rows else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+def get_news_rss(query: str, limit: int = 12) -> tuple[pd.DataFrame, str | None]:
+    """Fetch public Google News RSS search results; headlines are attributed and never treated as verified causal explanations."""
+    import xml.etree.ElementTree as ET
+    from urllib.parse import quote_plus
+    try:
+        url = "https://news.google.com/rss/search?q=" + quote_plus(query) + "&hl=en-IN&gl=IN&ceid=IN:en"
+        response = requests.get(url, headers={"User-Agent":"Mozilla/5.0 MarketIntelligenceTerminal/1.0"}, timeout=12)
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+        rows = []
+        for item in root.findall(".//item")[:limit]:
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            pub = (item.findtext("pubDate") or "").strip()
+            source = item.find("source")
+            publisher = (source.text or "").strip() if source is not None else ""
+            published_at = pd.to_datetime(pub, errors="coerce", utc=True)
+            if title and link:
+                rows.append({"Published (RSS)":pub,"_published_sort":published_at,"Headline":title,"Publisher":publisher,"Source link":link})
+        if not rows:
+            return pd.DataFrame(), "RSS returned no headline rows."
+        frame = pd.DataFrame(rows)
+        # RSS relevance feeds can return mixed dates; sort newest first, with unparseable dates last.
+        frame = frame.sort_values("_published_sort", ascending=False, na_position="last", kind="stable")
+        frame = frame.drop(columns=["_published_sort"])
+        return frame.reset_index(drop=True), None
+    except Exception as exc:
+        return pd.DataFrame(), f"News RSS unavailable: {type(exc).__name__}: {str(exc)[:150]}"
 
 
+def indicators(data: pd.DataFrame) -> pd.DataFrame:
+    out = data.copy()
+    close = out["Close"]
+    for n in [5, 11, 20, 50, 100, 200]:
+        out[f"SMA {n}"] = close.rolling(n, min_periods=n).mean()
+        out[f"EMA {n}"] = close.ewm(span=n, adjust=False, min_periods=n).mean()
+    delta = close.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    rs = gain / loss.replace(0, np.nan)
+    out["RSI 14"] = 100 - 100 / (1 + rs)
+    out.loc[(loss == 0) & gain.notna(), "RSI 14"] = 100
+    if {"High", "Low"}.issubset(out.columns):
+        out["Daily Range"] = out["High"] - out["Low"]
+        for n in [5, 10, 14, 20]:
+            out[f"ADR {n}"] = out["Daily Range"].rolling(n, min_periods=n).mean()
+        prev_close = close.shift(1)
+        tr = pd.concat([out["High"]-out["Low"], (out["High"]-prev_close).abs(), (out["Low"]-prev_close).abs()], axis=1).max(axis=1)
+        out["ATR 14"] = tr.rolling(14, min_periods=14).mean()
+    out["Return %"] = close.pct_change() * 100
+    return out
+
+def fmt(value, decimals=2):
+    try:
+        if pd.isna(value): return "—"
+        return f"{float(value):,.{decimals}f}"
+    except Exception:
+        return "—"
+
+def tv_widget(kind: str, config: dict, height: int = 500):
+    config_json = json.dumps(config, ensure_ascii=False).replace("</", "<\\/")
+    script = f'''<div class="tradingview-widget-container" style="height:{height}px;width:100%"><div class="tradingview-widget-container__widget" style="height:calc(100% - 28px);width:100%"></div><div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/" rel="noopener nofollow" target="_blank"><span>TradingView</span></a></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-{kind}.js" async>{config_json}</script></div>'''
+    components.html(script, height=height + 10, scrolling=False)
+
+def advanced_chart(symbol: str, height: int = 720):
+    tv_widget("advanced-chart", {"autosize": True, "symbol": symbol, "interval": "D", "timezone": "Asia/Kolkata", "theme": "dark", "style": "1", "locale": "en", "allow_symbol_change": True, "calendar": False, "support_host": "https://www.tradingview.com"}, height)
+
+def quote_snapshot(df: pd.DataFrame):
+    if df.empty: return None
+    last = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else None
+    change = float(last["Close"] - prev["Close"]) if prev is not None else np.nan
+    pct = change / float(prev["Close"]) * 100 if prev is not None and float(prev["Close"]) != 0 else np.nan
+    return last, change, pct
+
+# Pull key instruments. The sidebar interval controls intraday bars; daily history is used for indicators.
+market_data: dict[str, pd.DataFrame] = {}
+market_errors: dict[str, str | None] = {}
+with st.spinner("Loading best-effort public market data…"):
+    for name, ticker in INDEXES.items():
+        # For equities and indices, fetch daily bars for stable technical calculations.
+        hist, err = get_history(ticker, period, "1d")
+        market_data[name], market_errors[name] = hist, err
+
+now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+# Hidden refresh/source note retained in code to keep the dashboard focused on key headings and values.
+
+# Headline metrics from the latest returned historical bar (not described as real-time).
+headline_names = ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude", "USD/INR"]
+# Responsive headline cards: keep full numeric values readable on narrow mobile screens.
+st.markdown("""
+<style>
+[data-testid="stMetricValue"] {
+    font-size: clamp(1.05rem, 2.2vw, 1.65rem) !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    line-height: 1.2 !important;
+}
+[data-testid="stMetricLabel"] {
+    font-size: clamp(0.72rem, 1.5vw, 0.9rem) !important;
+    white-space: normal !important;
+}
+[data-testid="stMetricDelta"] {
+    font-size: clamp(0.68rem, 1.35vw, 0.82rem) !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+}
+</style>
+""", unsafe_allow_html=True)
+cols = st.columns(5)
+for col, name in zip(cols, headline_names):
+    df = market_data[name]
+    snap = quote_snapshot(df)
+    if snap:
+        last, change, pct = snap
+        # Inverse-impact instruments: lower USD/INR (stronger rupee) and lower India VIX
+        # (less expected volatility) are generally supportive; higher values are headwinds.
+        if name == "USD/INR":
+            delta_text = f"{fmt(change)} ({fmt(pct)}%)"
+            delta_text += " · INR stronger" if change < 0 else (" · INR weaker" if change > 0 else "")
+            col.metric(name, fmt(last["Close"]), delta_text, delta_color="inverse")
+        elif name == "India VIX":
+            delta_text = f"{fmt(change)} ({fmt(pct)}%)"
+            delta_text += " · volatility easing" if change < 0 else (" · volatility rising" if change > 0 else "")
+            col.metric(name, fmt(last["Close"]), delta_text, delta_color="inverse")
+        else:
+            col.metric(name, fmt(last["Close"]), f"{fmt(change)} ({fmt(pct)}%)")
+        # Source-bar timestamp retained in data, but hidden from the compact headline display.
+    else:
+        col.metric(name, "Unavailable")
+        # Error details remain available in market_errors; avoid displaying extra helper text here.
+
+# Hidden headline explanation retained here in code; display headline metrics without extra notes.
+
+# Upstox live quote strip for market overview. Historical indicators remain on their original sources.
+upstox_overview_config, upstox_overview_missing = upstox_credentials()
+if upstox_overview_config:
+    with st.expander("Upstox live quotes · market overview", expanded=False):
+        if st.button("Refresh Upstox overview quotes", key="upstox_overview_refresh"):
+            with st.spinner("Fetching current Upstox quotes..."):
+                overview_data, overview_error = upstox_ltp(
+                    upstox_overview_config[3],
+                    ["NSE_INDEX|Nifty 50", "NSE_INDEX|Nifty Bank", "NSE_EQ|INE002A01018"],
+                )
+            if overview_error:
+                st.warning("Upstox overview quotes unavailable: " + overview_error)
+            elif not overview_data:
+                st.info("Upstox returned no quote data.")
+            else:
+                overview_map = {}
+                for instrument_key, quote in overview_data.items():
+                    key_lower = str(instrument_key).lower()
+                    if "nifty 50" in key_lower:
+                        label = "NIFTY 50"
+                    elif "nifty bank" in key_lower:
+                        label = "BANK NIFTY"
+                    elif "ine002a01018" in key_lower or "reliance" in key_lower:
+                        label = "RELIANCE"
+                    else:
+                        continue
+                    overview_map[label] = quote.get("last_price")
+                quote_cols = st.columns(3)
+                for quote_col, label in zip(quote_cols, ["NIFTY 50", "BANK NIFTY", "RELIANCE"]):
+                    quote_value = overview_map.get(label)
+                    quote_col.metric(label, fmt(quote_value) if quote_value is not None else "Unavailable")
+                st.caption("Source: Upstox API · fetched " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") + ". These quotes are displayed separately; historical indicators, sentiment and heatmap calculations are unchanged.")
 # Daily global-cue sentiment panel is intentionally placed immediately above Market Regime.
 st.subheader("Today's Market Direction · Global Sentiment")
 # Hidden sentiment explanation retained here in code; display the main heading and sentiment output.
