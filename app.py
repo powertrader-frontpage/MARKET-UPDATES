@@ -1149,7 +1149,7 @@ else:
                         gap_pct = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc[ema_col].iloc[-1]) - 1) * 100
                         trend_parts.append(float(np.clip(50 + gap_pct * 12, 0, 100)))
                 if trend_parts:
-                    fear_components.append((float(np.mean(trend_parts)), 0.40))
+                    # Weight: Price vs EMA 20/50 = 25%\n                    fear_components.append((float(np.mean(trend_parts)), 0.25))
                 # Medium-term momentum: 20-session return mapped around neutral.
                 if len(recent_rc) >= 21 and recent_rc["Close"].iloc[-21] != 0:
                     ret20 = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc["Close"].iloc[-21]) - 1) * 100
@@ -1159,7 +1159,7 @@ else:
                 vix_snap = quote_snapshot(vix_frame) if not vix_frame.empty else None
                 if vix_snap:
                     vix_value = float(vix_snap[0]["Close"])
-                    fear_components.append((float(np.clip(100 - vix_value * 3, 0, 100)), 0.10))
+                    # Weight: India VIX = 25%\n                    fear_components.append((float(np.clip(100 - vix_value * 3, 0, 100)), 0.25))
                 if fear_components:
                     fear_weight = sum(weight for _, weight in fear_components)
                     fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
