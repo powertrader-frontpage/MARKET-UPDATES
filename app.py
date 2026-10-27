@@ -1175,8 +1175,18 @@ else:
             if len(recent_rc) >= 20:
                 # RSI contribution: RSI 50 maps to neutral; 0..100 maps to the same scale.
                 rsi_series = recent_rc["RSI 14"] if "RSI 14" in recent_rc.columns else pd.Series(dtype=float)
-                if not rsi_series.dropna().empty:
-                    fear_components.append((float(np.clip(rsi_series.dropna().iloc[-1], 0, 100)), 0.35))
+                rsi_series = pd.to_numeric(rsi_series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+                if rsi_series.empty:
+                    # Calculate RSI directly from the returned close series if the indicator frame lacks RSI.
+                    close_delta = pd.to_numeric(recent_rc["Close"], errors="coerce").diff()
+                    close_gain = close_delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                    close_loss = (-close_delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                    close_rs = close_gain / close_loss.replace(0, np.nan)
+                    fallback_rsi = (100 - 100 / (1 + close_rs)).replace([np.inf, -np.inf], np.nan).dropna()
+                    if not fallback_rsi.empty:
+                        rsi_series = fallback_rsi
+                if not rsi_series.empty:
+                    fear_components.append((float(np.clip(rsi_series.iloc[-1], 0, 100)), 0.35))
                 # Trend contribution: close vs EMA 20 and EMA 50, mapped around neutral.
                 trend_parts = []
                 for ema_col in ["EMA 20", "EMA 50"]:
@@ -1197,9 +1207,18 @@ else:
                     vix_value = float(vix_snap[0]["Close"])
                     # India VIX contributes 25% to the proxy score.
                     fear_components.append((float(np.clip(100 - vix_value * 3, 0, 100)), 0.25))
+                # Keep only finite, valid components. Missing/invalid inputs must not turn into a fake 0/100 reading.
+                fear_components = [
+                    (float(value), float(weight))
+                    for value, weight in fear_components
+                    if pd.notna(value) and np.isfinite(float(value)) and 0 <= float(value) <= 100 and weight > 0
+                ]
                 if fear_components:
                     fear_weight = sum(weight for _, weight in fear_components)
-                    fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
+                    if fear_weight > 0:
+                        fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
+                        if not np.isfinite(fear_score):
+                            fear_score = np.nan
             if pd.notna(fear_score):
                 fear_score = int(round(float(np.clip(fear_score, 0, 100))))
                 fear_label = "Extreme Fear" if fear_score < 20 else "Fear" if fear_score < 40 else "Neutral" if fear_score < 60 else "Greed" if fear_score < 80 else "Extreme Greed"
@@ -2833,10 +2852,28 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
         st.warning("The FYERS symbol master returned no NSE equity symbols.")
     else:
         symbol_labels = {f"{name or symbol} · {symbol}": symbol for symbol, name in symbols_list}
+        # Explicit text search for faster stock lookup on mobile, followed by the matching stock selector.
+        stock_search_query = st.text_input(
+            "Search stock by name or NSE symbol",
+            placeholder="Type e.g. VBL, RELIANCE, HDFCBANK…",
+            key="fyers_quick_stock_search",
+            help="Enter part of a company name or NSE symbol. The list below filters as you type.",
+        ).strip().casefold()
+        matching_labels = [
+            label for label, symbol in symbol_labels.items()
+            if not stock_search_query
+            or stock_search_query in label.casefold()
+            or stock_search_query in symbol.casefold()
+        ]
+        if not matching_labels:
+            st.warning("No NSE stock matched that search. Try a shorter company name or symbol.")
+            st.stop()
+        previous_selection = st.session_state.get("fyers_quick_stock_symbol")
+        selected_index = matching_labels.index(previous_selection) if previous_selection in matching_labels else 0
         selected_label = st.selectbox(
-            "Search/select NSE stock",
-            list(symbol_labels.keys()),
-            index=0,
+            "Select matching NSE stock",
+            matching_labels,
+            index=selected_index,
             key="fyers_quick_stock_symbol",
         )
         selected_symbol = symbol_labels[selected_label]
