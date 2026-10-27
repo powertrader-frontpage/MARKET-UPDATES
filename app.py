@@ -1630,7 +1630,14 @@ with st.expander("Scan small-cap / mid-cap turnaround stocks", expanded=False):
     st.write("Scans current Nifty Midcap 150 and Nifty Smallcap 250 constituents. Newly qualifying stocks can appear when the source data updates. Research watchlist only, not a buy signal.")
     segment_choice = st.multiselect("Segments to scan", ["Mid-cap", "Small-cap"], default=["Mid-cap", "Small-cap"], key="turnaround_segments")
     st.caption("Fundamentals: Yahoo Finance quarterly income statements · Constituents: Nifty Indices CSV lists · Cached for up to 6 hours. Initial scans may take a few minutes.")
-    if st.button("Scan / refresh turnaround stocks", type="primary", key="run_auto_turnaround_scan", disabled=not segment_choice):
+    auto_turnaround_scan = st.checkbox(
+        "Automatically refresh turnaround scan when dashboard refreshes",
+        value=False,
+        key="auto_turnaround_scan_enabled",
+        help="Opt-in because a first scan can take several minutes. Fundamental source data is cached for up to 6 hours."
+    )
+    turnaround_scan_clicked = st.button("Scan / refresh turnaround stocks", type="primary", key="run_auto_turnaround_scan", disabled=not segment_choice)
+    if (turnaround_scan_clicked or auto_turnaround_scan) and segment_choice:
         with st.spinner("Scanning index constituents for improving fundamentals. This can take a few minutes…"):
             scan_df, scan_warning = run_turnaround_scan(tuple(sorted(segment_choice)))
         st.session_state["auto_turnaround_scan_results"] = scan_df
