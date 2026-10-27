@@ -2854,10 +2854,10 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
         symbol_labels = {f"{name or symbol} · {symbol}": symbol for symbol, name in symbols_list}
         # Explicit text search for faster stock lookup on mobile, followed by the matching stock selector.
         stock_search_query = st.text_input(
-            "Search stock by name or NSE symbol",
-            placeholder="Type e.g. VBL, RELIANCE, HDFCBANK…",
+            "🔎 Search NSE stock",
+            placeholder="Search by company name or symbol — e.g. VBL, RELIANCE, HDFCBANK",
             key="fyers_quick_stock_search",
-            help="Enter part of a company name or NSE symbol. The list below filters as you type.",
+            help="Type any part of a company name or NSE symbol. The matching-stock dropdown below filters automatically.",
         ).strip().casefold()
         matching_labels = [
             label for label, symbol in symbol_labels.items()
