@@ -169,16 +169,27 @@ with st.sidebar:
 
 # Upstox read-only market-data connection. Keep credentials in Streamlit Cloud Secrets.
 def upstox_credentials():
-    try:
-        api_key = str(st.secrets["UPSTOX_API_KEY"]).strip()
-        api_secret = str(st.secrets["UPSTOX_API_SECRET"]).strip()
-        redirect_uri = str(st.secrets["UPSTOX_REDIRECT_URI"]).strip()
-        access_token = str(st.secrets["UPSTOX_ACCESS_TOKEN"]).strip()
-        if api_key and api_secret and redirect_uri and access_token:
-            return api_key, api_secret, redirect_uri, access_token
-    except Exception:
-        pass
-    return None
+    """Read required Upstox secrets and return safe configuration diagnostics."""
+    required = ("UPSTOX_API_KEY", "UPSTOX_API_SECRET", "UPSTOX_REDIRECT_URI", "UPSTOX_ACCESS_TOKEN")
+    missing = []
+    values = {}
+    for name in required:
+        try:
+            value = str(st.secrets[name]).strip()
+            if value:
+                values[name] = value
+            else:
+                missing.append(name + " (empty)")
+        except Exception:
+            missing.append(name)
+    if missing:
+        return None, missing
+    return (
+        values["UPSTOX_API_KEY"],
+        values["UPSTOX_API_SECRET"],
+        values["UPSTOX_REDIRECT_URI"],
+        values["UPSTOX_ACCESS_TOKEN"],
+    ), []
 
 def upstox_ltp(access_token: str, instrument_keys: list[str]):
     """Fetch read-only LTP quotes from Upstox; never place orders."""
@@ -550,11 +561,12 @@ if "code" in st.query_params and "state" in st.query_params:
 
 # Optional Upstox read-only connection check. FYERS and the main dashboard remain unchanged.
 with st.expander("Upstox API · read-only connection test", expanded=False):
-    upstox_config = upstox_credentials()
+    upstox_config, upstox_missing = upstox_credentials()
     if not upstox_config:
-        st.warning("Upstox credentials are not fully configured. Add UPSTOX_API_KEY, UPSTOX_API_SECRET, UPSTOX_REDIRECT_URI and UPSTOX_ACCESS_TOKEN in Streamlit Cloud Secrets.")
+        st.warning("Upstox secrets are missing or empty: " + ", ".join(upstox_missing))
+        st.caption("Open Streamlit Cloud → app Settings → Secrets. Check the exact uppercase names and save; do not share the values.")
     else:
-        st.caption("Credentials detected in Streamlit Secrets. The API Secret is not used or displayed during this read-only quote test.")
+        st.caption("All four required Upstox secrets were read successfully. Secret values are never displayed.")
         st.write("Configured API key: " + upstox_config[0][:4] + "••••")
         if st.button("Test Upstox market data", key="upstox_test_market_data"):
             with st.spinner("Checking Upstox LTP endpoint..."):
