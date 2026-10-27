@@ -3076,34 +3076,39 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         except (TypeError, ValueError):
                             return "—"
 
-                    # NSE MarketLens officially supports CSV exports; use the exported columns instead of an undocumented scraping endpoint.
-                    screener_row = None
-                    with st.expander("Use NSE MarketLens fundamentals (CSV export)", expanded=False):
-                        st.caption("Open NSE MarketLens, create or open a screen, add the ratio columns you want (PE Ratio, ROCE, ROE, Debt / Eq), then use Download CSV and upload it here. MarketLens documents CSV export; this avoids relying on an unofficial endpoint.")
-                        screener_file = st.file_uploader("Upload NSE MarketLens CSV export", type=["csv"], key="marketlens_fundamentals_csv")
-                        if screener_file is not None:
-                            try:
-                                screener_df = pd.read_csv(screener_file)
-                                normalized_columns = {
-                                    re.sub(r"[^a-z0-9]", "", str(col).lower()): col
-                                    for col in screener_df.columns
-                                }
-                                ticker = selected_symbol.replace("NSE:", "").replace("-EQ", "").replace(".NS", "").strip().upper()
-                                ticker_col = next((normalized_columns[k] for k in normalized_columns if k in {"nsecode", "nsesymbol", "symbol", "ticker"}), None)
-                                name_col = next((normalized_columns[k] for k in normalized_columns if k in {"name", "company", "companyname"}), None)
-                                matched = pd.Series(False, index=screener_df.index)
-                                if ticker_col:
-                                    matched = matched | screener_df[ticker_col].astype(str).str.upper().str.strip().eq(ticker)
-                                if name_col:
-                                    company_name = ticker.replace("-", " ").replace("_", " ")
-                                    matched = matched | screener_df[name_col].astype(str).str.upper().str.contains(re.escape(company_name), na=False)
-                                if matched.any():
-                                    screener_row = screener_df.loc[matched].iloc[0]
-                                    st.success(f"Matched {ticker} in the uploaded NSE MarketLens file.")
-                                else:
-                                    st.warning(f"{ticker} was not found in the uploaded CSV. Include the company/symbol column and export a screen containing the selected stock.")
-                            except Exception as exc:
-                                st.warning(f"Could not read this CSV: {exc.__class__.__name__}")
+                    # Local MindForge snapshot exported on 27 Oct 2026. This is a dated snapshot, not live data.
+                    mindforge_row = None
+                    mindforge_error = None
+                    try:
+                        mindforge_df = pd.read_csv("mindforge_fundamentals_2026-10-27.csv")
+                        def _company_key(value):
+                            key = re.sub(r"[^a-z0-9]", "", str(value).lower())
+                            for suffix in ("limited", "ltd", "industries", "industry", "company", "corporation", "corporations", "co"):
+                                if key.endswith(suffix) and len(key) > len(suffix) + 3:
+                                    key = key[:-len(suffix)]
+                            return key
+                        candidate_names = [
+                            fundamentals.get("longName", ""),
+                            fundamentals.get("shortName", ""),
+                            selected_label.split(" · ")[0],
+                            selected_symbol.replace("NSE:", "").replace("-EQ", "").replace(".NS", ""),
+                        ]
+                        candidate_keys = {_company_key(name) for name in candidate_names if name}
+                        candidate_keys.discard("")
+                        if candidate_keys:
+                            mindforge_keys = mindforge_df["Company"].astype(str).map(_company_key)
+                            matches = mindforge_df[mindforge_keys.isin(candidate_keys)]
+                            if not matches.empty:
+                                mindforge_row = matches.iloc[0]
+                    except Exception as exc:
+                        mindforge_error = exc.__class__.__name__
+
+                    if mindforge_row is not None:
+                        st.caption("Fundamentals source: MindForge snapshot dated 27 Oct 2026 · Values are not live and may be stale.")
+                    elif mindforge_error:
+                        st.caption("MindForge snapshot could not be loaded; using Yahoo Finance where available.")
+                    else:
+                        st.caption("Stock not matched in the 500-stock MindForge snapshot; using Yahoo Finance where available.")
 
                     def _screener_csv_value(row, *labels):
                         if row is None:
@@ -3126,24 +3131,18 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                                         continue
                         return None
 
-                    pe_value = _screener_csv_value(screener_row, "Stock P/E", "Price to earning", "P/E", "PE Ratio") 
-                    if pe_value is None:
+                    pe_value = mindforge_row.get("P/E") if mindforge_row is not None else None
+                    if pd.isna(pe_value) if pe_value is not None else True:
                         pe_value = fundamentals.get("trailingPE")
-                    industry_pe_value = _screener_csv_value(screener_row, "Industry PE", "Industry P/E")
-                    if industry_pe_value is None:
-                        industry_pe_value = fundamentals.get("industryPE")
-                    debt_equity_value = _screener_csv_value(screener_row, "Debt to equity", "Debt/Equity", "Debt / Eq")
-                    if debt_equity_value is None:
+                    industry_pe_value = fundamentals.get("industryPE")
+                    debt_equity_value = mindforge_row.get("D/E") if mindforge_row is not None else None
+                    if pd.isna(debt_equity_value) if debt_equity_value is not None else True:
                         debt_equity_value = fundamentals.get("debtToEquity")
-                    peg_value = _screener_csv_value(screener_row, "PEG Ratio", "PEG")
-                    if peg_value is None:
+                    peg_value = mindforge_row.get("PEG") if mindforge_row is not None else None
+                    if pd.isna(peg_value) if peg_value is not None else True:
                         peg_value = fundamentals.get("pegRatio") or fundamentals.get("trailingPegRatio")
-                    roe_value = _screener_csv_value(screener_row, "Return on equity", "ROE")
-                    if roe_value is None:
-                        roe_value = fundamentals.get("returnOnEquity")
-                    roce_value = _screener_csv_value(screener_row, "Return on capital employed", "ROCE")
-                    if roce_value is None:
-                        roce_value = fundamentals.get("returnOnCapitalEmployed")
+                    roe_value = mindforge_row.get("ROE %") / 100.0 if mindforge_row is not None and pd.notna(mindforge_row.get("ROE %")) else fundamentals.get("returnOnEquity")
+                    roce_value = mindforge_row.get("ROCE %") / 100.0 if mindforge_row is not None and pd.notna(mindforge_row.get("ROCE %")) else fundamentals.get("returnOnCapitalEmployed")
 
                     # Some Yahoo Finance snapshots omit ROCE; calculate it only when the required annual statement rows exist.
                     if roce_value is None:
@@ -3188,7 +3187,7 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         )
                     metric_html += '</div>'
                     st.markdown(metric_html, unsafe_allow_html=True)
-                    st.caption("NSE MarketLens CSV values take priority when uploaded; remaining values use Yahoo Finance when available. D/E is shown as a ratio. — means the source did not return a value.")
+                    st.caption("MindForge snapshot values take priority for matched stocks; Yahoo Finance is the fallback. D/E is shown as exported. — means no value was available.")
 
                 st.markdown("#### Price trend · recent momentum")
                 stock_chart = go.Figure()
