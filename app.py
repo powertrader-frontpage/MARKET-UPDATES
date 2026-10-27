@@ -319,37 +319,6 @@ for col, name in zip(cols, headline_names):
 # Hidden headline explanation retained here in code; display headline metrics without extra notes.
 
 
-upstox_overview_config, upstox_overview_missing = upstox_credentials()
-if upstox_overview_config:
-    with st.expander("Upstox live quotes · market overview", expanded=False):
-        if st.button("Refresh Upstox overview quotes", key="upstox_overview_refresh"):
-            with st.spinner("Fetching current Upstox quotes..."):
-                overview_data, overview_error = upstox_ltp(
-                    upstox_overview_config[3],
-                    ["NSE_INDEX|Nifty 50", "NSE_INDEX|Nifty Bank", "NSE_EQ|INE002A01018"],
-                )
-            if overview_error:
-                st.warning("Upstox overview quotes unavailable: " + overview_error)
-            elif not overview_data:
-                st.info("Upstox returned no quote data.")
-            else:
-                overview_map = {}
-                for instrument_key, quote in overview_data.items():
-                    key_lower = str(instrument_key).lower()
-                    if "nifty 50" in key_lower:
-                        label = "NIFTY 50"
-                    elif "nifty bank" in key_lower:
-                        label = "BANK NIFTY"
-                    elif "ine002a01018" in key_lower or "reliance" in key_lower:
-                        label = "RELIANCE"
-                    else:
-                        continue
-                    overview_map[label] = quote.get("last_price")
-                quote_cols = st.columns(3)
-                for quote_col, label in zip(quote_cols, ["NIFTY 50", "BANK NIFTY", "RELIANCE"]):
-                    quote_value = overview_map.get(label)
-                    quote_col.metric(label, fmt(quote_value) if quote_value is not None else "Unavailable")
-                st.caption("Source: Upstox API · fetched " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST") + ". These quotes are displayed separately; historical indicators, sentiment and heatmap calculations are unchanged.")
 # Daily global-cue sentiment panel is intentionally placed immediately above Market Regime.
 st.subheader("Today's Market Direction · Global Sentiment")
 # Hidden sentiment explanation retained here in code; display the main heading and sentiment output.
