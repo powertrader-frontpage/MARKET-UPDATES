@@ -861,7 +861,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 if sentiment_details:
-    sentiment_df = pd.DataFrame(sentiment_details)
+    # Keep factor weights in the scoring logic, but hide the Weight column from the dashboard table.
+    sentiment_df = pd.DataFrame(sentiment_details).drop(columns=["Weight"], errors="ignore")
 
     def _sentiment_cell_style(value):
         text_value = str(value).strip().lower()
