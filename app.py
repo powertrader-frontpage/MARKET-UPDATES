@@ -1276,9 +1276,14 @@ if leading_sector_rows:
     }
     previous_relative = st.session_state.get("previous_sector_relative_performance")
     if previous_relative is not None:
+        # Alert only for a genuinely fresh leader: it was underperforming,
+        # has now crossed above NIFTY 50, and has entered the current top-three list.
         newly_outperforming = [
             name for name, value in current_relative.items()
-            if value > 0 and name in previous_relative and previous_relative[name] <= 0
+            if value > 0
+            and name in previous_relative
+            and previous_relative[name] <= 0
+            and name in current_top_names
         ]
         if newly_outperforming:
             alert_text = "🟨 SECTOR ROTATION ALERT · Now outperforming NIFTY 50: " + ", ".join(newly_outperforming)
