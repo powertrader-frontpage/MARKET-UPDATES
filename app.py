@@ -69,6 +69,460 @@ SECTOR_TICKERS = {
     "Consumption": "^CNXCONSUM",
 }
 
+# Upstox read-only OAuth integration. Secrets stay in Streamlit Cloud Secrets.
+def upstox_oauth_credentials():
+    try:
+        values = (
+            str(st.secrets["UPSTOX_API_KEY"]).strip(),
+            str(st.secrets["UPSTOX_API_SECRET"]).strip(),
+            str(st.secrets["UPSTOX_REDIRECT_URI"]).strip(),
+        )
+        return values if all(values) else None
+    except Exception:
+        return None
+
+def upstox_make_state(client_secret: str) -> str:
+    # Signed state survives OAuth redirects even if Streamlit creates a fresh session.
+    payload = str(int(time.time())) + "." + secrets.token_urlsafe(24)
+    signature = hmac.new(client_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return payload + "." + signature
+
+def upstox_verify_state(state: str, client_secret: str, max_age_seconds: int = 900) -> bool:
+    try:
+        payload, signature = state.rsplit(".", 1)
+        timestamp_text, nonce = payload.split(".", 1)
+        timestamp = int(timestamp_text)
+        if not nonce or abs(int(time.time()) - timestamp) > max_age_seconds:
+            return False
+        expected = hmac.new(client_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return secrets.compare_digest(signature, expected)
+    except Exception:
+        return False
+
+def upstox_login_url(client_id: str, redirect_uri: str, state: str) -> str:
+    params = {"client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code", "state": state}
+    return "https://api.upstox.com/v2/login/authorization/dialog?" + urlencode(params)
+
+@st.cache_resource
+def upstox_token_vault():
+    return {}
+
+def upstox_exchange_auth_code(client_id: str, client_secret: str, redirect_uri: str, code: str):
+    try:
+        response = requests.post(
+            "https://api.upstox.com/v2/login/authorization/token",
+            headers={"accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"},
+            data={"code": code, "client_id": client_id, "client_secret": client_secret,
+                  "redirect_uri": redirect_uri, "grant_type": "authorization_code"},
+            timeout=20,
+        )
+        payload = response.json()
+        if response.ok and payload.get("access_token"):
+            return payload["access_token"], None
+        return None, str(payload.get("errors") or payload.get("message") or "Upstox did not return an access token.")
+    except Exception as exc:
+        return None, f"Upstox token exchange failed ({exc.__class__.__name__})."
+
+def upstox_get_profile(access_token: str):
+    try:
+        response = requests.get(
+            "https://api.upstox.com/v2/user/profile",
+            headers={"Accept": "application/json", "Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        payload = response.json()
+        if response.ok and payload.get("status") == "success":
+            return payload.get("data") or {}, None
+        return None, str(payload.get("errors") or payload.get("message") or f"HTTP {response.status_code}")
+    except Exception as exc:
+        return None, f"Upstox profile request failed ({exc.__class__.__name__})."
+
+with st.sidebar:
+    st.header("Dashboard controls")
+    period = st.selectbox("Historical lookback", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=2)
+    interval = st.selectbox("Intraday bar interval", ["5m", "15m", "30m", "60m"], index=0)
+    st.caption("Intraday Yahoo Finance history is limited by the upstream source. If it is unavailable, the app will show an error instead of substituting sample values.")
+    refresh = st.button("↻ Refresh market data", use_container_width=True)
+    auto_refresh_enabled = st.checkbox("Automatic refresh", value=False, key="market_auto_refresh_enabled", help="Refreshes the dashboard page on a timer. Cached sources may still serve data until their cache expires; this does not make delayed public feeds live.")
+    if auto_refresh_enabled:
+        auto_refresh_minutes = st.selectbox("Refresh interval", [1, 5, 10, 15, 30], index=1, format_func=lambda n: f"Every {n} minutes", key="market_auto_refresh_minutes")
+        st_autorefresh(interval=auto_refresh_minutes * 60 * 1000, limit=None, key="market_auto_refresh_timer")
+        st.caption(f"Automatic page refresh enabled · every {auto_refresh_minutes} minutes. Data freshness depends on each source and its cache.")
+    else:
+        st.caption("Automatic refresh is off. Use Refresh market data for a manual refresh.")
+    st.divider()
+    st.markdown("**Public source links**")
+    st.markdown("- [NSE reports](https://www.nseindia.com/all-reports)")
+    st.markdown("- [Nifty Indices historical data](https://www.niftyindices.com/reports/historical-data)")
+    st.markdown("- [NSE FII/DII reports](https://www.nseindia.com/reports/fii-dii)")
+    st.markdown("- [RBI](https://www.rbi.org.in/)")
+    st.markdown("- [TradingView widgets](https://www.tradingview.com/widget/)")
+    st.markdown("- [Yahoo Finance data coverage/delays](https://help.yahoo.com/kb/SLN2310.html)")
+
+    st.divider()
+
+
+# Upstox read-only market-data connection. Keep credentials in Streamlit Cloud Secrets.
+def upstox_credentials():
+    """Read required Upstox secrets and return safe configuration diagnostics."""
+    required = ("UPSTOX_API_KEY", "UPSTOX_API_SECRET", "UPSTOX_REDIRECT_URI", "UPSTOX_ACCESS_TOKEN")
+    missing = []
+    values = {}
+    for name in required:
+        try:
+            value = str(st.secrets[name]).strip()
+            if value:
+                values[name] = value
+            else:
+                missing.append(name + " (empty)")
+        except Exception:
+            missing.append(name)
+    if missing:
+        return None, missing
+    return (
+        values["UPSTOX_API_KEY"],
+        values["UPSTOX_API_SECRET"],
+        values["UPSTOX_REDIRECT_URI"],
+        values["UPSTOX_ACCESS_TOKEN"],
+    ), []
+
+def upstox_ltp(access_token: str, instrument_keys: list[str]):
+    """Fetch read-only LTP quotes from Upstox; never place orders."""
+    try:
+        response = requests.get(
+            "https://api.upstox.com/v2/market-quote/ltp",
+            params={"instrument_key": ",".join(instrument_keys)},
+            headers={"Accept": "application/json", "Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        try:
+            payload = response.json()
+        except Exception:
+            return {}, f"Upstox returned a non-JSON response (HTTP {response.status_code})."
+        if response.ok and payload.get("status") == "success":
+            return payload.get("data") or {}, None
+        errors = payload.get("errors") or []
+        detail = errors[0].get("message") if errors and isinstance(errors[0], dict) else payload.get("message")
+        return {}, f"Upstox quote request failed (HTTP {response.status_code}): {detail or 'check token, instrument keys and API access'}"
+    except Exception as exc:
+        return {}, f"Upstox request failed ({exc.__class__.__name__})."
+
+# FYERS read-only market-data connection. Credentials must live in Streamlit Cloud Secrets.
+def fyers_credentials():
+    try:
+        app_id = str(st.secrets["FYERS_APP_ID"]).strip()
+        app_secret = str(st.secrets["FYERS_APP_SECRET"]).strip()
+        redirect_uri = str(st.secrets["FYERS_REDIRECT_URI"]).strip()
+        if app_id and app_secret and redirect_uri:
+            return app_id, app_secret, redirect_uri
+    except Exception:
+        pass
+    return None
+
+def fyers_make_state(app_secret: str) -> str:
+    issued = str(int(time.time()))
+    nonce = secrets.token_urlsafe(18)
+    message = f"{issued}.{nonce}"
+    signature = hmac.new(app_secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{message}.{signature}"
+
+def fyers_check_state(app_secret: str, state: str) -> bool:
+    try:
+        issued, nonce, signature = state.split(".", 2)
+        message = f"{issued}.{nonce}"
+        expected = hmac.new(app_secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+        return abs(int(time.time()) - int(issued)) <= 600 and hmac.compare_digest(signature, expected)
+    except Exception:
+        return False
+
+def fyers_login_url(app_id: str, redirect_uri: str, state: str) -> str:
+    params = {
+        "client_id": app_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "state": state,
+    }
+    return "https://api-t1.fyers.in/api/v3/generate-authcode?" + urlencode(params)
+
+@st.cache_resource
+def fyers_token_vault():
+    """Process-wide in-memory token cache shared by Streamlit sessions."""
+    return {}
+
+def fyers_access_expiry_iso():
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    cutoff = now.replace(hour=6, minute=30, second=0, microsecond=0)
+    if now >= cutoff:
+        cutoff = cutoff + pd.Timedelta(days=1)
+    return cutoff.isoformat()
+
+def fyers_exchange_auth_code(app_id: str, app_secret: str, auth_code: str):
+    app_hash = hashlib.sha256(f"{app_id}:{app_secret}".encode("utf-8")).hexdigest()
+    try:
+        response = requests.post(
+            "https://api-t1.fyers.in/api/v3/validate-authcode",
+            json={"grant_type": "authorization_code", "appIdHash": app_hash, "code": auth_code},
+            timeout=20,
+        )
+        payload = response.json()
+        if response.ok and payload.get("s") == "ok" and payload.get("access_token"):
+            return payload["access_token"], payload.get("refresh_token"), None
+        return None, None, str(payload.get("message", "FYERS did not return an access token."))
+    except Exception as exc:
+        return None, None, f"FYERS authentication request failed: {exc.__class__.__name__}"
+
+def fyers_refresh_access_token(app_id: str, app_secret: str, refresh_token: str, pin: str):
+    app_hash = hashlib.sha256(f"{app_id}:{app_secret}".encode("utf-8")).hexdigest()
+    try:
+        response = requests.post(
+            "https://api-t1.fyers.in/api/v3/validate-refresh-token",
+            json={"grant_type": "refresh_token", "appIdHash": app_hash, "refresh_token": refresh_token, "pin": pin},
+            timeout=20,
+        )
+        payload = response.json()
+        if response.ok and payload.get("s") == "ok" and payload.get("access_token"):
+            return payload["access_token"], None
+        return None, str(payload.get("message") or payload.get("messageCode") or "FYERS could not refresh the access token.")
+    except Exception as exc:
+        return None, f"FYERS token refresh failed: {exc.__class__.__name__}"
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fyers_nse_equity_symbols():
+    """Load FYERS' public NSE capital-market symbol master; return verified equity symbols only."""
+    try:
+        response = requests.get("https://public.fyers.in/sym_details/NSE_CM_sym_master.json", timeout=20)
+        response.raise_for_status()
+        payload = response.json()
+        symbols = []
+        if isinstance(payload, dict):
+            for symbol, details in payload.items():
+                if not isinstance(symbol, str) or not symbol.startswith("NSE:") or not symbol.endswith("-EQ"):
+                    continue
+                name = ""
+                if isinstance(details, dict):
+                    name = str(details.get("description") or details.get("short_name") or details.get("symbol") or "")
+                symbols.append((symbol, name))
+        return sorted(set(symbols), key=lambda row: (row[1].upper(), row[0])), None
+    except Exception as exc:
+        return [], f"Symbol master unavailable ({exc.__class__.__name__})."
+
+def fyers_history(app_id: str, access_token: str, symbol: str, resolution: str, days: int):
+    date_to = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    date_from = date_to - pd.Timedelta(days=days)
+    try:
+        response = requests.get(
+            "https://api-t1.fyers.in/data/history",
+            params={"symbol": symbol, "resolution": resolution, "date_format": "1",
+                    "range_from": str(date_from), "range_to": str(date_to), "cont_flag": "1"},
+            headers={"Authorization": f"{app_id}:{access_token}"},
+            timeout=25,
+        )
+        payload = response.json()
+        if not response.ok or payload.get("s") != "ok":
+            return pd.DataFrame(), str(payload.get("message", "FYERS historical candle request failed."))
+        candles = payload.get("candles") or []
+        if not candles:
+            return pd.DataFrame(), "FYERS returned no candles for this symbol and interval."
+        frame = pd.DataFrame(candles, columns=["Epoch", "Open", "High", "Low", "Close", "Volume"][:len(candles[0])])
+        frame["Date"] = pd.to_datetime(frame["Epoch"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            if col in frame:
+                frame[col] = pd.to_numeric(frame[col], errors="coerce")
+        return frame.dropna(subset=["Date", "Close"]).sort_values("Date"), None
+    except Exception as exc:
+        return pd.DataFrame(), f"FYERS historical request failed ({exc.__class__.__name__})."
+
+def fyers_live_quotes(app_id: str, access_token: str, symbols: list[str]):
+    try:
+        response = requests.get(
+            "https://api-t1.fyers.in/data/quotes",
+            params={"symbols": ",".join(symbols)},
+            headers={"Authorization": f"{app_id}:{access_token}"},
+            timeout=15,
+        )
+        payload = response.json()
+        if response.ok and payload.get("s") == "ok":
+            return payload.get("d", []), None
+        return [], str(payload.get("message", "FYERS quote request failed."))
+    except Exception as exc:
+        return [], f"FYERS quote request failed: {exc.__class__.__name__}"
+
+
+def fyers_fundamental_probe(app_id: str, access_token: str, selected_symbol: str):
+    """Inspect FYERS screener fields and test whether the selected stock appears in a fundamentals screen."""
+    headers = {"Authorization": f"{app_id}:{access_token}"}
+    base_url = "https://api-t1.fyers.in/api/v3/screeners"
+    try:
+        config_response = requests.get(f"{base_url}/config", headers=headers, timeout=15)
+        config_payload = config_response.json()
+        if config_response.status_code != 200 or config_payload.get("s") != "ok":
+            message = config_payload.get("message") or config_payload.get("code") or config_payload.get("messageCode") or "No error message returned"
+            error_code = config_payload.get("code", config_payload.get("messageCode", "not provided"))
+            return {
+                "ok": False,
+                "message": (
+                    f"FYERS Screeners config failed (HTTP {config_response.status_code}; "
+                    f"API code: {error_code}). Details: {message}. "
+                    "Check that the connected FYERS session belongs to the configured FYERS_APP_ID "
+                    "and that Screeners API access is enabled for this app."
+                ),
+            }
+        data = config_payload.get("data") or {}
+        columns = data.get("columns") or []
+        metric_terms = ("p/e", "pe ", "price earnings", "debt/equity", "debt to equity", "peg", "roe", "roce", "return on equity", "return on capital", "industry p/e")
+        candidate_columns = []
+        for col in columns:
+            name = str(col.get("name", "")).strip()
+            category = str(col.get("category", "")).strip().lower()
+            normalized_name = name.lower()
+            if any(term in normalized_name for term in metric_terms) or category in {
+                "valuation ratios", "margin & profitability", "solvency & liquidity"
+            }:
+                col_id = col.get("id")
+                if col_id and col_id not in [item["id"] for item in candidate_columns]:
+                    candidate_columns.append({"id": col_id, "name": name, "category": category})
+        fields = ",".join(item["id"] for item in candidate_columns[:9])
+        screeners = [
+            item for item in (data.get("screeners") or [])
+            if "fundamental" in str(item.get("category", "")).lower()
+            or "valuation" in str(item.get("name", "")).lower()
+            or "profitability" in str(item.get("name", "")).lower()
+        ]
+        target = selected_symbol.replace("NSE:", "").replace("-EQ", "").replace(".NS", "").strip().upper()
+        checked = []
+        for screener in screeners[:5]:
+            screener_id = screener.get("id")
+            if not screener_id:
+                continue
+            params = {"screener": screener_id}
+            if fields:
+                params["fields"] = fields
+            params["universe"] = "iw010"
+            response = requests.get(f"{base_url}/query", params=params, headers=headers, timeout=15)
+            payload = response.json()
+            if response.status_code != 200 or payload.get("s") != "ok":
+                error_code = payload.get("code", payload.get("messageCode", "not provided"))
+                error_message = payload.get("message") or payload.get("code") or payload.get("messageCode") or "No error message returned"
+                checked.append({
+                    "name": screener.get("name", screener_id),
+                    "error": f"HTTP {response.status_code}; API code {error_code}: {error_message}",
+                })
+                continue
+            result = payload.get("data") or {}
+            result_headers = result.get("header") or []
+            result_body = result.get("body") or []
+            symbol_index = next((i for i, item in enumerate(result_headers) if str(item.get("id", "")).lower() in {"symbolticker", "symbol"}), 0)
+            for row in result_body:
+                if len(row) <= symbol_index:
+                    continue
+                returned_symbol = str(row[symbol_index]).replace("NSE:", "").replace("-EQ", "").upper()
+                if returned_symbol == target:
+                    values = []
+                    for index, column in enumerate(result_headers):
+                        if index < len(row):
+                            values.append({"Field": column.get("name", column.get("id", f"Field {index+1}")), "Value": row[index]})
+                    return {
+                        "ok": True, "message": "Selected stock found in a FYERS fundamentals screener.",
+                        "screener": screener.get("name", screener_id), "values": values,
+                        "columns": candidate_columns, "checked": checked,
+                    }
+            checked.append({"name": screener.get("name", screener_id), "matches": len(result_body)})
+        return {
+            "ok": True,
+            "message": "FYERS configuration loaded, but the selected stock was not found in the first five relevant fundamentals screeners checked. This does not prove the stock's ratios are unavailable.",
+            "columns": candidate_columns, "checked": checked,
+        }
+    except Exception as exc:
+        return {"ok": False, "message": f"FYERS screener test failed: {exc.__class__.__name__}"}
+
+
+def fyers_option_chain(app_id: str, access_token: str, symbol: str, strikecount: int = 10, expiry_timestamp: str = ""):
+    """Fetch an authentic FYERS option-chain snapshot; never substitute sample data."""
+    try:
+        params = {"symbol": symbol, "strikecount": str(strikecount), "greeks": "1"}
+        if expiry_timestamp:
+            params["timestamp"] = str(expiry_timestamp)
+        response = requests.get(
+            "https://api-t1.fyers.in/data/options-chain-v3",
+            params=params,
+            headers={"Authorization": f"{app_id}:{access_token}"},
+            timeout=20,
+        )
+        payload = response.json()
+        if not response.ok:
+            return {}, str(payload.get("message") or payload.get("messageCode") or f"HTTP {response.status_code}")
+        if payload.get("s") == "error":
+            return {}, str(payload.get("message") or payload.get("messageCode") or "FYERS rejected the option-chain request.")
+        data = payload.get("data", payload)
+        if not isinstance(data, dict) or not data.get("optionsChain"):
+            return {}, str(payload.get("message") or "FYERS returned no option-chain rows for this symbol/expiry.")
+        return data, None
+    except Exception as exc:
+        return {}, f"FYERS option-chain request failed: {exc.__class__.__name__}"
+
+with st.sidebar:
+    st.divider()
+    st.subheader("FYERS live data")
+    fyers_config = fyers_credentials()
+    token_vault = fyers_token_vault()
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    # Clear expired session tokens so the refresh-token path is offered instead of a stale "connected" state.
+    if st.session_state.get("fyers_access_token"):
+        try:
+            session_expiry = datetime.fromisoformat(token_vault.get("access_expires_at", ""))
+            if now_ist >= session_expiry:
+                st.session_state.pop("fyers_access_token", None)
+        except Exception:
+            # Older session tokens without expiry metadata are not trusted indefinitely.
+            st.session_state.pop("fyers_access_token", None)
+    # Restore the process-wide token into a new browser/session when it is still valid.
+    if not st.session_state.get("fyers_access_token") and token_vault.get("access_token"):
+        try:
+            token_expiry = datetime.fromisoformat(token_vault.get("access_expires_at", ""))
+            if now_ist < token_expiry:
+                st.session_state["fyers_access_token"] = token_vault["access_token"]
+                st.session_state["fyers_connected_at"] = token_vault.get("connected_at", now_ist.isoformat())
+        except Exception:
+            pass
+    if not fyers_config:
+        st.warning("Add FYERS_APP_ID, FYERS_APP_SECRET and FYERS_REDIRECT_URI in Streamlit Cloud Secrets to enable the connection.")
+    else:
+        fyers_app_id, fyers_app_secret, fyers_redirect_uri = fyers_config
+        active_token = st.session_state.get("fyers_access_token")
+        if active_token:
+            st.success("FYERS connected · shared across app sessions until daily token expiry.")
+            if st.button("Disconnect FYERS session", use_container_width=True):
+                st.session_state.pop("fyers_access_token", None)
+                st.session_state.pop("fyers_connected_at", None)
+                token_vault.clear()
+                st.rerun()
+        elif token_vault.get("refresh_token"):
+            st.info("Your access token has expired. Refresh it here without repeating the full FYERS login, if the refresh token is still valid.")
+            fyers_pin = st.text_input("FYERS PIN (used only for refresh)", type="password", key="fyers_refresh_pin")
+            if st.button("Refresh FYERS session", use_container_width=True, disabled=not fyers_pin):
+                with st.spinner("Refreshing FYERS access token…"):
+                    refreshed_token, refresh_error = fyers_refresh_access_token(fyers_app_id, fyers_app_secret, token_vault["refresh_token"], fyers_pin)
+                if refreshed_token:
+                    token_vault["access_token"] = refreshed_token
+                    token_vault["access_expires_at"] = fyers_access_expiry_iso()
+                    st.session_state["fyers_access_token"] = refreshed_token
+                    st.session_state["fyers_connected_at"] = now_ist.isoformat()
+                    st.session_state.pop("fyers_refresh_pin", None)
+                    st.success("FYERS session refreshed.")
+                    st.rerun()
+                else:
+                    st.error(f"Token refresh failed: {refresh_error}. The refresh token may have expired; reconnect FYERS if needed.")
+        else:
+            st.link_button(
+                "Connect FYERS account",
+                fyers_login_url(fyers_app_id, fyers_redirect_uri, fyers_make_state(fyers_app_secret)),
+                use_container_width=True,
+            )
+            st.caption("The token is shared across app sessions in memory. FYERS access tokens expire daily at 6:30 AM; a server restart or expired refresh token may require reconnecting.")
+
+
+
 # Handle the redirect from FYERS after user authorization.
 if "auth_code" in st.query_params:
     fyers_config = fyers_credentials()
@@ -131,192 +585,6 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
 
 
 # Side-by-side provider comparison. This is diagnostic only and does not alter dashboard calculations.
-
-# Public-data universe used to make stock research less manual. Industry labels are static classifications,
-# while prices are fetched live from Yahoo Finance and must be verified against source timestamps.
-AUTO_UNIVERSE = {
-    "RELIANCE.NS": "Energy", "TCS.NS": "IT", "INFY.NS": "IT", "HCLTECH.NS": "IT",
-    "WIPRO.NS": "IT", "TECHM.NS": "IT", "HDFCBANK.NS": "Financials", "ICICIBANK.NS": "Financials",
-    "SBIN.NS": "Financials", "KOTAKBANK.NS": "Financials", "AXISBANK.NS": "Financials",
-    "BAJFINANCE.NS": "Financials", "BAJAJFINSV.NS": "Financials", "BHARTIARTL.NS": "Telecom",
-    "ITC.NS": "FMCG", "HINDUNILVR.NS": "FMCG", "NESTLEIND.NS": "FMCG", "TATAMOTORS.NS": "Auto",
-    "M&M.NS": "Auto", "MARUTI.NS": "Auto", "SUNPHARMA.NS": "Pharma", "DRREDDY.NS": "Pharma",
-    "CIPLA.NS": "Pharma", "LT.NS": "Industrials", "ULTRACEMCO.NS": "Cement", "TATASTEEL.NS": "Metals",
-    "JSWSTEEL.NS": "Metals", "NTPC.NS": "Utilities", "POWERGRID.NS": "Utilities", "ONGC.NS": "Energy",
-    "COALINDIA.NS": "Energy", "ASIANPAINT.NS": "Consumer", "TITAN.NS": "Consumer", "ADANIPORTS.NS": "Infrastructure",
-    "TRENT.NS": "Retail", "BEL.NS": "Industrials", "INDUSINDBK.NS": "Financials",
-}
-
-@st.cache_data(ttl=21600, show_spinner=False)
-def get_auto_universe(period: str = "2y") -> pd.DataFrame:
-    """Fetch actual daily OHLCV for a fixed large-cap universe; return empty data on source failure."""
-    tickers = list(AUTO_UNIVERSE)
-    try:
-        raw = yf.download(tickers, period=period, interval="1d", auto_adjust=False, group_by="ticker",
-                          threads=True, progress=False, actions=False)
-        if raw is None or raw.empty:
-            return pd.DataFrame()
-        rows=[]
-        for ticker in tickers:
-            try:
-                if isinstance(raw.columns, pd.MultiIndex):
-                    if ticker not in raw.columns.get_level_values(0):
-                        continue
-                    part=raw[ticker].copy()
-                else:
-                    part=raw.copy()
-                part=part.reset_index()
-                date_col="Date" if "Date" in part.columns else "Datetime"
-                if date_col not in part.columns or "Close" not in part.columns:
-                    continue
-                part=part.rename(columns={date_col:"Date"})
-                part["Date"]=pd.to_datetime(part["Date"],errors="coerce")
-                part["Symbol"]=ticker.replace(".NS","")
-                part["Industry"]=AUTO_UNIVERSE[ticker]
-                for c in ["Open","High","Low","Close","Volume"]:
-                    if c in part.columns: part[c]=pd.to_numeric(part[c],errors="coerce")
-                part=part.dropna(subset=["Date","Close"])
-                if not part.empty:
-                    rows.append(part[[c for c in ["Date","Symbol","Industry","Open","High","Low","Close","Volume"] if c in part.columns]])
-            except Exception:
-                continue
-        return pd.concat(rows,ignore_index=True) if rows else pd.DataFrame()
-    except Exception:
-        return pd.DataFrame()
-
-def get_news_rss(query: str, limit: int = 12) -> tuple[pd.DataFrame, str | None]:
-    """Fetch public Google News RSS search results; headlines are attributed and never treated as verified causal explanations."""
-    import xml.etree.ElementTree as ET
-    from urllib.parse import quote_plus
-    try:
-        url = "https://news.google.com/rss/search?q=" + quote_plus(query) + "&hl=en-IN&gl=IN&ceid=IN:en"
-        response = requests.get(url, headers={"User-Agent":"Mozilla/5.0 MarketIntelligenceTerminal/1.0"}, timeout=12)
-        response.raise_for_status()
-        root = ET.fromstring(response.content)
-        rows = []
-        for item in root.findall(".//item")[:limit]:
-            title = (item.findtext("title") or "").strip()
-            link = (item.findtext("link") or "").strip()
-            pub = (item.findtext("pubDate") or "").strip()
-            source = item.find("source")
-            publisher = (source.text or "").strip() if source is not None else ""
-            published_at = pd.to_datetime(pub, errors="coerce", utc=True)
-            if title and link:
-                rows.append({"Published (RSS)":pub,"_published_sort":published_at,"Headline":title,"Publisher":publisher,"Source link":link})
-        if not rows:
-            return pd.DataFrame(), "RSS returned no headline rows."
-        frame = pd.DataFrame(rows)
-        # RSS relevance feeds can return mixed dates; sort newest first, with unparseable dates last.
-        frame = frame.sort_values("_published_sort", ascending=False, na_position="last", kind="stable")
-        frame = frame.drop(columns=["_published_sort"])
-        return frame.reset_index(drop=True), None
-    except Exception as exc:
-        return pd.DataFrame(), f"News RSS unavailable: {type(exc).__name__}: {str(exc)[:150]}"
-
-
-def indicators(data: pd.DataFrame) -> pd.DataFrame:
-    out = data.copy()
-    close = out["Close"]
-    for n in [5, 11, 20, 50, 100, 200]:
-        out[f"SMA {n}"] = close.rolling(n, min_periods=n).mean()
-        out[f"EMA {n}"] = close.ewm(span=n, adjust=False, min_periods=n).mean()
-    delta = close.diff()
-    gain = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-    rs = gain / loss.replace(0, np.nan)
-    out["RSI 14"] = 100 - 100 / (1 + rs)
-    out.loc[(loss == 0) & gain.notna(), "RSI 14"] = 100
-    if {"High", "Low"}.issubset(out.columns):
-        out["Daily Range"] = out["High"] - out["Low"]
-        for n in [5, 10, 14, 20]:
-            out[f"ADR {n}"] = out["Daily Range"].rolling(n, min_periods=n).mean()
-        prev_close = close.shift(1)
-        tr = pd.concat([out["High"]-out["Low"], (out["High"]-prev_close).abs(), (out["Low"]-prev_close).abs()], axis=1).max(axis=1)
-        out["ATR 14"] = tr.rolling(14, min_periods=14).mean()
-    out["Return %"] = close.pct_change() * 100
-    return out
-
-def fmt(value, decimals=2):
-    try:
-        if pd.isna(value): return "—"
-        return f"{float(value):,.{decimals}f}"
-    except Exception:
-        return "—"
-
-def tv_widget(kind: str, config: dict, height: int = 500):
-    config_json = json.dumps(config, ensure_ascii=False).replace("</", "<\\/")
-    script = f'''<div class="tradingview-widget-container" style="height:{height}px;width:100%"><div class="tradingview-widget-container__widget" style="height:calc(100% - 28px);width:100%"></div><div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/" rel="noopener nofollow" target="_blank"><span>TradingView</span></a></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-{kind}.js" async>{config_json}</script></div>'''
-    components.html(script, height=height + 10, scrolling=False)
-
-def advanced_chart(symbol: str, height: int = 720):
-    tv_widget("advanced-chart", {"autosize": True, "symbol": symbol, "interval": "D", "timezone": "Asia/Kolkata", "theme": "dark", "style": "1", "locale": "en", "allow_symbol_change": True, "calendar": False, "support_host": "https://www.tradingview.com"}, height)
-
-def quote_snapshot(df: pd.DataFrame):
-    if df.empty: return None
-    last = df.iloc[-1]
-    prev = df.iloc[-2] if len(df) > 1 else None
-    change = float(last["Close"] - prev["Close"]) if prev is not None else np.nan
-    pct = change / float(prev["Close"]) * 100 if prev is not None and float(prev["Close"]) != 0 else np.nan
-    return last, change, pct
-
-# Pull key instruments. The sidebar interval controls intraday bars; daily history is used for indicators.
-market_data: dict[str, pd.DataFrame] = {}
-market_errors: dict[str, str | None] = {}
-with st.spinner("Loading best-effort public market data…"):
-    for name, ticker in INDEXES.items():
-        # For equities and indices, fetch daily bars for stable technical calculations.
-        hist, err = get_history(ticker, period, "1d")
-        market_data[name], market_errors[name] = hist, err
-
-now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
-# Hidden refresh/source note retained in code to keep the dashboard focused on key headings and values.
-
-# Headline metrics from the latest returned historical bar (not described as real-time).
-headline_names = ["NIFTY 50", "BANK NIFTY", "India VIX", "Brent Crude", "USD/INR"]
-# Responsive headline cards: keep full numeric values readable on narrow mobile screens.
-st.markdown("""
-<style>
-[data-testid="stMetricValue"] {
-    font-size: clamp(1.05rem, 2.2vw, 1.65rem) !important;
-    white-space: normal !important;
-    overflow-wrap: anywhere !important;
-    line-height: 1.2 !important;
-}
-[data-testid="stMetricLabel"] {
-    font-size: clamp(0.72rem, 1.5vw, 0.9rem) !important;
-    white-space: normal !important;
-}
-[data-testid="stMetricDelta"] {
-    font-size: clamp(0.68rem, 1.35vw, 0.82rem) !important;
-    white-space: normal !important;
-    overflow-wrap: anywhere !important;
-}
-</style>
-""", unsafe_allow_html=True)
-cols = st.columns(5)
-for col, name in zip(cols, headline_names):
-    df = market_data[name]
-    snap = quote_snapshot(df)
-    if snap:
-        last, change, pct = snap
-        # Inverse-impact instruments: lower USD/INR (stronger rupee) and lower India VIX
-        # (less expected volatility) are generally supportive; higher values are headwinds.
-        if name == "USD/INR":
-            delta_text = f"{fmt(change)} ({fmt(pct)}%)"
-            delta_text += " · INR stronger" if change < 0 else (" · INR weaker" if change > 0 else "")
-            col.metric(name, fmt(last["Close"]), delta_text, delta_color="inverse")
-        elif name == "India VIX":
-            delta_text = f"{fmt(change)} ({fmt(pct)}%)"
-            delta_text += " · volatility easing" if change < 0 else (" · volatility rising" if change > 0 else "")
-            col.metric(name, fmt(last["Close"]), delta_text, delta_color="inverse")
-        else:
-            col.metric(name, fmt(last["Close"]), f"{fmt(change)} ({fmt(pct)}%)")
-        # Source-bar timestamp retained in data, but hidden from the compact headline display.
-    else:
-        col.metric(name, "Unavailable")
-        # Error details remain available in market_errors; avoid displaying extra helper text here.
-
-# Hidden headline explanation retained here in code; display headline metrics without extra notes.
 
 
 # Daily global-cue sentiment panel is intentionally placed immediately above Market Regime.
