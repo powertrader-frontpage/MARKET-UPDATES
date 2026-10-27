@@ -240,8 +240,17 @@ def fyers_fundamental_probe(app_id: str, access_token: str, selected_symbol: str
         config_response = requests.get(f"{base_url}/config", headers=headers, timeout=15)
         config_payload = config_response.json()
         if config_response.status_code != 200 or config_payload.get("s") != "ok":
-            message = config_payload.get("message") or config_payload.get("code") or "FYERS config request failed"
-            return {"ok": False, "message": str(message)}
+            message = config_payload.get("message") or config_payload.get("code") or config_payload.get("messageCode") or "No error message returned"
+            error_code = config_payload.get("code", config_payload.get("messageCode", "not provided"))
+            return {
+                "ok": False,
+                "message": (
+                    f"FYERS Screeners config failed (HTTP {config_response.status_code}; "
+                    f"API code: {error_code}). Details: {message}. "
+                    "Check that the connected FYERS session belongs to the configured FYERS_APP_ID "
+                    "and that Screeners API access is enabled for this app."
+                ),
+            }
         data = config_payload.get("data") or {}
         columns = data.get("columns") or []
         metric_terms = ("p/e", "pe ", "price earnings", "debt/equity", "debt to equity", "peg", "roe", "roce", "return on equity", "return on capital", "industry p/e")
@@ -276,7 +285,12 @@ def fyers_fundamental_probe(app_id: str, access_token: str, selected_symbol: str
             response = requests.get(f"{base_url}/query", params=params, headers=headers, timeout=15)
             payload = response.json()
             if response.status_code != 200 or payload.get("s") != "ok":
-                checked.append({"name": screener.get("name", screener_id), "error": str(payload.get("message") or payload.get("code") or "query failed")})
+                error_code = payload.get("code", payload.get("messageCode", "not provided"))
+                error_message = payload.get("message") or payload.get("code") or payload.get("messageCode") or "No error message returned"
+                checked.append({
+                    "name": screener.get("name", screener_id),
+                    "error": f"HTTP {response.status_code}; API code {error_code}: {error_message}",
+                })
                 continue
             result = payload.get("data") or {}
             result_headers = result.get("header") or []
