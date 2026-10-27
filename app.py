@@ -73,7 +73,7 @@ with st.sidebar:
     interval = st.selectbox("Intraday bar interval", ["5m", "15m", "30m", "60m"], index=0)
     st.caption("Intraday Yahoo Finance history is limited by the upstream source. If it is unavailable, the app will show an error instead of substituting sample values.")
     refresh = st.button("↻ Refresh market data", use_container_width=True)
-    auto_refresh_enabled = st.toggle("Automatic refresh", value=False, key="market_auto_refresh_enabled", help="Refreshes the dashboard page on a timer. Cached sources may still serve data until their cache expires; this does not make delayed public feeds live.")
+    auto_refresh_enabled = st.checkbox("Automatic refresh", value=False, key="market_auto_refresh_enabled", help="Refreshes the dashboard page on a timer. Cached sources may still serve data until their cache expires; this does not make delayed public feeds live.")
     if auto_refresh_enabled:
         auto_refresh_minutes = st.selectbox("Refresh interval", [1, 5, 10, 15, 30], index=1, format_func=lambda n: f"Every {n} minutes", key="market_auto_refresh_minutes")
         st_autorefresh(interval=auto_refresh_minutes * 60 * 1000, limit=None, key="market_auto_refresh_timer")
@@ -1134,48 +1134,6 @@ else:
                     )
                 st.caption("Classic pivot estimates for information only; not guaranteed price levels.")
 
-            # Compact NIFTY 50 pivot levels directly beneath the Price trend chart.
-            # Levels use the latest completed daily candle, never an in-progress session candle.
-            nifty_levels_df = market_data.get("NIFTY 50", pd.DataFrame())
-            if not nifty_levels_df.empty and {"High", "Low", "Close"}.issubset(nifty_levels_df.columns):
-                nifty_ohlc = nifty_levels_df.dropna(subset=["High", "Low", "Close"]).copy()
-                if not nifty_ohlc.empty:
-                    latest_nifty = nifty_ohlc.iloc[-1]
-                    latest_nifty_date = pd.to_datetime(latest_nifty["Date"], errors="coerce")
-                    today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-                    if pd.notna(latest_nifty_date) and latest_nifty_date.date() == today_ist and len(nifty_ohlc) >= 2:
-                        prev_nifty = nifty_ohlc.iloc[-2]
-                    else:
-                        prev_nifty = latest_nifty
-                    prev_high = float(prev_nifty["High"])
-                    prev_low = float(prev_nifty["Low"])
-                    prev_close = float(prev_nifty["Close"])
-                    pivot = (prev_high + prev_low + prev_close) / 3
-                    resistance_1 = 2 * pivot - prev_low
-                    support_1 = 2 * pivot - prev_high
-                    resistance_2 = pivot + (prev_high - prev_low)
-                    support_2 = pivot - (prev_high - prev_low)
-                    level_date = pd.to_datetime(prev_nifty["Date"], errors="coerce")
-                    level_date_text = level_date.strftime("%d %b %Y") if pd.notna(level_date) else "previous session"
-                    st.markdown("**NIFTY 50 · Support / Resistance**")
-                    level_cols = st.columns(5, gap="small")
-                    level_items = [
-                        ("S2", support_2, "#22c55e"),
-                        ("S1", support_1, "#4ade80"),
-                        ("Pivot", pivot, "#f59e0b"),
-                        ("R1", resistance_1, "#fb7185"),
-                        ("R2", resistance_2, "#ef4444"),
-                    ]
-                    for level_col, (level_name, level_value, level_color) in zip(level_cols, level_items):
-                        level_col.markdown(
-                            f'<div style="border:1px solid #343a46;border-top:2px solid {level_color};'
-                            f'border-radius:7px;padding:5px 3px;text-align:center;">'
-                            f'<div style="font-size:11px;color:#aeb6c2;">{level_name}</div>'
-                            f'<div style="font-size:clamp(11px,1.2vw,14px);font-weight:700;color:{level_color};">'
-                            f'{level_value:,.2f}</div></div>',
-                            unsafe_allow_html=True,
-                        )
-                    st.caption(f"Classic daily pivot · based on {level_date_text} OHLC · informational only.")
         with fear_col:
             fear_score = np.nan
             fear_components = []
