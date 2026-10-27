@@ -3076,11 +3076,11 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         except (TypeError, ValueError):
                             return "—"
 
-                    # Screener.in does not publish a supported public API. Use a user-exported CSV instead of scraping pages.
+                    # NSE MarketLens officially supports CSV exports; use the exported columns instead of an undocumented scraping endpoint.
                     screener_row = None
-                    with st.expander("Use Screener.in fundamentals (CSV export)", expanded=False):
-                        st.caption("On Screener.in, open the company/screen, add the desired ratio columns, then export the results to CSV and upload that file here. This avoids relying on an unofficial scraping endpoint.")
-                        screener_file = st.file_uploader("Upload Screener.in CSV export", type=["csv"], key="screener_fundamentals_csv")
+                    with st.expander("Use NSE MarketLens fundamentals (CSV export)", expanded=False):
+                        st.caption("Open NSE MarketLens, create or open a screen, add the ratio columns you want (PE Ratio, ROCE, ROE, Debt / Eq), then use Download CSV and upload it here. MarketLens documents CSV export; this avoids relying on an unofficial endpoint.")
+                        screener_file = st.file_uploader("Upload NSE MarketLens CSV export", type=["csv"], key="marketlens_fundamentals_csv")
                         if screener_file is not None:
                             try:
                                 screener_df = pd.read_csv(screener_file)
@@ -3099,9 +3099,9 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                                     matched = matched | screener_df[name_col].astype(str).str.upper().str.contains(re.escape(company_name), na=False)
                                 if matched.any():
                                     screener_row = screener_df.loc[matched].iloc[0]
-                                    st.success(f"Matched {ticker} in the uploaded Screener.in file.")
+                                    st.success(f"Matched {ticker} in the uploaded NSE MarketLens file.")
                                 else:
-                                    st.warning(f"{ticker} was not found in the uploaded CSV. Include the NSE Code or company name column and export the selected stock.")
+                                    st.warning(f"{ticker} was not found in the uploaded CSV. Include the company/symbol column and export a screen containing the selected stock.")
                             except Exception as exc:
                                 st.warning(f"Could not read this CSV: {exc.__class__.__name__}")
 
@@ -3126,13 +3126,13 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                                         continue
                         return None
 
-                    pe_value = _screener_csv_value(screener_row, "Stock P/E", "Price to earning", "P/E") 
+                    pe_value = _screener_csv_value(screener_row, "Stock P/E", "Price to earning", "P/E", "PE Ratio") 
                     if pe_value is None:
                         pe_value = fundamentals.get("trailingPE")
                     industry_pe_value = _screener_csv_value(screener_row, "Industry PE", "Industry P/E")
                     if industry_pe_value is None:
                         industry_pe_value = fundamentals.get("industryPE")
-                    debt_equity_value = _screener_csv_value(screener_row, "Debt to equity", "Debt/Equity")
+                    debt_equity_value = _screener_csv_value(screener_row, "Debt to equity", "Debt/Equity", "Debt / Eq")
                     if debt_equity_value is None:
                         debt_equity_value = fundamentals.get("debtToEquity")
                     peg_value = _screener_csv_value(screener_row, "PEG Ratio", "PEG")
@@ -3188,7 +3188,7 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         )
                     metric_html += '</div>'
                     st.markdown(metric_html, unsafe_allow_html=True)
-                    st.caption("Screener.in CSV values take priority when uploaded; remaining values use Yahoo Finance when available. D/E is shown as a ratio. — means the source did not return a value.")
+                    st.caption("NSE MarketLens CSV values take priority when uploaded; remaining values use Yahoo Finance when available. D/E is shown as a ratio. — means the source did not return a value.")
 
                 st.markdown("#### Price trend · recent momentum")
                 stock_chart = go.Figure()
