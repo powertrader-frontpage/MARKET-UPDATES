@@ -541,17 +541,32 @@ with st.sidebar:
             )
             st.caption("The token is shared across app sessions in memory. FYERS access tokens expire daily at 6:30 AM; a server restart or expired refresh token may require reconnecting.")
 
-# Handle Upstox OAuth callback. The redirect URI must match the registered URL exactly.
-if "code" in st.query_params and "state" in st.query_params:
+# Handle Upstox OAuth callback, including provider-side errors and incomplete redirects.
+if any(key in st.query_params for key in ("code", "state", "error", "error_description")):
     upstox_config = upstox_oauth_credentials()
     returned_state = st.query_params.get("state", "")
     auth_code = st.query_params.get("code", "")
-    if not upstox_config:
+    oauth_error = st.query_params.get("error", "")
+    oauth_error_description = st.query_params.get("error_description", "")
+    if oauth_error:
+        st.error("Upstox rejected the authorization request: " + str(oauth_error))
+        if oauth_error_description:
+            st.caption("Upstox detail: " + str(oauth_error_description))
+        st.caption("Check the API Key / Client ID and exact redirect URI registered for the same Upstox app.")
+        st.query_params.clear()
+    elif not auth_code:
+        st.error("Returned from the Upstox authorization page without an authorization code.")
+        st.caption("The provider did not complete the login. Check that the API Key / Client ID belongs to this app and that the app is enabled for OAuth login.")
+        st.query_params.clear()
+    elif not upstox_config:
         st.error("Upstox credentials are not configured in Streamlit Secrets.")
         st.query_params.clear()
+    elif not returned_state:
+        st.error("Upstox returned an authorization code but no state value. Restart login from the dashboard.")
+        st.query_params.clear()
     elif not upstox_verify_state(returned_state, upstox_config[1]):
-        st.error("Upstox OAuth state validation failed. This can happen if the app secret changed or the authorization link was stale. Please use the current Continue to Upstox login link and retry.")
-        st.caption("Diagnostic: state was returned by Upstox, but its signature did not match the current configured API secret. No credential values are displayed.")
+        st.error("Upstox OAuth state validation failed. Restart login using the current link.")
+        st.caption("The state signature did not match the configured app secret. No credential values are displayed.")
         st.query_params.clear()
     elif auth_code:
         with st.spinner("Completing Upstox authorization..."):
