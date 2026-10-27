@@ -3031,20 +3031,64 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                 except Exception as exc:
                     results_notes.append(f"Quarterly financial data unavailable ({exc.__class__.__name__}).")
                 if results_loaded:
-                    st.success(" · ".join(results_notes))
+                    st.markdown("#### Recent results · fundamental takeaway")
+                    st.markdown(
+                        f'<div style="border:1px solid #344252;border-left:4px solid #38bdf8;border-radius:12px;'
+                        f'padding:12px 14px;background:linear-gradient(110deg,rgba(8,145,178,.10),rgba(15,23,42,.45));">'
+                        f'<div style="font-size:11px;letter-spacing:.6px;color:#67e8f9;font-weight:750;">LATEST AVAILABLE QUARTER</div>'
+                        f'<div style="font-size:13px;color:#e2e8f0;margin-top:4px;">{results_notes[0]}</div></div>',
+                        unsafe_allow_html=True,
+                    )
                     revenue_row = _find_financial_row(quarterly, ["Total Revenue", "Operating Revenue", "Revenue"])
                     net_income_row = _find_financial_row(quarterly, ["Net Income", "Net Income Common Stockholders", "Net Income From Continuing Operation Net Minority Interest"])
-                    comments = []
-                    for metric_name, row_key in [("revenue", revenue_row), ("net income", net_income_row)]:
+                    result_metrics = []
+                    result_comments = []
+                    for metric_name, row_key in [("Revenue", revenue_row), ("Net income", net_income_row)]:
                         if row_key is not None:
                             vals = pd.to_numeric(quarterly.loc[row_key], errors="coerce").dropna()
+                            if vals.empty:
+                                continue
+                            latest_value = float(vals.iloc[0])
+                            display_value = f"₹{latest_value/1e7:,.2f} cr" if abs(latest_value) >= 1e6 else f"₹{latest_value:,.2f}"
+                            yoy_text = "YoY comparison unavailable"
                             if len(vals) >= 5 and vals.iloc[4] != 0:
-                                yoy = (float(vals.iloc[0]) / float(vals.iloc[4]) - 1) * 100
-                                comments.append(f"{metric_name} {'grew' if yoy > 0 else 'declined'} {abs(yoy):.1f}% year-on-year")
-                    if comments:
-                        st.caption("Results takeaway: " + "; ".join(comments) + ".")
+                                yoy = (latest_value / float(vals.iloc[4]) - 1) * 100
+                                yoy_color = "#22c55e" if yoy >= 0 else "#ef4444"
+                                yoy_text = f"YoY {yoy:+.1f}%"
+                                result_comments.append((metric_name.lower(), yoy, yoy_color))
+                            qoq_text = ""
+                            if len(vals) >= 2 and vals.iloc[1] != 0:
+                                qoq = (latest_value / float(vals.iloc[1]) - 1) * 100
+                                qoq_text = f" · QoQ {qoq:+.1f}%"
+                            result_metrics.append((metric_name, display_value, yoy_text + qoq_text))
+                    if result_metrics:
+                        result_cols = st.columns(len(result_metrics), gap="small")
+                        for result_col, (metric_name, display_value, compare_text) in zip(result_cols, result_metrics):
+                            yoy_color = "#22c55e" if "YoY +" in compare_text else "#ef4444" if "YoY -" in compare_text else "#94a3b8"
+                            result_col.markdown(
+                                f'<div style="border:1px solid #343a46;border-top:3px solid #38bdf8;border-radius:10px;padding:10px 12px;min-height:88px;">'
+                                f'<div style="font-size:11px;color:#aeb6c2;">{metric_name}</div>'
+                                f'<div style="font-size:clamp(17px,2vw,22px);font-weight:800;color:#f8fafc;margin:4px 0;">{display_value}</div>'
+                                f'<div style="font-size:11px;color:{yoy_color};">{compare_text}</div></div>',
+                                unsafe_allow_html=True,
+                            )
+                    if result_comments:
+                        comments_text = "; ".join(
+                            f"{name} {'grew' if yoy > 0 else 'declined' if yoy < 0 else 'was flat'} {abs(yoy):.1f}% year-on-year"
+                            for name, yoy, _ in result_comments
+                        )
+                        comment_color = "#22c55e" if all(yoy >= 0 for _, yoy, _ in result_comments) else "#ef4444" if all(yoy < 0 for _, yoy, _ in result_comments) else "#f59e0b"
+                        st.markdown(
+                            f'<div style="margin-top:8px;border-radius:9px;padding:10px 12px;background:rgba(15,23,42,.48);border:1px solid #343a46;">'
+                            f'<span style="font-size:11px;letter-spacing:.5px;color:#aeb6c2;">RESULTS COMMENT</span><br>'
+                            f'<span style="font-size:13px;font-weight:700;color:{comment_color};">{comments_text}.</span>'
+                            f'<div style="font-size:10px;color:#94a3b8;margin-top:4px;">Based on Yahoo Finance quarterly figures when available; verify against the company’s official filing.</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.caption("Revenue and net income figures are shown when available; year-on-year comparison requires at least five quarterly observations.")
                 else:
-                    st.info("Quarterly results commentary is unavailable from the current public data source for this stock. Price/technical data above remains sourced from FYERS.")
+                    st.info("Recent quarterly results are unavailable from the current public data source. No fundamentals are inferred; technical data above remains sourced from FYERS.")
                 st.caption(
                     f"Price source: FYERS daily candles · Latest candle: {latest_stock['Date'].strftime('%d %b %Y')} · "
                     f"Financial source: Yahoo Finance when available · Pivot reference candle: {pd.to_datetime(pivot_bar['Date']).strftime('%d %b %Y')}."
