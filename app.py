@@ -2858,76 +2858,113 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                 trend_color = "#22c55e" if trend_label == "Bullish" else "#ef4444" if trend_label == "Bearish" else "#f59e0b"
                 change_color = "#22c55e" if day_change >= 0 else "#ef4444"
 
-                # Top stock banner with price, daily move and compact trend status.
+                # Infographic-style selected-stock brief inspired by the VBL reference.
+                # Every level is calculated from returned candles; no analyst quote or target is fabricated.
                 st.markdown(
-                    f'<div style="border:1px solid #343a46;border-radius:14px;padding:14px 16px;margin:4px 0 12px;'
-                    f'background:linear-gradient(110deg,rgba(30,41,59,.72),rgba(15,23,42,.25));">'
-                    f'<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;">'
-                    f'<div><div style="font-size:12px;color:#aeb6c2;">{selected_label}</div>'
-                    f'<div style="font-size:28px;font-weight:800;line-height:1.35;color:#f8fafc;">₹{close_price:,.2f}</div>'
-                    f'<div style="font-size:14px;font-weight:700;color:{change_color};">{day_change:+,.2f} ({day_change_pct:+.2f}%) vs previous returned candle</div></div>'
-                    f'<div style="border:1px solid {trend_color};border-radius:10px;padding:10px 14px;min-width:135px;">'
-                    f'<div style="font-size:11px;color:#aeb6c2;">TECHNICAL BIAS</div>'
-                    f'<div style="font-size:20px;font-weight:800;color:{trend_color};">{trend_label}</div>'
-                    f'<div style="font-size:12px;color:#cbd5e1;">RSI 14 · {stock_rsi:.1f}</div></div>'
-                    f'</div></div>',
+                    f'<div style="border:1px solid #344252;border-radius:16px;padding:16px 18px;margin:4px 0 14px;'
+                    f'background:linear-gradient(115deg,rgba(8,145,178,.18),rgba(15,23,42,.78) 48%,rgba(22,163,74,.10));">'
+                    f'<div style="font-size:12px;letter-spacing:1.2px;color:#67e8f9;font-weight:750;">SELECTED STOCK · TECHNICAL BRIEF</div>'
+                    f'<div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;margin-top:5px;">'
+                    f'<div><div style="font-size:clamp(22px,3vw,30px);font-weight:800;color:#f8fafc;">{selected_label}</div>'
+                    f'<div style="font-size:clamp(25px,3.5vw,34px);font-weight:850;color:{change_color};">₹{close_price:,.2f}'
+                    f'<span style="font-size:14px;margin-left:10px;">{day_change:+,.2f} ({day_change_pct:+.2f}%)</span></div>'
+                    f'<div style="font-size:12px;color:#aeb6c2;">Latest returned daily candle · {latest_stock["Date"].strftime("%d %b %Y")}</div></div>'
+                    f'<div style="border:1px solid {trend_color};border-radius:12px;padding:10px 14px;min-width:150px;background:rgba(15,23,42,.55);">'
+                    f'<div style="font-size:11px;color:#aeb6c2;letter-spacing:.6px;">TECHNICAL BIAS</div>'
+                    f'<div style="font-size:22px;font-weight:850;color:{trend_color};">{trend_label.upper()}</div>'
+                    f'<div style="font-size:12px;color:#cbd5e1;">RSI 14 · {stock_rsi:.1f}</div></div></div></div>',
                     unsafe_allow_html=True,
                 )
 
-                # One compact row of indicator values, keeping the section visually informative rather than card-heavy.
-                st.markdown("**Trend indicators**")
-                indicator_cols = st.columns(6, gap="small")
-                indicator_items = [
-                    ("EMA 5", ema5, "#60a5fa"), ("EMA 20", ema20, "#f59e0b"),
-                    ("EMA 50", ema50, "#a78bfa"), ("EMA 100", ema100, "#38bdf8"),
-                    ("RSI 14", stock_rsi, trend_color), ("ATR 14", atr14, "#94a3b8"),
-                ]
-                for col, (label, value, color) in zip(indicator_cols, indicator_items):
-                    col.markdown(
-                        f'<div style="border:1px solid #343a46;border-top:3px solid {color};border-radius:8px;padding:8px 9px;min-height:64px;">'
-                        f'<div style="font-size:11px;color:#aeb6c2;">{label}</div>'
-                        f'<div style="font-size:16px;font-weight:750;color:{color};">{value:,.2f}</div></div>',
-                        unsafe_allow_html=True,
-                    )
-
-                # Short performance windows and non-guaranteed ATR-based planning levels.
-                performance_cols = st.columns(3, gap="small")
-                for col, days, label in zip(performance_cols, [5, 20, 50], ["5-session return", "20-session return", "50-session return"]):
-                    if len(close_series) > days and close_series.iloc[-days-1] != 0:
-                        ret = (close_price / float(close_series.iloc[-days-1]) - 1) * 100
-                        ret_color = "#22c55e" if ret >= 0 else "#ef4444"
-                        col.markdown(
-                            f'<div style="border:1px solid #343a46;border-radius:8px;padding:8px 10px;">'
-                            f'<div style="font-size:11px;color:#aeb6c2;">{label}</div>'
-                            f'<div style="font-size:16px;font-weight:750;color:{ret_color};">{ret:+.2f}%</div></div>',
+                brief_left, brief_right = st.columns([1, 1], gap="medium")
+                with brief_left:
+                    st.markdown("#### Trade parameters · calculated levels")
+                    st.caption("Pivot and ATR references from returned daily candles — not a guaranteed trade call.")
+                    trade_cards = [
+                        ("PIVOT SUPPORT · S1", f"₹{support_1:,.2f}", "#22c55e", "First support"),
+                        ("EXTENDED SUPPORT · S2", f"₹{support_2:,.2f}", "#4ade80", "Lower support"),
+                        ("REFERENCE PRICE", f"₹{close_price:,.2f}", "#38bdf8", f"{day_change_pct:+.2f}% daily move"),
+                        ("PIVOT RESISTANCE · R1", f"₹{resistance_1:,.2f}", "#fb7185", "First resistance"),
+                        ("EXTENDED RESISTANCE · R2", f"₹{resistance_2:,.2f}", "#ef4444", "Upper resistance"),
+                    ]
+                    for row_start in range(0, len(trade_cards), 2):
+                        pair = trade_cards[row_start:row_start+2]
+                        card_cols = st.columns(len(pair), gap="small")
+                        for card_col, (label, value, color, note) in zip(card_cols, pair):
+                            card_col.markdown(
+                                f'<div style="height:100%;min-height:88px;border:1px solid #343a46;border-left:4px solid {color};'
+                                f'border-radius:10px;padding:10px 11px;background:rgba(15,23,42,.48);">'
+                                f'<div style="font-size:10px;letter-spacing:.35px;color:#aeb6c2;">{label}</div>'
+                                f'<div style="font-size:clamp(16px,2vw,21px);font-weight:800;color:{color};margin:5px 0;">{value}</div>'
+                                f'<div style="font-size:11px;color:#cbd5e1;">{note}</div></div>',
+                                unsafe_allow_html=True,
+                            )
+                    if pd.notna(atr14) and atr14 > 0:
+                        st.markdown(
+                            f'<div style="margin-top:9px;border:1px solid #344252;border-radius:10px;padding:10px 12px;">'
+                            f'<div style="font-size:11px;color:#aeb6c2;">ATR-BASED RISK REFERENCE</div>'
+                            f'<div style="display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:5px;">'
+                            f'<span style="color:#f8fafc;font-size:12px;">Illustrative stop: <b style="color:#fb7185;">₹{max(0, close_price-1.5*atr14):,.2f}</b></span>'
+                            f'<span style="color:#f8fafc;font-size:12px;">Illustrative target: <b style="color:#4ade80;">₹{close_price+2*atr14:,.2f}</b></span>'
+                            f'</div><div style="font-size:10px;color:#94a3b8;margin-top:4px;">Mechanical examples only; not personalised investment advice.</div></div>',
                             unsafe_allow_html=True,
                         )
-                    else:
-                        col.caption(f"{label}: insufficient candles")
-
-                st.markdown("**Key levels · previous completed daily candle**")
-                level_cols = st.columns(5, gap="small")
-                level_items = [
-                    ("S2", support_2, support_color), ("S1", support_1, "#4ade80"),
-                    ("Pivot", pivot, "#f59e0b"), ("R1", resistance_1, "#fb7185"),
-                    ("R2", resistance_2, resistance_color),
-                ]
-                for col, (label, value, color) in zip(level_cols, level_items):
-                    col.markdown(
-                        f'<div style="border:1px solid #343a46;border-top:3px solid {color};border-radius:8px;padding:8px 7px;text-align:center;">'
-                        f'<div style="font-size:12px;color:#aeb6c2;">{label}</div>'
-                        f'<div style="font-size:16px;font-weight:750;color:{color};">₹{value:,.2f}</div></div>',
+                with brief_right:
+                    st.markdown("#### Technical analysis snapshot")
+                    technical_score = 0
+                    technical_checks = []
+                    technical_checks.append(("Price vs EMA 20", close_price > ema20, f"Close ₹{close_price:,.2f} · EMA20 ₹{ema20:,.2f}"))
+                    technical_checks.append(("EMA 20 vs EMA 50", ema20 > ema50, f"EMA20 ₹{ema20:,.2f} · EMA50 ₹{ema50:,.2f}"))
+                    technical_checks.append(("RSI momentum", stock_rsi >= 50, f"RSI 14 · {stock_rsi:.1f}"))
+                    technical_checks.append(("EMA 5 short-term trend", ema5 > ema20, f"EMA5 ₹{ema5:,.2f} · EMA20 ₹{ema20:,.2f}"))
+                    technical_score = sum(1 if is_positive else 0 for _, is_positive, _ in technical_checks)
+                    consensus_label = "Strong bullish setup" if technical_score == 4 else "Bullish bias" if technical_score == 3 else "Mixed / neutral" if technical_score == 2 else "Bearish bias" if technical_score == 1 else "Strong bearish setup"
+                    consensus_color = "#22c55e" if technical_score >= 3 else "#f59e0b" if technical_score == 2 else "#ef4444"
+                    gauge_fig = go.Figure(go.Indicator(
+                        mode="gauge+number",
+                        value=technical_score * 25,
+                        number={"suffix": "/100", "font": {"size": 26, "color": consensus_color}},
+                        title={"text": "Technical confluence<br><span style='font-size:10px;color:#aeb6c2'>4 simple checks · not a forecast</span>", "font": {"size": 14}},
+                        gauge={
+                            "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 25, 50, 75, 100], "ticktext": ["0", "25", "50", "75", "100"], "tickfont": {"size": 9}},
+                            "bar": {"color": consensus_color, "thickness": .22},
+                            "bgcolor": "#11151d", "borderwidth": 0,
+                            "steps": [
+                                {"range": [0, 25], "color": "#7f1d1d"},
+                                {"range": [25, 50], "color": "#9a3412"},
+                                {"range": [50, 75], "color": "#854d0e"},
+                                {"range": [75, 100], "color": "#166534"},
+                            ],
+                        },
+                    ))
+                    gauge_fig.update_layout(template="plotly_dark", height=190, margin=dict(l=8,r=8,t=48,b=4), paper_bgcolor="rgba(0,0,0,0)")
+                    st.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo":False}, key="fyers_stock_technical_confluence")
+                    st.markdown(
+                        f'<div style="text-align:center;font-size:17px;font-weight:800;color:{consensus_color};margin-top:-8px;">{consensus_label}</div>',
                         unsafe_allow_html=True,
                     )
-                if pd.notna(atr14) and atr14 > 0:
-                    plan_cols = st.columns(3, gap="small")
-                    plan_cols[0].metric("Reference entry zone", f"₹{max(0, close_price - 0.5*atr14):,.2f}–₹{close_price + 0.5*atr14:,.2f}")
-                    plan_cols[1].metric("ATR reference stop", f"₹{max(0, close_price - 1.5*atr14):,.2f}")
-                    plan_cols[2].metric("ATR reference target", f"₹{close_price + 2*atr14:,.2f}")
-                    st.caption("Entry/stop/target are mechanical ATR illustrations, not a recommendation or guaranteed levels. Short setups would use the inverse direction.")
+                    for check_name, is_positive, check_detail in technical_checks:
+                        check_color = "#22c55e" if is_positive else "#ef4444"
+                        check_icon = "✓" if is_positive else "×"
+                        st.markdown(
+                            f'<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid rgba(148,163,184,.14);">'
+                            f'<span style="font-size:16px;font-weight:800;color:{check_color};">{check_icon}</span>'
+                            f'<div><div style="font-size:12px;font-weight:700;color:#e2e8f0;">{check_name}</div>'
+                            f'<div style="font-size:11px;color:#aeb6c2;">{check_detail}</div></div></div>',
+                            unsafe_allow_html=True,
+                        )
+                    if len(close_series) > 20 and close_series.iloc[-21] != 0:
+                        ret20 = (close_price / float(close_series.iloc[-21]) - 1) * 100
+                        ret20_color = "#22c55e" if ret20 >= 0 else "#ef4444"
+                        st.markdown(
+                            f'<div style="margin-top:10px;border:1px solid #343a46;border-radius:10px;padding:10px 12px;">'
+                            f'<div style="font-size:11px;color:#aeb6c2;">20-SESSION MOMENTUM</div>'
+                            f'<div style="font-size:20px;font-weight:800;color:{ret20_color};">{ret20:+.2f}%</div>'
+                            f'<div style="font-size:11px;color:#aeb6c2;">Based on returned daily closes</div></div>',
+                            unsafe_allow_html=True,
+                        )
 
-                # Selected-stock price chart with EMA20/EMA50 as requested in the prior design brief.
-                st.markdown("**Price trend**")
+                st.markdown("#### Price trend · recent momentum")
                 stock_chart = go.Figure()
                 stock_chart.add_trace(go.Candlestick(
                     x=stock_candles["Date"], open=stock_candles["Open"], high=stock_candles["High"],
@@ -2935,10 +2972,14 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                     increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
                     increasing_fillcolor="#22c55e", decreasing_fillcolor="#ef4444",
                 ))
-                stock_chart.add_trace(go.Scatter(x=stock_candles["Date"], y=ema_values[20], name="EMA 20", line={"color":"#f59e0b","width":1.5}))
-                stock_chart.add_trace(go.Scatter(x=stock_candles["Date"], y=ema_values[50], name="EMA 50", line={"color":"#a78bfa","width":1.5}))
+                for span, color in [(5, "#22d3ee"), (20, "#f59e0b"), (50, "#a78bfa"), (100, "#fb7185")]:
+                    if len(close_series) >= span:
+                        stock_chart.add_trace(go.Scatter(
+                            x=stock_candles["Date"], y=ema_values[span], name=f"EMA {span}",
+                            line={"color":color,"width":1.4},
+                        ))
                 stock_chart.update_layout(
-                    template="plotly_dark", height=360, xaxis_rangeslider_visible=False,
+                    template="plotly_dark", height=330, xaxis_rangeslider_visible=False,
                     margin=dict(l=8,r=10,t=28,b=8), hovermode="x unified",
                     yaxis_title="Price (₹)", legend=dict(orientation="h", y=1.02, x=0),
                 )
