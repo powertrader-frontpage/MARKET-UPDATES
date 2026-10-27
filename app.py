@@ -1199,6 +1199,22 @@ else:
 # Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
 st.markdown("### Leading sectors vs NIFTY 50")
 st.caption("Top 3 sectors ranked by relative performance versus NIFTY 50 over the latest 5 trading sessions. Cards are ranked by weekly outperformance; 1-month relative performance is shown for confirmation.")
+# Representative liquid stocks by sector; rank only when source history is available.
+SECTOR_LEADING_STOCKS = {
+    "Pharma": [("SUN Pharma", "SUNPHARMA.NS"), ("Dr Reddy's", "DRREDDY.NS"), ("Cipla", "CIPLA.NS"), ("Divi's Labs", "DIVISLAB.NS"), ("Lupin", "LUPIN.NS"), ("Torrent Pharma", "TORNTPHARM.NS")],
+    "IT": [("TCS", "TCS.NS"), ("Infosys", "INFY.NS"), ("HCLTech", "HCLTECH.NS"), ("Wipro", "WIPRO.NS"), ("Tech Mahindra", "TECHM.NS"), ("LTIMindtree", "LTIM.NS")],
+    "Infrastructure": [("Larsen & Toubro", "LT.NS"), ("Bharat Electronics", "BEL.NS"), ("Adani Ports", "ADANIPORTS.NS"), ("Siemens", "SIEMENS.NS"), ("Cummins India", "CUMMINSIND.NS"), ("ABB India", "ABB.NS")],
+    "Auto": [("M&M", "M&M.NS"), ("Maruti Suzuki", "MARUTI.NS"), ("Bajaj Auto", "BAJAJ-AUTO.NS"), ("Eicher Motors", "EICHERMOT.NS"), ("Hero MotoCorp", "HEROMOTOCO.NS"), ("TVS Motor", "TVSMOTOR.NS")],
+    "Metal": [("Tata Steel", "TATASTEEL.NS"), ("Hindalco", "HINDALCO.NS"), ("JSW Steel", "JSWSTEEL.NS"), ("Coal India", "COALINDIA.NS"), ("Vedanta", "VEDL.NS"), ("Jindal Steel", "JINDALSTEL.NS")],
+    "Energy": [("Reliance Industries", "RELIANCE.NS"), ("ONGC", "ONGC.NS"), ("NTPC", "NTPC.NS"), ("Power Grid", "POWERGRID.NS"), ("Coal India", "COALINDIA.NS"), ("Adani Green", "ADANIGREEN.NS")],
+    "FMCG": [("ITC", "ITC.NS"), ("Hindustan Unilever", "HINDUNILVR.NS"), ("Nestle India", "NESTLEIND.NS"), ("Britannia", "BRITANNIA.NS"), ("Tata Consumer", "TATACONSUM.NS"), ("Varun Beverages", "VBL.NS")],
+    "Realty": [("DLF", "DLF.NS"), ("Godrej Properties", "GODREJPROP.NS"), ("Prestige Estates", "PRESTIGE.NS"), ("Phoenix Mills", "PHOENIXLTD.NS"), ("Oberoi Realty", "OBEROIRLTY.NS"), ("Lodha", "LODHA.NS")],
+    "Financial Services": [("HDFC Bank", "HDFCBANK.NS"), ("ICICI Bank", "ICICIBANK.NS"), ("Bajaj Finance", "BAJFINANCE.NS"), ("Shriram Finance", "SHRIRAMFIN.NS"), ("Cholamandalam Finance", "CHOLAFIN.NS"), ("SBI", "SBIN.NS")],
+    "PSU Bank": [("SBI", "SBIN.NS"), ("Bank of Baroda", "BANKBARODA.NS"), ("Canara Bank", "CANBK.NS"), ("Punjab National Bank", "PNB.NS"), ("Union Bank", "UNIONBANK.NS"), ("Indian Bank", "INDIANB.NS")],
+    "Media": [("Sun TV", "SUNTV.NS"), ("Zee Entertainment", "ZEEL.NS"), ("PVR INOX", "PVRINOX.NS"), ("Network18", "NETWORK18.NS"), ("Nazara Technologies", "NAZARA.NS")],
+    "Consumption": [("Trent", "TRENT.NS"), ("Titan", "TITAN.NS"), ("Eternal", "ETERNAL.NS"), ("Avenue Supermarts", "DMART.NS"), ("Bajaj Consumer", "BAJAJCON.NS"), ("Indian Hotels", "INDHOTEL.NS")],
+}
+
 leading_sector_rows = []
 with st.spinner("Checking weekly sector momentum…"):
     weekly_nifty_df, weekly_nifty_err = get_history("^NSEI", "3mo", "1d")
@@ -1254,6 +1270,31 @@ if leading_sector_rows:
                 f'<div style="font-size:12px;color:#a7f3d0;">1M relative strength: {month_confirmation}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
+
+            stock_universe = SECTOR_LEADING_STOCKS.get(leader["Sector"], [])
+            stock_leaders = []
+            with st.spinner(f'Ranking {leader["Sector"]} stocks…'):
+                for stock_name, stock_ticker in stock_universe:
+                    stock_df, stock_err = get_history(stock_ticker, "3mo", "1d")
+                    if stock_df.empty:
+                        continue
+                    stock_close = pd.to_numeric(stock_df["Close"], errors="coerce").dropna()
+                    if len(stock_close) >= 6 and stock_close.iloc[-6] != 0:
+                        stock_return = (float(stock_close.iloc[-1]) / float(stock_close.iloc[-6]) - 1) * 100
+                        stock_leaders.append({"Stock": stock_name, "Ticker": stock_ticker, "1W return (%)": stock_return})
+            leader_col.markdown("**Top 2 stocks · latest 5 sessions**")
+            if stock_leaders:
+                stock_leaders = sorted(stock_leaders, key=lambda row: row["1W return (%)"], reverse=True)[:2]
+                for rank, stock in enumerate(stock_leaders, start=1):
+                    stock_color = "#22c55e" if stock["1W return (%)"] >= 0 else "#ef4444"
+                    leader_col.markdown(
+                        f'<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #343a46;">'
+                        f'<span style="font-size:13px;color:#d1d5db;">{rank}. {stock["Stock"]}</span>'
+                        f'<span style="font-size:13px;font-weight:700;color:{stock_color};">{stock["1W return (%)"]:+.2f}%</span></div>',
+                        unsafe_allow_html=True,
+                    )
+            else:
+                leader_col.caption("Stock-level data unavailable; no ranking shown.")
             )
 else:
     st.info("Weekly sector momentum is temporarily unavailable because usable 3-month daily history was not returned.")
