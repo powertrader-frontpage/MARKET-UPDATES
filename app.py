@@ -2867,7 +2867,7 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
         ]
         if not matching_labels:
             st.warning("No NSE stock matched that search. Try a shorter company name or symbol.")
-            st.stop()
+            matching_labels = list(symbol_labels.keys())
         previous_selection = st.session_state.get("fyers_quick_stock_symbol")
         selected_index = matching_labels.index(previous_selection) if previous_selection in matching_labels else 0
         selected_label = st.selectbox(
