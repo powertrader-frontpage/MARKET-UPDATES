@@ -68,7 +68,7 @@ SECTOR_TICKERS = {
 }
 
 # Upstox read-only OAuth integration. Secrets stay in Streamlit Cloud Secrets.
-def upstox_credentials():
+def upstox_oauth_credentials():
     try:
         values = (
             str(st.secrets["UPSTOX_API_KEY"]).strip(),
@@ -144,7 +144,7 @@ with st.sidebar:
 
     st.divider()
     st.markdown("**Upstox API · read-only connection**")
-    upstox_config = upstox_credentials()
+    upstox_config = upstox_oauth_credentials()
     if not upstox_config:
         st.caption("Add UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI in Streamlit Secrets.")
     else:
@@ -528,7 +528,7 @@ with st.sidebar:
 
 # Handle Upstox OAuth callback. The redirect URI must match the registered URL exactly.
 if "code" in st.query_params and "state" in st.query_params:
-    upstox_config = upstox_credentials()
+    upstox_config = upstox_oauth_credentials()
     returned_state = st.query_params.get("state", "")
     expected_state = st.session_state.get("upstox_oauth_state", "")
     auth_code = st.query_params.get("code", "")
