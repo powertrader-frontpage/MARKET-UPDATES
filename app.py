@@ -2956,95 +2956,89 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                     unsafe_allow_html=True,
                 )
 
-                brief_left, brief_right = st.columns([1, 1], gap="medium")
-                with brief_left:
-                    st.markdown("#### Trade parameters · calculated levels")
-                    st.caption("Pivot and ATR references from returned daily candles — not a guaranteed trade call.")
-                    trade_cards = [
-                        ("PIVOT SUPPORT · S1", f"₹{support_1:,.2f}", "#22c55e", "First support"),
-                        ("EXTENDED SUPPORT · S2", f"₹{support_2:,.2f}", "#4ade80", "Lower support"),
-                        ("REFERENCE PRICE", f"₹{close_price:,.2f}", "#38bdf8", f"{day_change_pct:+.2f}% daily move"),
-                        ("PIVOT RESISTANCE · R1", f"₹{resistance_1:,.2f}", "#fb7185", "First resistance"),
-                        ("EXTENDED RESISTANCE · R2", f"₹{resistance_2:,.2f}", "#ef4444", "Upper resistance"),
-                    ]
-                    for row_start in range(0, len(trade_cards), 2):
-                        pair = trade_cards[row_start:row_start+2]
-                        card_cols = st.columns(len(pair), gap="small")
-                        for card_col, (label, value, color, note) in zip(card_cols, pair):
-                            card_col.markdown(
-                                f'<div style="height:100%;min-height:88px;border:1px solid #343a46;border-left:4px solid {color};'
-                                f'border-radius:10px;padding:10px 11px;background:rgba(15,23,42,.48);">'
-                                f'<div style="font-size:10px;letter-spacing:.35px;color:#aeb6c2;">{label}</div>'
-                                f'<div style="font-size:clamp(16px,2vw,21px);font-weight:800;color:{color};margin:5px 0;">{value}</div>'
-                                f'<div style="font-size:11px;color:#cbd5e1;">{note}</div></div>',
-                                unsafe_allow_html=True,
-                            )
+                # Compact trading levels + fundamental valuation snapshot to reduce vertical scrolling.
+                st.markdown("#### Trade levels · compact view")
+                level_rows = [
+                    {"Level": "Support S1", "Price": f"₹{support_1:,.2f}"},
+                    {"Level": "Support S2", "Price": f"₹{support_2:,.2f}"},
+                    {"Level": "Reference", "Price": f"₹{close_price:,.2f}"},
+                    {"Level": "Resistance R1", "Price": f"₹{resistance_1:,.2f}"},
+                    {"Level": "Resistance R2", "Price": f"₹{resistance_2:,.2f}"},
+                ]
+                level_col, fundamentals_col = st.columns([1, 1], gap="medium")
+                with level_col:
+                    st.dataframe(pd.DataFrame(level_rows), use_container_width=True, hide_index=True, height=220)
                     if pd.notna(atr14) and atr14 > 0:
-                        st.markdown(
-                            f'<div style="margin-top:9px;border:1px solid #344252;border-radius:10px;padding:10px 12px;">'
-                            f'<div style="font-size:11px;color:#aeb6c2;">ATR-BASED RISK REFERENCE</div>'
-                            f'<div style="display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:5px;">'
-                            f'<span style="color:#f8fafc;font-size:12px;">Illustrative stop: <b style="color:#fb7185;">₹{max(0, close_price-1.5*atr14):,.2f}</b></span>'
-                            f'<span style="color:#f8fafc;font-size:12px;">Illustrative target: <b style="color:#4ade80;">₹{close_price+2*atr14:,.2f}</b></span>'
-                            f'</div><div style="font-size:10px;color:#94a3b8;margin-top:4px;">Mechanical examples only; not personalised investment advice.</div></div>',
-                            unsafe_allow_html=True,
-                        )
-                with brief_right:
-                    st.markdown("#### Technical analysis snapshot")
-                    technical_score = 0
-                    technical_checks = []
-                    technical_checks.append(("Price vs EMA 20", close_price > ema20, f"Close ₹{close_price:,.2f} · EMA20 ₹{ema20:,.2f}"))
-                    technical_checks.append(("EMA 20 vs EMA 50", ema20 > ema50, f"EMA20 ₹{ema20:,.2f} · EMA50 ₹{ema50:,.2f}"))
-                    technical_checks.append(("RSI momentum", stock_rsi >= 50, f"RSI 14 · {stock_rsi:.1f}"))
-                    technical_checks.append(("EMA 5 short-term trend", ema5 > ema20, f"EMA5 ₹{ema5:,.2f} · EMA20 ₹{ema20:,.2f}"))
-                    technical_score = sum(1 if is_positive else 0 for _, is_positive, _ in technical_checks)
-                    consensus_label = "Strong bullish setup" if technical_score == 4 else "Bullish bias" if technical_score == 3 else "Mixed / neutral" if technical_score == 2 else "Bearish bias" if technical_score == 1 else "Strong bearish setup"
-                    consensus_color = "#22c55e" if technical_score >= 3 else "#f59e0b" if technical_score == 2 else "#ef4444"
-                    gauge_fig = go.Figure(go.Indicator(
-                        mode="gauge+number",
-                        value=technical_score * 25,
-                        number={"suffix": "/100", "font": {"size": 26, "color": consensus_color}},
-                        title={"text": f"Technical confluence<br><span style='font-size:10px;color:#aeb6c2'>{technical_score}/4 bullish checks · not a forecast</span>", "font": {"size": 14}},
-                        gauge={
-                            "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 25, 50, 75, 100], "ticktext": ["0", "25", "50", "75", "100"], "tickfont": {"size": 9}},
-                            "bar": {"color": consensus_color, "thickness": .22},
-                            "bgcolor": "#11151d", "borderwidth": 0,
-                            "steps": [
-                                {"range": [0, 25], "color": "#7f1d1d"},
-                                {"range": [25, 50], "color": "#9a3412"},
-                                {"range": [50, 75], "color": "#854d0e"},
-                                {"range": [75, 100], "color": "#166534"},
-                            ],
-                        },
-                    ))
-                    gauge_fig.update_layout(template="plotly_dark", height=190, margin=dict(l=8,r=8,t=48,b=4), paper_bgcolor="rgba(0,0,0,0)")
-                    st.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo":False}, key="fyers_stock_technical_confluence")
-                    st.markdown(
-                        f'<div style="text-align:center;font-size:17px;font-weight:800;color:{consensus_color};margin-top:-8px;">{consensus_label}</div>',
-                        unsafe_allow_html=True,
-                    )
-                    st.caption(f"Score: {technical_score}/4 bullish checks. A score of 0 means all four checks currently lean bearish; it does not mean the data is missing.")
-                    for check_name, is_positive, check_detail in technical_checks:
-                        check_color = "#22c55e" if is_positive else "#ef4444"
-                        check_icon = "✓" if is_positive else "×"
-                        st.markdown(
-                            f'<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid rgba(148,163,184,.14);">'
-                            f'<span style="font-size:16px;font-weight:800;color:{check_color};">{check_icon}</span>'
-                            f'<div><div style="font-size:12px;font-weight:700;color:#e2e8f0;">{check_name}</div>'
-                            f'<div style="font-size:11px;color:#aeb6c2;">{check_detail}</div></div></div>',
-                            unsafe_allow_html=True,
-                        )
-                    if len(close_series) > 20 and close_series.iloc[-21] != 0:
-                        ret20 = (close_price / float(close_series.iloc[-21]) - 1) * 100
-                        ret20_color = "#22c55e" if ret20 >= 0 else "#ef4444"
-                        st.markdown(
-                            f'<div style="margin-top:10px;border:1px solid #343a46;border-radius:10px;padding:10px 12px;">'
-                            f'<div style="font-size:11px;color:#aeb6c2;">20-SESSION MOMENTUM</div>'
-                            f'<div style="font-size:20px;font-weight:800;color:{ret20_color};">{ret20:+.2f}%</div>'
-                            f'<div style="font-size:11px;color:#aeb6c2;">Based on returned daily closes</div></div>',
-                            unsafe_allow_html=True,
-                        )
+                        st.caption(f"ATR risk reference · Illustrative stop ₹{max(0, close_price-1.5*atr14):,.2f} · target ₹{close_price+2*atr14:,.2f}. Mechanical levels only.")
+                with fundamentals_col:
+                    st.markdown("#### Valuation & quality")
+                    yahoo_symbol = selected_symbol.replace("NSE:", "").replace("-EQ", "") + ".NS"
+                    fundamentals = {}
+                    try:
+                        fundamentals = yf.Ticker(yahoo_symbol).info or {}
+                    except Exception:
+                        fundamentals = {}
 
+                    def _fundamental_value(value, suffix="", multiplier=1.0):
+                        try:
+                            numeric = float(value) * multiplier
+                            if not np.isfinite(numeric):
+                                return "—"
+                            return f"{numeric:,.2f}{suffix}"
+                        except (TypeError, ValueError):
+                            return "—"
+
+                    pe_value = fundamentals.get("trailingPE")
+                    industry_pe_value = fundamentals.get("industryPE")
+                    debt_equity_value = fundamentals.get("debtToEquity")
+                    peg_value = fundamentals.get("pegRatio") or fundamentals.get("trailingPegRatio")
+                    roe_value = fundamentals.get("returnOnEquity")
+                    roce_value = fundamentals.get("returnOnCapitalEmployed")
+
+                    # Some Yahoo Finance snapshots omit ROCE; calculate it only when the required annual statement rows exist.
+                    if roce_value is None:
+                        try:
+                            company_ticker = yf.Ticker(yahoo_symbol)
+                            annual_income = company_ticker.financials
+                            annual_balance = company_ticker.balance_sheet
+                            def _statement_value(frame, candidates):
+                                if frame is None or frame.empty or len(frame.columns) == 0:
+                                    return None
+                                normalized = {re.sub(r"[^a-z0-9]", "", str(idx).lower()): idx for idx in frame.index}
+                                row_name = next((normalized.get(re.sub(r"[^a-z0-9]", "", candidate.lower())) for candidate in candidates if normalized.get(re.sub(r"[^a-z0-9]", "", candidate.lower())) is not None), None)
+                                if row_name is None:
+                                    return None
+                                values = pd.to_numeric(frame.loc[row_name], errors="coerce").dropna()
+                                return float(values.iloc[0]) if not values.empty else None
+                            operating_income = _statement_value(annual_income, ["Operating Income", "EBIT"])
+                            total_assets = _statement_value(annual_balance, ["Total Assets"])
+                            current_liabilities = _statement_value(annual_balance, ["Current Liabilities", "Total Current Liabilities"])
+                            if operating_income is not None and total_assets is not None and current_liabilities is not None:
+                                capital_employed = total_assets - current_liabilities
+                                if capital_employed > 0:
+                                    roce_value = operating_income / capital_employed
+                        except Exception:
+                            pass
+
+                    fundamental_metrics = [
+                        ("P/E (TTM)", _fundamental_value(pe_value)),
+                        ("Industry P/E", _fundamental_value(industry_pe_value)),
+                        ("D/E", _fundamental_value(debt_equity_value, "%")),
+                        ("PEG", _fundamental_value(peg_value)),
+                        ("ROE", _fundamental_value(roe_value, "%", 100)),
+                        ("ROCE", _fundamental_value(roce_value, "%", 100)),
+                    ]
+                    metric_html = '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;">'
+                    for metric_name, metric_value in fundamental_metrics:
+                        metric_html += (
+                            '<div style="border:1px solid #343a46;border-radius:9px;padding:9px 10px;background:rgba(15,23,42,.48);">'
+                            f'<div style="font-size:10px;color:#aeb6c2;letter-spacing:.3px;">{metric_name}</div>'
+                            f'<div style="font-size:17px;font-weight:750;color:#f8fafc;margin-top:3px;">{metric_value}</div>'
+                            '</div>'
+                        )
+                    metric_html += '</div>'
+                    st.markdown(metric_html, unsafe_allow_html=True)
+                    st.caption("Fundamentals from Yahoo Finance when available. — means the source did not return a value; industry P/E is not estimated.")
                 st.markdown("#### Price trend · recent momentum")
                 stock_chart = go.Figure()
                 stock_chart.add_trace(go.Candlestick(
