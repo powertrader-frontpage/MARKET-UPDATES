@@ -2786,11 +2786,11 @@ with advanced_tabs[5]:
     st.write("- Calculations are only as sound as the dates, adjustments, universe membership and source rows supplied.")
 
 
-# Compact selected-stock intelligence panel (replaces the large FYERS chart workspace).
+# Selected-stock intelligence workspace: price action, technical levels and recent results.
 if "fyers_access_token" in st.session_state and fyers_credentials():
     st.divider()
-    st.subheader("Selected Stock · Quick Levels")
-    st.caption("Choose an NSE stock to view its latest available daily data, trend, and compact support/resistance levels. Levels are calculated from the previous completed daily candle.")
+    st.subheader("Selected Stock · Intelligence")
+    st.caption("Choose any NSE stock for a compact trading overview. Technical levels are calculated from returned FYERS daily candles; recent financial results are fetched separately when Yahoo Finance has them.")
     symbols_list, symbols_error = fyers_nse_equity_symbols()
     if symbols_error:
         st.warning(symbols_error)
@@ -2805,75 +2805,208 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
             key="fyers_quick_stock_symbol",
         )
         selected_symbol = symbol_labels[selected_label]
-        # Daily history provides consistent support/resistance calculations across symbols.
         with st.spinner(f"Loading daily data for {selected_symbol}…"):
             stock_candles, stock_error = fyers_history(
                 fyers_credentials()[0],
                 st.session_state["fyers_access_token"],
                 selected_symbol,
                 "1D",
-                120,
+                180,
             )
         if stock_error or stock_candles.empty:
             st.info(f"Stock data unavailable: {stock_error or 'No daily candles returned.'}")
         else:
             stock_candles = stock_candles.copy()
             stock_candles["Date"] = pd.to_datetime(stock_candles["Date"], errors="coerce")
-            stock_candles = stock_candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
+            stock_candles = stock_candles.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date").drop_duplicates(subset=["Date"], keep="last")
             if len(stock_candles) < 2:
-                st.info("At least two completed daily candles are needed to calculate support and resistance.")
+                st.info("At least two daily candles are needed to calculate this stock overview.")
             else:
+                close_series = stock_candles["Close"].astype(float)
                 latest_stock = stock_candles.iloc[-1]
                 previous_stock = stock_candles.iloc[-2]
                 close_price = float(latest_stock["Close"])
                 previous_close = float(previous_stock["Close"])
                 day_change = close_price - previous_close
                 day_change_pct = (day_change / previous_close * 100) if previous_close else np.nan
-
-                # Classic floor pivots based on the previous completed daily candle.
-                prev_high = float(previous_stock["High"])
-                prev_low = float(previous_stock["Low"])
-                prev_close = float(previous_stock["Close"])
-                pivot = (prev_high + prev_low + prev_close) / 3
-                resistance_1 = 2 * pivot - prev_low
-                support_1 = 2 * pivot - prev_high
-                resistance_2 = pivot + (prev_high - prev_low)
-                support_2 = pivot - (prev_high - prev_low)
-
-                close_series = stock_candles["Close"].astype(float)
-                ema20 = close_series.ewm(span=20, adjust=False).mean().iloc[-1]
-                ema50 = close_series.ewm(span=50, adjust=False).mean().iloc[-1]
+                ema_values = {span: close_series.ewm(span=span, adjust=False).mean() for span in [5, 20, 50, 100]}
+                ema5, ema20, ema50, ema100 = [float(ema_values[span].iloc[-1]) for span in [5, 20, 50, 100]]
                 delta = close_series.diff()
                 gains = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
                 losses = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
                 rs = gains / losses.replace(0, np.nan)
-                stock_rsi = (100 - 100 / (1 + rs)).iloc[-1]
-                if pd.isna(stock_rsi):
-                    stock_rsi = 50.0
-                trend_label = "Bullish" if close_price > ema20 > ema50 else "Bearish" if close_price < ema20 < ema50 else "Mixed"
+                rsi_series = 100 - 100 / (1 + rs)
+                stock_rsi = float(rsi_series.iloc[-1]) if pd.notna(rsi_series.iloc[-1]) else 50.0
+                prev_close_series = close_series.shift(1)
+                true_range = pd.concat([
+                    stock_candles["High"].astype(float) - stock_candles["Low"].astype(float),
+                    (stock_candles["High"].astype(float) - prev_close_series).abs(),
+                    (stock_candles["Low"].astype(float) - prev_close_series).abs(),
+                ], axis=1).max(axis=1)
+                atr14 = float(true_range.ewm(alpha=1/14, min_periods=14, adjust=False).mean().iloc[-1]) if len(stock_candles) >= 14 else float(true_range.mean())
+                trend_label = "Bullish" if close_price > ema20 > ema50 and ema20 > ema20 * 0 + ema50 else "Bearish" if close_price < ema20 < ema50 else "Mixed"
+                # Use the latest bar only if it is from an earlier session; during today's session use the prior completed candle for pivots.
+                today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+                latest_date = pd.to_datetime(latest_stock["Date"], errors="coerce")
+                pivot_bar = stock_candles.iloc[-2] if pd.notna(latest_date) and latest_date.date() == today_ist else latest_stock
+                prev_high, prev_low, prev_close = float(pivot_bar["High"]), float(pivot_bar["Low"]), float(pivot_bar["Close"])
+                pivot = (prev_high + prev_low + prev_close) / 3
+                resistance_1, support_1 = 2 * pivot - prev_low, 2 * pivot - prev_high
+                resistance_2, support_2 = pivot + (prev_high - prev_low), pivot - (prev_high - prev_low)
+                support_color = "#22c55e"
+                resistance_color = "#ef4444"
                 trend_color = "#22c55e" if trend_label == "Bullish" else "#ef4444" if trend_label == "Bearish" else "#f59e0b"
                 change_color = "#22c55e" if day_change >= 0 else "#ef4444"
-                levels = [
-                    ("Last close", f"₹{close_price:,.2f}", change_color, f"{day_change:+,.2f} ({day_change_pct:+.2f}%)" if pd.notna(day_change_pct) else "Change unavailable"),
-                    ("Support 1", f"₹{support_1:,.2f}", "#22c55e", "Pivot support"),
-                    ("Support 2", f"₹{support_2:,.2f}", "#22c55e", "Extended support"),
-                    ("Resistance 1", f"₹{resistance_1:,.2f}", "#ef4444", "Pivot resistance"),
-                    ("Resistance 2", f"₹{resistance_2:,.2f}", "#ef4444", "Extended resistance"),
-                    ("Trend · RSI 14", f"{trend_label} · {stock_rsi:.1f}", trend_color, f"EMA20 ₹{ema20:,.2f} · EMA50 ₹{ema50:,.2f}"),
+
+                # Top stock banner with price, daily move and compact trend status.
+                st.markdown(
+                    f'<div style="border:1px solid #343a46;border-radius:14px;padding:14px 16px;margin:4px 0 12px;'
+                    f'background:linear-gradient(110deg,rgba(30,41,59,.72),rgba(15,23,42,.25));">'
+                    f'<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;">'
+                    f'<div><div style="font-size:12px;color:#aeb6c2;">{selected_label}</div>'
+                    f'<div style="font-size:28px;font-weight:800;line-height:1.35;color:#f8fafc;">₹{close_price:,.2f}</div>'
+                    f'<div style="font-size:14px;font-weight:700;color:{change_color};">{day_change:+,.2f} ({day_change_pct:+.2f}%) vs previous returned candle</div></div>'
+                    f'<div style="border:1px solid {trend_color};border-radius:10px;padding:10px 14px;min-width:135px;">'
+                    f'<div style="font-size:11px;color:#aeb6c2;">TECHNICAL BIAS</div>'
+                    f'<div style="font-size:20px;font-weight:800;color:{trend_color};">{trend_label}</div>'
+                    f'<div style="font-size:12px;color:#cbd5e1;">RSI 14 · {stock_rsi:.1f}</div></div>'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
+
+                # One compact row of indicator values, keeping the section visually informative rather than card-heavy.
+                st.markdown("**Trend indicators**")
+                indicator_cols = st.columns(6, gap="small")
+                indicator_items = [
+                    ("EMA 5", ema5, "#60a5fa"), ("EMA 20", ema20, "#f59e0b"),
+                    ("EMA 50", ema50, "#a78bfa"), ("EMA 100", ema100, "#38bdf8"),
+                    ("RSI 14", stock_rsi, trend_color), ("ATR 14", atr14, "#94a3b8"),
                 ]
-                card_cols = st.columns(3, gap="small")
-                for idx, (label, value, accent, note) in enumerate(levels):
-                    with card_cols[idx % 3]:
-                        st.markdown(
-                            f'<div style="border:1px solid #343a46;border-left:4px solid {accent};border-radius:10px;padding:9px 11px;margin-bottom:8px;min-height:78px;">'
-                            f'<div style="font-size:12px;color:#aeb6c2;margin-bottom:5px;">{label}</div>'
-                            f'<div style="font-size:18px;font-weight:700;color:{accent};line-height:1.25;">{value}</div>'
-                            f'<div style="font-size:11px;color:#aeb6c2;margin-top:4px;">{note}</div></div>',
+                for col, (label, value, color) in zip(indicator_cols, indicator_items):
+                    col.markdown(
+                        f'<div style="border:1px solid #343a46;border-top:3px solid {color};border-radius:8px;padding:8px 9px;min-height:64px;">'
+                        f'<div style="font-size:11px;color:#aeb6c2;">{label}</div>'
+                        f'<div style="font-size:16px;font-weight:750;color:{color};">{value:,.2f}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+
+                # Short performance windows and non-guaranteed ATR-based planning levels.
+                performance_cols = st.columns(3, gap="small")
+                for col, days, label in zip(performance_cols, [5, 20, 50], ["5-session return", "20-session return", "50-session return"]):
+                    if len(close_series) > days and close_series.iloc[-days-1] != 0:
+                        ret = (close_price / float(close_series.iloc[-days-1]) - 1) * 100
+                        ret_color = "#22c55e" if ret >= 0 else "#ef4444"
+                        col.markdown(
+                            f'<div style="border:1px solid #343a46;border-radius:8px;padding:8px 10px;">'
+                            f'<div style="font-size:11px;color:#aeb6c2;">{label}</div>'
+                            f'<div style="font-size:16px;font-weight:750;color:{ret_color};">{ret:+.2f}%</div></div>',
                             unsafe_allow_html=True,
                         )
+                    else:
+                        col.caption(f"{label}: insufficient candles")
+
+                st.markdown("**Key levels · previous completed daily candle**")
+                level_cols = st.columns(5, gap="small")
+                level_items = [
+                    ("S2", support_2, support_color), ("S1", support_1, "#4ade80"),
+                    ("Pivot", pivot, "#f59e0b"), ("R1", resistance_1, "#fb7185"),
+                    ("R2", resistance_2, resistance_color),
+                ]
+                for col, (label, value, color) in zip(level_cols, level_items):
+                    col.markdown(
+                        f'<div style="border:1px solid #343a46;border-top:3px solid {color};border-radius:8px;padding:8px 7px;text-align:center;">'
+                        f'<div style="font-size:12px;color:#aeb6c2;">{label}</div>'
+                        f'<div style="font-size:16px;font-weight:750;color:{color};">₹{value:,.2f}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+                if pd.notna(atr14) and atr14 > 0:
+                    plan_cols = st.columns(3, gap="small")
+                    plan_cols[0].metric("Reference entry zone", f"₹{max(0, close_price - 0.5*atr14):,.2f}–₹{close_price + 0.5*atr14:,.2f}")
+                    plan_cols[1].metric("ATR reference stop", f"₹{max(0, close_price - 1.5*atr14):,.2f}")
+                    plan_cols[2].metric("ATR reference target", f"₹{close_price + 2*atr14:,.2f}")
+                    st.caption("Entry/stop/target are mechanical ATR illustrations, not a recommendation or guaranteed levels. Short setups would use the inverse direction.")
+
+                # Selected-stock price chart with EMA20/EMA50 as requested in the prior design brief.
+                st.markdown("**Price trend**")
+                stock_chart = go.Figure()
+                stock_chart.add_trace(go.Candlestick(
+                    x=stock_candles["Date"], open=stock_candles["Open"], high=stock_candles["High"],
+                    low=stock_candles["Low"], close=stock_candles["Close"], name=selected_symbol,
+                    increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+                    increasing_fillcolor="#22c55e", decreasing_fillcolor="#ef4444",
+                ))
+                stock_chart.add_trace(go.Scatter(x=stock_candles["Date"], y=ema_values[20], name="EMA 20", line={"color":"#f59e0b","width":1.5}))
+                stock_chart.add_trace(go.Scatter(x=stock_candles["Date"], y=ema_values[50], name="EMA 50", line={"color":"#a78bfa","width":1.5}))
+                stock_chart.update_layout(
+                    template="plotly_dark", height=360, xaxis_rangeslider_visible=False,
+                    margin=dict(l=8,r=10,t=28,b=8), hovermode="x unified",
+                    yaxis_title="Price (₹)", legend=dict(orientation="h", y=1.02, x=0),
+                )
+                st.plotly_chart(stock_chart, use_container_width=True, config={"displaylogo":False,"scrollZoom":True}, key="fyers_selected_stock_price_chart")
+
+                # Best-effort quarterly results commentary; never infer or manufacture missing fundamentals.
+                st.markdown("**Recent results · fundamental commentary**")
+                yahoo_symbol = selected_symbol.replace("NSE:", "").replace("-EQ", "") + ".NS"
+                results_loaded = False
+                results_notes = []
+                try:
+                    quarterly = yf.Ticker(yahoo_symbol).quarterly_income_stmt
+                    if quarterly is not None and not quarterly.empty and len(quarterly.columns) >= 1:
+                        quarterly = quarterly.copy()
+                        quarterly.columns = pd.to_datetime(quarterly.columns, errors="coerce")
+                        quarterly = quarterly.loc[:, ~quarterly.columns.isna()].sort_index(axis=1, ascending=False)
+                        def _find_financial_row(frame, candidates):
+                            normalized_index = {re.sub(r"[^a-z0-9]", "", str(idx).lower()): idx for idx in frame.index}
+                            for candidate in candidates:
+                                key = re.sub(r"[^a-z0-9]", "", candidate.lower())
+                                if key in normalized_index:
+                                    return normalized_index[key]
+                            return None
+                        revenue_row = _find_financial_row(quarterly, ["Total Revenue", "Operating Revenue", "Revenue"])
+                        net_income_row = _find_financial_row(quarterly, ["Net Income", "Net Income Common Stockholders", "Net Income From Continuing Operation Net Minority Interest"])
+                        eps_row = _find_financial_row(quarterly, ["Diluted EPS", "Basic EPS"])
+                        latest_period = quarterly.columns[0]
+                        results_notes.append(f"Latest reported quarter available in Yahoo Finance: {latest_period.strftime('%b %Y')}.")
+                        for metric_name, row_key in [("Revenue", revenue_row), ("Net income", net_income_row), ("EPS", eps_row)]:
+                            if row_key is None:
+                                continue
+                            vals = pd.to_numeric(quarterly.loc[row_key], errors="coerce").dropna()
+                            if vals.empty:
+                                continue
+                            latest_value = float(vals.iloc[0])
+                            if metric_name in {"Revenue", "Net income"}:
+                                latest_fmt = f"₹{latest_value/1e7:,.2f} crore" if abs(latest_value) >= 1e6 else f"{latest_value:,.2f}"
+                            else:
+                                latest_fmt = f"₹{latest_value:,.2f}"
+                            note = f"{metric_name}: latest reported value {latest_fmt}"
+                            if len(vals) >= 2 and vals.iloc[1] != 0:
+                                qoq_pct = (latest_value / float(vals.iloc[1]) - 1) * 100
+                                note += f"; vs prior quarter {qoq_pct:+.1f}%"
+                            if len(vals) >= 5 and vals.iloc[4] != 0:
+                                yoy_pct = (latest_value / float(vals.iloc[4]) - 1) * 100
+                                note += f"; vs year-ago quarter {yoy_pct:+.1f}%"
+                            results_notes.append(note + ".")
+                        results_loaded = len(results_notes) > 1
+                except Exception as exc:
+                    results_notes.append(f"Quarterly financial data unavailable ({exc.__class__.__name__}).")
+                if results_loaded:
+                    st.success(" · ".join(results_notes))
+                    revenue_row = _find_financial_row(quarterly, ["Total Revenue", "Operating Revenue", "Revenue"])
+                    net_income_row = _find_financial_row(quarterly, ["Net Income", "Net Income Common Stockholders", "Net Income From Continuing Operation Net Minority Interest"])
+                    comments = []
+                    for metric_name, row_key in [("revenue", revenue_row), ("net income", net_income_row)]:
+                        if row_key is not None:
+                            vals = pd.to_numeric(quarterly.loc[row_key], errors="coerce").dropna()
+                            if len(vals) >= 5 and vals.iloc[4] != 0:
+                                yoy = (float(vals.iloc[0]) / float(vals.iloc[4]) - 1) * 100
+                                comments.append(f"{metric_name} {'grew' if yoy > 0 else 'declined'} {abs(yoy):.1f}% year-on-year")
+                    if comments:
+                        st.caption("Results takeaway: " + "; ".join(comments) + ".")
+                else:
+                    st.info("Quarterly results commentary is unavailable from the current public data source for this stock. Price/technical data above remains sourced from FYERS.")
                 st.caption(
-                    f"Source: FYERS daily candles · Latest candle: {latest_stock['Date'].strftime('%d %b %Y')} · "
-                    "Support/resistance are classic pivot estimates, not guaranteed price levels."
+                    f"Price source: FYERS daily candles · Latest candle: {latest_stock['Date'].strftime('%d %b %Y')} · "
+                    f"Financial source: Yahoo Finance when available · Pivot reference candle: {pd.to_datetime(pivot_bar['Date']).strftime('%d %b %Y')}."
                 )
                 with st.expander("View selected stock's recent daily candles", expanded=False):
                     st.dataframe(
@@ -2882,4 +3015,4 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                         hide_index=True,
                     )
 else:
-    st.info("Connect FYERS from the sidebar to use the selected-stock quick levels panel.")
+    st.info("Connect FYERS from the sidebar to use the selected-stock intelligence panel.")
