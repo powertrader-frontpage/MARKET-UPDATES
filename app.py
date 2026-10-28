@@ -994,24 +994,11 @@ market_data: dict[str, pd.DataFrame] = {}
 market_errors: dict[str, str | None] = {}
 with st.spinner("Loading best-effort public market data…"):
     for name, ticker in INDEXES.items():
-        # Prefer Upstox's exact global Oil (Brent) instrument; fall back to official EIA spot.
+        # Brent Crude must always come exclusively from OilPrice.com.
+        # If OilPrice.com is unavailable or its quote cannot be parsed, show unavailable;
+        # do not silently substitute Upstox, Trading Economics, EIA, or Yahoo data.
         if name == "Brent Crude":
-            hist, err = get_upstox_brent_quote()
-            # Preferred public fallback requested by the user: OilPrice.com Brent quote table.
-            if hist.empty:
-                oilprice_hist, oilprice_err = get_oilprice_brent_quote()
-                if not oilprice_hist.empty:
-                    hist, err = oilprice_hist, None
-                else:
-                    te_hist, te_err = get_tradingeconomics_brent_quote()
-                    if not te_hist.empty:
-                        hist, err = te_hist, None
-                    else:
-                        eia_hist, eia_err = get_eia_brent_spot()
-                        if not eia_hist.empty:
-                            hist, err = eia_hist, None
-                        else:
-                            err = "; ".join(x for x in [err, oilprice_err, te_err, eia_err] if x)
+            hist, err = get_oilprice_brent_quote()
         else:
             hist, err = get_history(ticker, period, "1d")
         market_data[name], market_errors[name] = hist, err
@@ -1047,7 +1034,7 @@ for col, name in zip(cols, headline_names):
     snap = quote_snapshot(df)
     if snap:
         last, change, pct = snap
-        # Upstox quote is live/delayed market data; EIA fallback is dated daily spot data.
+        # Brent Crude is sourced exclusively from OilPrice.com; its public quote may be delayed.
         if name == "Brent Crude":
             brent_date = pd.to_datetime(last["Date"])
             brent_age_days = (now_ist.date() - brent_date.date()).days
