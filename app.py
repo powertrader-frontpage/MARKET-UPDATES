@@ -591,6 +591,55 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
 
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_upstox_brent_quote() -> tuple[pd.DataFrame, str | None]:
+    """Fetch Upstox's global Brent instrument (Oil (Brent), BZUSD) using the full quote API."""
+    try:
+        try:
+            access_token = str(st.secrets["UPSTOX_ACCESS_TOKEN"]).strip()
+        except Exception:
+            return pd.DataFrame(), "UPSTOX_ACCESS_TOKEN is not configured."
+        if not access_token:
+            return pd.DataFrame(), "UPSTOX_ACCESS_TOKEN is empty."
+        response = requests.get(
+            "https://api.upstox.com/v2/market-quote/quotes",
+            params={"instrument_key": "GLOBAL_INDEX|BZUSD"},
+            headers={"Accept": "application/json", "Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        payload = response.json()
+        if not response.ok or payload.get("status") != "success":
+            errors = payload.get("errors") or []
+            detail = errors[0].get("message") if errors and isinstance(errors[0], dict) else payload.get("message")
+            return pd.DataFrame(), f"Upstox Brent quote unavailable (HTTP {response.status_code}): {detail or 'check access token and instrument access'}"
+        quotes = payload.get("data") or {}
+        quote = quotes.get("GLOBAL_INDEX:BZUSD") or quotes.get("GLOBAL_INDEX|BZUSD")
+        if not quote and len(quotes) == 1:
+            quote = next(iter(quotes.values()))
+        if not isinstance(quote, dict):
+            return pd.DataFrame(), "Upstox did not return the Oil (Brent) quote."
+        last_price = pd.to_numeric(quote.get("last_price"), errors="coerce")
+        net_change = pd.to_numeric(quote.get("net_change"), errors="coerce")
+        if pd.isna(last_price) or pd.isna(net_change) or float(last_price) <= 0:
+            return pd.DataFrame(), "Upstox Brent quote is missing a valid price or daily change."
+        ts = quote.get("timestamp") or quote.get("last_trade_time")
+        if ts is not None:
+            stamp = pd.to_datetime(float(ts), unit="ms", utc=True).tz_convert("Asia/Kolkata")
+        else:
+            stamp = datetime.now(ZoneInfo("Asia/Kolkata"))
+        previous_close = float(last_price) - float(net_change)
+        if previous_close <= 0:
+            return pd.DataFrame(), "Upstox Brent quote returned an invalid previous-close calculation."
+        # Two rows preserve the existing quote_snapshot interface; values are from the same Upstox quote.
+        frame = pd.DataFrame([
+            {"Date": stamp - pd.Timedelta(days=1), "Open": previous_close, "High": previous_close, "Low": previous_close, "Close": previous_close, "Volume": np.nan},
+            {"Date": stamp, "Open": quote.get("ohlc", {}).get("open", last_price), "High": quote.get("ohlc", {}).get("high", last_price), "Low": quote.get("ohlc", {}).get("low", last_price), "Close": float(last_price), "Volume": quote.get("volume", np.nan)},
+        ])
+        return frame, None
+    except Exception as exc:
+        return pd.DataFrame(), f"Upstox Brent quote failed: {type(exc).__name__}: {str(exc)[:160]}"
+
+
 @st.cache_data(ttl=21600, show_spinner=False)
 def get_eia_brent_spot() -> tuple[pd.DataFrame, str | None]:
     """Fetch official EIA daily Europe Brent spot prices (not futures) via EIA API."""
@@ -781,9 +830,15 @@ market_data: dict[str, pd.DataFrame] = {}
 market_errors: dict[str, str | None] = {}
 with st.spinner("Loading best-effort public market data…"):
     for name, ticker in INDEXES.items():
-        # Use official EIA daily Brent spot, not a rolling futures ticker.
+        # Prefer Upstox's exact global Oil (Brent) instrument; fall back to official EIA spot.
         if name == "Brent Crude":
-            hist, err = get_eia_brent_spot()
+            hist, err = get_upstox_brent_quote()
+            if hist.empty:
+                eia_hist, eia_err = get_eia_brent_spot()
+                if not eia_hist.empty:
+                    hist, err = eia_hist, None
+                else:
+                    err = "; ".join(x for x in [err, eia_err] if x)
         else:
             hist, err = get_history(ticker, period, "1d")
         market_data[name], market_errors[name] = hist, err
@@ -819,11 +874,12 @@ for col, name in zip(cols, headline_names):
     snap = quote_snapshot(df)
     if snap:
         last, change, pct = snap
-        # EIA Brent spot is published with a lag. Never present an old observation as current.
+        # Upstox quote is live/delayed market data; EIA fallback is dated daily spot data.
         if name == "Brent Crude":
             brent_date = pd.to_datetime(last["Date"])
             brent_age_days = (now_ist.date() - brent_date.date()).days
-            if brent_age_days > 3:
+            brent_source = "Upstox quote" if not df.empty and len(df) == 2 and "Volume" in df.columns and df["Volume"].isna().all() else "EIA daily spot"
+            if brent_source == "EIA daily spot" and brent_age_days > 3:
                 col.metric(name, fmt(last["Close"]), f"STALE · EIA date {brent_date.strftime('%d %b %Y')}", delta_color="off")
                 continue
         # Inverse-impact instruments: lower USD/INR (stronger rupee) and lower India VIX
@@ -955,29 +1011,30 @@ if not gift_loaded:
         "Source bar": "24 Oct 2026 · stale",
     })
     sentiment_errors.append("GIFT Nifty live quote unavailable; showing the last confirmed 24 Oct snapshot for reference only (" + "; ".join(gift_failures) + ")")
-# Use the same official EIA Brent spot series as the headline; do not mix futures data.
+# Prefer Upstox's global Oil (Brent) quote; use EIA only as a dated fallback.
 try:
     brent_frame = market_data.get("Brent Crude", pd.DataFrame())
     brent_snap = quote_snapshot(brent_frame)
     if brent_snap:
         last, change, pct = brent_snap
         brent_date = pd.to_datetime(last["Date"])
+        brent_source = "Upstox quote" if len(brent_frame) == 2 and brent_frame["Volume"].isna().all() else "EIA daily spot"
         brent_age_days = (now_ist.date() - brent_date.date()).days
-        if brent_age_days > 3:
-            sentiment_errors.append(f"Brent crude spot excluded from sentiment: EIA observation is stale ({brent_date.strftime('%Y-%m-%d')}, {brent_age_days} days old)")
+        if brent_source == "EIA daily spot" and brent_age_days > 3:
+            sentiment_errors.append(f"Brent crude excluded from sentiment: EIA observation is stale ({brent_date.strftime('%Y-%m-%d')}, {brent_age_days} days old)")
         else:
             contribution = -float(np.clip(pct, -5, 5)) * 0.10
             sentiment_parts.append((contribution, 0.10))
             sentiment_details.append({
-                "Factor": "Brent crude spot (inverse impact)",
+                "Factor": "Brent crude (inverse impact)",
                 "Latest change": f"{fmt(change)} ({fmt(pct)}%)",
                 "Signal": "Positive" if change < 0 else "Negative" if change > 0 else "Neutral",
-                "Source bar": brent_date.strftime("%Y-%m-%d") + " · EIA daily spot",
+                "Source bar": brent_date.strftime("%Y-%m-%d %H:%M IST") + " · " + brent_source,
             })
     else:
-        sentiment_errors.append("Brent crude spot: EIA data unavailable")
+        sentiment_errors.append("Brent crude: Upstox and EIA sources unavailable")
 except Exception as exc:
-    sentiment_errors.append("Brent crude spot: " + type(exc).__name__)
+    sentiment_errors.append("Brent crude source error: " + type(exc).__name__)
 _sentiment_change("USD/INR (inverse impact)", "INR=X", 0.05, inverse=True)
 
 # Fetch the latest NSE-published cash-market FII/FPI and DII net flows.
