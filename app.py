@@ -1823,18 +1823,27 @@ if leading_sector_rows:
             )
     st.session_state["previous_sector_relative_performance"] = current_relative
 
-    # Retain the existing top-sector membership-change alert.
+    # Newly entered sectors are highlighted yellow for this dashboard session.
+    newly_entered_sectors = []
     previous_top_names = st.session_state.get("previous_top_4_sectors")
     if previous_top_names is not None:
-        entered = [name for name in current_top_names if name not in previous_top_names]
+        newly_entered_sectors = [name for name in current_top_names if name not in previous_top_names]
         exited = [name for name in previous_top_names if name not in current_top_names]
-        if entered or exited:
+        if newly_entered_sectors or exited:
             alert_parts = []
-            if entered:
-                alert_parts.append("New sector(s) entering top 4: " + ", ".join(entered))
+            if newly_entered_sectors:
+                alert_parts.append("New sector(s) entering top 4: " + ", ".join(newly_entered_sectors))
             if exited:
                 alert_parts.append("Sector(s) leaving top 4: " + ", ".join(exited))
-            st.warning("🔔 Sector leadership changed · " + " · ".join(alert_parts))
+            if newly_entered_sectors:
+                st.markdown(
+                    '<div style="background:rgba(234,179,8,.12);color:#fde68a;border:1px solid #eab308;'
+                    'border-left:5px solid #eab308;border-radius:10px;padding:10px 14px;'
+                    'font-weight:750;margin:8px 0 12px;">🟨 SECTOR ROTATION · ' + html.escape(" · ".join(alert_parts)) + '</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.warning("🔔 Sector leadership changed · " + " · ".join(alert_parts))
     st.session_state["previous_top_4_sectors"] = current_top_names
     if leaders.empty:
         st.info("No sector is outperforming NIFTY 50 over the latest 5 trading sessions.")
@@ -1842,12 +1851,18 @@ if leading_sector_rows:
         leader_cols = st.columns(len(leaders))
         for leader_col, (_, leader) in zip(leader_cols, leaders.iterrows()):
             month_confirmation = f'{leader["1M outperformance (pp)"]:+.2f} pp' if pd.notna(leader["1M outperformance (pp)"]) else "N/A"
+            is_new_sector = leader["Sector"] in newly_entered_sectors
+            card_border = "#eab308" if is_new_sector else "#166534"
+            card_accent = "#eab308" if is_new_sector else "#22c55e"
+            card_bg = "rgba(234,179,8,0.10)" if is_new_sector else "rgba(34,197,94,0.08)"
+            card_title = "#fde68a" if is_new_sector else "#86efac"
+            card_text = "#fef3c7" if is_new_sector else "#a7f3d0"
             leader_col.markdown(
-                f'<div style="border:1px solid #166534;border-left:4px solid #22c55e;border-radius:12px;padding:12px 14px;min-height:118px;background:rgba(34,197,94,0.08);">'
-                f'<div style="font-size:13px;color:#86efac;margin-bottom:8px;">{leader["Sector"]}</div>'
-                f'<div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:#22c55e;">+{leader["1W outperformance (pp)"]:.2f} pp</div>'
-                f'<div style="font-size:12px;color:#a7f3d0;">1W: sector {leader["Sector 1W (%)"]:+.2f}% · NIFTY {leader["NIFTY 1W (%)"]:+.2f}%</div>'
-                f'<div style="font-size:12px;color:#a7f3d0;">1M relative strength: {month_confirmation}</div>'
+                f'<div style="border:1px solid {card_border};border-left:4px solid {card_accent};border-radius:12px;padding:12px 14px;min-height:118px;background:{card_bg};">'
+                f'<div style="font-size:13px;color:{card_title};margin-bottom:8px;">{"🟨 NEW · " if is_new_sector else ""}{leader["Sector"]}</div>'
+                f'<div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{card_accent};">+{leader["1W outperformance (pp)"]:.2f} pp</div>'
+                f'<div style="font-size:12px;color:{card_text};">1W: sector {leader["Sector 1W (%)"]:+.2f}% · NIFTY {leader["NIFTY 1W (%)"]:+.2f}%</div>'
+                f'<div style="font-size:12px;color:{card_text};">1M relative strength: {month_confirmation}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
