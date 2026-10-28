@@ -702,7 +702,7 @@ def get_tradingeconomics_brent_quote() -> tuple[pd.DataFrame, str | None]:
                 continue
             for _, row in table.iterrows():
                 values = [str(v).strip() for v in row.tolist()]
-                if not values or not any(re.search(r"\\bBrent\\b", v, re.I) for v in values[:2]):
+                if not values or not any(re.search(r"\bBrent\b", v, re.I) for v in values[:2]):
                     continue
                 numeric = []
                 for value in values[1:]:
@@ -720,8 +720,8 @@ def get_tradingeconomics_brent_quote() -> tuple[pd.DataFrame, str | None]:
             return pd.DataFrame(), "Trading Economics page did not expose a parsable Brent price/change."
         # The page summary gives the date of its latest daily observation; never pretend it is intraday.
         html_text = re.sub(r"<[^>]+>", " ", response.text)
-        html_text = re.sub(r"\\s+", " ", html_text)
-        date_match = re.search(r"Brent rose to [0-9,.]+ USD/Bbl on ([A-Za-z]+ \\d{1,2}, \\d{4})", html_text, re.I)
+        html_text = re.sub(r"\s+", " ", html_text)
+        date_match = re.search(r"Brent rose to [0-9,.]+ USD/Bbl on ([A-Za-z]+ \d{1,2}, \d{4})", html_text, re.I)
         if date_match:
             stamp = pd.to_datetime(date_match.group(1), errors="coerce")
         else:
