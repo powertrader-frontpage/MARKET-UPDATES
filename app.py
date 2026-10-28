@@ -924,8 +924,17 @@ def quote_snapshot(df: pd.DataFrame):
     if df.empty: return None
     last = df.iloc[-1]
     prev = df.iloc[-2] if len(df) > 1 else None
-    change = float(last["Close"] - prev["Close"]) if prev is not None else np.nan
-    pct = change / float(prev["Close"]) * 100 if prev is not None and float(prev["Close"]) != 0 else np.nan
+    # Quote APIs can provide a more reliable session change than deriving it from
+    # synthetic rows or daily history. Use it whenever both explicit fields exist.
+    explicit_change = pd.to_numeric(last.get("DailyChange"), errors="coerce")
+    explicit_pct = pd.to_numeric(last.get("DailyChangePct"), errors="coerce")
+    if pd.notna(explicit_change) and pd.notna(explicit_pct):
+        change, pct = float(explicit_change), float(explicit_pct)
+    else:
+        last_close = pd.to_numeric(last.get("Close"), errors="coerce")
+        prev_close = pd.to_numeric(prev.get("Close"), errors="coerce") if prev is not None else np.nan
+        change = float(last_close - prev_close) if pd.notna(last_close) and pd.notna(prev_close) else np.nan
+        pct = change / float(prev_close) * 100 if pd.notna(change) and pd.notna(prev_close) and float(prev_close) != 0 else np.nan
     return last, change, pct
 
 # Pull key instruments. The sidebar interval controls intraday bars; daily history is used for indicators.
