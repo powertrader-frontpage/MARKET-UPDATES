@@ -1160,12 +1160,34 @@ for gift_source_name, gift_url in gift_sources:
         gift_change_points = float(gift_match.group(1).replace(",", ""))
         gift_change_pct = float(gift_match.group(2))
         gift_score = 1 if gift_change_pct > 0 else -1 if gift_change_pct < 0 else 0
-        sentiment_parts.append((gift_score, 0.60))
+
+        # Keep the existing 60% GIFT weight when it is positive.
+        # When negative, scale its influence by the size of the point drop:
+        # 30-59 pts = 10%, 60-89 = 20%, 90-119 = 30%,
+        # 120-149 = 50%, and 150+ = 60%. Below 30 negative points = 0%.
+        if gift_change_points < 0:
+            gift_drop_points = abs(gift_change_points)
+            if gift_drop_points >= 150:
+                gift_weight = 0.60
+            elif gift_drop_points >= 120:
+                gift_weight = 0.50
+            elif gift_drop_points >= 90:
+                gift_weight = 0.30
+            elif gift_drop_points >= 60:
+                gift_weight = 0.20
+            elif gift_drop_points >= 30:
+                gift_weight = 0.10
+            else:
+                gift_weight = 0.0
+        else:
+            gift_weight = 0.60
+
+        sentiment_parts.append((gift_score, gift_weight))
         gift_asof_match = re.search(r"Last updated:\s*([^·]{1,80})", gift_search_text, flags=re.IGNORECASE)
         gift_asof = gift_asof_match.group(1).strip()[:24] if gift_asof_match else "Timestamp unavailable"
         sentiment_details.append({
             "Factor": f"GIFT Nifty · {gift_source_name}",
-            "Weight": "60%",
+            "Weight": f"{gift_weight * 100:g}%",
             "Latest change": f"{gift_change_pct:+.2f}% ({gift_change_points:+,.2f} pts)",
             "Signal": "Positive" if gift_score > 0 else "Negative" if gift_score < 0 else "Flat",
             "Source bar": gift_asof,
