@@ -1746,8 +1746,8 @@ else:
 
 
 # Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
-st.markdown("### Leading sectors vs NIFTY 50")
-st.caption("Top 3 sectors with positive relative performance versus NIFTY 50 over the latest 5 trading sessions (sector 5-session return minus NIFTY 50 5-session return). Cards are ranked by weekly outperformance; 1-month relative performance is shown for confirmation. Under each sector, the top 5 stocks are ranked by their own 5-session price return within the dashboard's tracked stock universe. Data uses latest available daily closes and may be delayed.")
+st.markdown("### Leading sectors")
+st.caption("Top 4 sectors with positive relative performance versus NIFTY 50 over the latest 5 trading sessions, ranked by weekly outperformance. 1-month relative performance confirms the trend. Each sector shows its top 5 stocks by 5-session return. Data may be delayed.")
 # Representative liquid stocks by sector; rank only when source history is available.
 SECTOR_LEADING_STOCKS = {
     "Pharma": [("SUN Pharma", "SUNPHARMA.NS"), ("Dr Reddy's", "DRREDDY.NS"), ("Cipla", "CIPLA.NS"), ("Divi's Labs", "DIVISLAB.NS"), ("Lupin", "LUPIN.NS"), ("Torrent Pharma", "TORNTPHARM.NS")],
@@ -1791,7 +1791,7 @@ with st.spinner("Checking weekly sector momentum…"):
 if leading_sector_rows:
     leading_df = pd.DataFrame(leading_sector_rows)
     ranked_sectors = leading_df.sort_values("1W outperformance (pp)", ascending=False).copy()
-    leaders = ranked_sectors[ranked_sectors["1W outperformance (pp)"] > 0].head(3).copy()
+    leaders = ranked_sectors[ranked_sectors["1W outperformance (pp)"] > 0].head(4).copy()
     current_top_names = leaders["Sector"].tolist()
 
     # Detect a genuine transition from relative underperformance (<= 0 pp)
@@ -1823,19 +1823,19 @@ if leading_sector_rows:
             )
     st.session_state["previous_sector_relative_performance"] = current_relative
 
-    # Retain the existing top-three membership-change alert.
-    previous_top_names = st.session_state.get("previous_top_3_sectors")
+    # Retain the existing top-sector membership-change alert.
+    previous_top_names = st.session_state.get("previous_top_4_sectors")
     if previous_top_names is not None:
         entered = [name for name in current_top_names if name not in previous_top_names]
         exited = [name for name in previous_top_names if name not in current_top_names]
         if entered or exited:
             alert_parts = []
             if entered:
-                alert_parts.append("New sector(s) entering top 3: " + ", ".join(entered))
+                alert_parts.append("New sector(s) entering top 4: " + ", ".join(entered))
             if exited:
-                alert_parts.append("Sector(s) leaving top 3: " + ", ".join(exited))
+                alert_parts.append("Sector(s) leaving top 4: " + ", ".join(exited))
             st.warning("🔔 Sector leadership changed · " + " · ".join(alert_parts))
-    st.session_state["previous_top_3_sectors"] = current_top_names
+    st.session_state["previous_top_4_sectors"] = current_top_names
     if leaders.empty:
         st.info("No sector is outperforming NIFTY 50 over the latest 5 trading sessions.")
     else:
