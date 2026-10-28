@@ -632,8 +632,8 @@ def get_upstox_brent_quote() -> tuple[pd.DataFrame, str | None]:
             return pd.DataFrame(), "Upstox Brent quote returned an invalid previous-close calculation."
         # Two rows preserve the existing quote_snapshot interface; values are from the same Upstox quote.
         frame = pd.DataFrame([
-            {"Date": stamp - pd.Timedelta(days=1), "Open": previous_close, "High": previous_close, "Low": previous_close, "Close": previous_close, "Volume": np.nan},
-            {"Date": stamp, "Open": quote.get("ohlc", {}).get("open", last_price), "High": quote.get("ohlc", {}).get("high", last_price), "Low": quote.get("ohlc", {}).get("low", last_price), "Close": float(last_price), "Volume": quote.get("volume", np.nan)},
+            {"Date": stamp - pd.Timedelta(days=1), "Open": previous_close, "High": previous_close, "Low": previous_close, "Close": previous_close, "Volume": np.nan, "Source": "Upstox"},
+            {"Date": stamp, "Open": quote.get("ohlc", {}).get("open", last_price), "High": quote.get("ohlc", {}).get("high", last_price), "Low": quote.get("ohlc", {}).get("low", last_price), "Close": float(last_price), "Volume": quote.get("volume", np.nan), "Source": "Upstox"},
         ])
         return frame, None
     except Exception as exc:
@@ -670,7 +670,8 @@ def get_eia_brent_spot() -> tuple[pd.DataFrame, str | None]:
         frame["Low"] = frame["Close"]
         frame["Volume"] = np.nan
         frame["Date"] = frame["Date"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
-        return frame[["Date", "Open", "High", "Low", "Close", "Volume"]].reset_index(drop=True), None
+        frame["Source"] = "EIA"
+        return frame[["Date", "Open", "High", "Low", "Close", "Volume", "Source"]].reset_index(drop=True), None
     except Exception as exc:
         return pd.DataFrame(), f"EIA Brent fetch failed: {type(exc).__name__}: {str(exc)[:180]}"
 
@@ -878,7 +879,7 @@ for col, name in zip(cols, headline_names):
         if name == "Brent Crude":
             brent_date = pd.to_datetime(last["Date"])
             brent_age_days = (now_ist.date() - brent_date.date()).days
-            brent_source = "Upstox quote" if not df.empty and len(df) == 2 and "Volume" in df.columns and df["Volume"].isna().all() else "EIA daily spot"
+            brent_source = "Upstox quote" if "Source" in df.columns and str(last.get("Source", "")) == "Upstox" else "EIA daily spot"
             if brent_source == "EIA daily spot" and brent_age_days > 3:
                 col.metric(name, fmt(last["Close"]), f"STALE · EIA date {brent_date.strftime('%d %b %Y')}", delta_color="off")
                 continue
@@ -1018,7 +1019,7 @@ try:
     if brent_snap:
         last, change, pct = brent_snap
         brent_date = pd.to_datetime(last["Date"])
-        brent_source = "Upstox quote" if len(brent_frame) == 2 and brent_frame["Volume"].isna().all() else "EIA daily spot"
+        brent_source = "Upstox quote" if "Source" in brent_frame.columns and str(last.get("Source", "")) == "Upstox" else "EIA daily spot"
         brent_age_days = (now_ist.date() - brent_date.date()).days
         if brent_source == "EIA daily spot" and brent_age_days > 3:
             sentiment_errors.append(f"Brent crude excluded from sentiment: EIA observation is stale ({brent_date.strftime('%Y-%m-%d')}, {brent_age_days} days old)")
