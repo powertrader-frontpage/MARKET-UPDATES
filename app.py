@@ -137,8 +137,46 @@ def upstox_get_profile(access_token: str):
     except Exception as exc:
         return None, f"Upstox profile request failed ({exc.__class__.__name__})."
 
+# Complete Upstox OAuth redirects and keep the newly issued token in the app's in-memory vault.
+try:
+    _upstox_params = st.query_params
+    _upstox_code = str(_upstox_params.get("code", "")).strip()
+    _upstox_state = str(_upstox_params.get("state", "")).strip()
+    _upstox_oauth = upstox_oauth_credentials()
+    if _upstox_code and _upstox_state and _upstox_oauth:
+        _upstox_client_id, _upstox_client_secret, _upstox_redirect_uri = _upstox_oauth
+        if upstox_verify_state(_upstox_state, _upstox_client_secret):
+            _upstox_new_token, _upstox_token_error = upstox_exchange_auth_code(
+                _upstox_client_id, _upstox_client_secret, _upstox_redirect_uri, _upstox_code
+            )
+            if _upstox_new_token:
+                upstox_token_vault()["access_token"] = _upstox_new_token
+                st.cache_data.clear()
+                st.query_params.clear()
+                st.session_state["upstox_oauth_connected"] = True
+            else:
+                st.session_state["upstox_oauth_error"] = _upstox_token_error
+        else:
+            st.session_state["upstox_oauth_error"] = "Upstox login state expired or invalid. Start login again."
+except Exception:
+    pass
+
 with st.sidebar:
     st.header("Dashboard controls")
+    _upstox_oauth = upstox_oauth_credentials()
+    if _upstox_oauth:
+        _upstox_client_id, _upstox_client_secret, _upstox_redirect_uri = _upstox_oauth
+        _upstox_login = upstox_login_url(
+            _upstox_client_id, _upstox_redirect_uri, upstox_make_state(_upstox_client_secret)
+        )
+        st.markdown(f"[Connect / Reconnect Upstox for Brent]({_upstox_login})")
+        if st.session_state.get("upstox_oauth_connected"):
+            st.success("Upstox connected for this app session.")
+        if st.session_state.get("upstox_oauth_error"):
+            st.warning("Upstox login issue: " + str(st.session_state["upstox_oauth_error"]))
+        st.caption("If the quote still falls back to EIA, confirm the Upstox app redirect URI exactly matches this dashboard URL.")
+    else:
+        st.caption("Upstox Brent login unavailable: configure UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI in Streamlit Secrets.")
     period = st.selectbox("Historical lookback", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=2)
     interval = st.selectbox("Intraday bar interval", ["5m", "15m", "30m", "60m"], index=0)
     st.caption("Intraday Yahoo Finance history is limited by the upstream source. If it is unavailable, the app will show an error instead of substituting sample values.")
@@ -595,12 +633,15 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
 def get_upstox_brent_quote() -> tuple[pd.DataFrame, str | None]:
     """Fetch Upstox's global Brent instrument (Oil (Brent), BZUSD) using the full quote API."""
     try:
-        try:
-            access_token = str(st.secrets["UPSTOX_ACCESS_TOKEN"]).strip()
-        except Exception:
-            return pd.DataFrame(), "UPSTOX_ACCESS_TOKEN is not configured."
+        # Prefer a fresh OAuth token from this app session; otherwise use the configured secret.
+        access_token = str(upstox_token_vault().get("access_token", "")).strip()
         if not access_token:
-            return pd.DataFrame(), "UPSTOX_ACCESS_TOKEN is empty."
+            try:
+                access_token = str(st.secrets["UPSTOX_ACCESS_TOKEN"]).strip()
+            except Exception:
+                return pd.DataFrame(), "Upstox not connected: use the Connect Upstox login in the sidebar."
+        if not access_token:
+            return pd.DataFrame(), "Upstox access token is empty; reconnect Upstox from the sidebar."
         response = requests.get(
             "https://api.upstox.com/v2/market-quote/quotes",
             params={"instrument_key": "GLOBAL_INDEX|BZUSD"},
