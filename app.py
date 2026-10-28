@@ -771,6 +771,12 @@ st.markdown("""
 cols = st.columns(5)
 for col, name in zip(cols, headline_names):
     df = market_data[name]
+    # Yahoo's continuous Brent ticker (BZ=F) is currently diverging materially
+    # from the published ICE/Reuters benchmark. Do not display an unverified
+    # Brent price as if it were the benchmark until the source is reconciled.
+    if name == "Brent Crude":
+        col.metric(name, "Source mismatch", "Temporarily excluded from signals")
+        continue
     snap = quote_snapshot(df)
     if snap:
         last, change, pct = snap
@@ -903,7 +909,8 @@ if not gift_loaded:
         "Source bar": "24 Oct 2026 · stale",
     })
     sentiment_errors.append("GIFT Nifty live quote unavailable; showing the last confirmed 24 Oct snapshot for reference only (" + "; ".join(gift_failures) + ")")
-_sentiment_change("Brent crude (inverse impact)", "BZ=F", 0.10, inverse=True)
+# Brent is deliberately excluded from global sentiment until its source/contract
+# can be reconciled with the published benchmark; a bad reading must not distort the score.
 _sentiment_change("USD/INR (inverse impact)", "INR=X", 0.05, inverse=True)
 
 # Fetch the latest NSE-published cash-market FII/FPI and DII net flows.
