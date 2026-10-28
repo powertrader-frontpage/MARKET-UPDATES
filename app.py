@@ -995,14 +995,24 @@ for col, name in zip(cols, headline_names):
         if name == "Brent Crude":
             brent_date = pd.to_datetime(last["Date"])
             brent_age_days = (now_ist.date() - brent_date.date()).days
-            brent_source = str(last.get("Source", "EIA daily spot")) if "Source" in df.columns else "EIA daily spot"
-            if brent_source == "EIA daily spot" and brent_age_days > 3:
+            brent_source = str(last.get("Source", "EIA")).strip() if "Source" in df.columns else "EIA"
+            is_eia_source = brent_source.upper().startswith("EIA")
+            if is_eia_source and brent_age_days > 3:
                 col.metric(name, fmt(last["Close"]), f"STALE · EIA date {brent_date.strftime('%d %b %Y')}", delta_color="off")
                 continue
-            # Use the quote feed's explicit daily change instead of inferring it from row order.
-            if brent_source in ("Upstox", "Trading Economics") and pd.notna(last.get("DailyChange")) and pd.notna(last.get("DailyChangePct")):
+            # Prefer a source-provided daily move. Otherwise derive it from the latest two
+            # genuine observations; never display a fabricated zero when a percentage is missing.
+            if brent_source in ("Upstox", "Trading Economics") and pd.notna(last.get("DailyChange")):
                 change = float(last["DailyChange"])
-                pct = float(last["DailyChangePct"])
+                if pd.notna(last.get("DailyChangePct")):
+                    pct = float(last["DailyChangePct"])
+                elif pd.notna(last.get("Close")) and float(last["Close"]) - change > 0:
+                    pct = change / (float(last["Close"]) - change) * 100
+            if pd.isna(pct) and len(df) >= 2:
+                brent_closes = pd.to_numeric(df["Close"], errors="coerce").dropna()
+                if len(brent_closes) >= 2 and float(brent_closes.iloc[-2]) != 0:
+                    change = float(brent_closes.iloc[-1] - brent_closes.iloc[-2])
+                    pct = float(change / brent_closes.iloc[-2] * 100)
         # Inverse-impact instruments: lower USD/INR (stronger rupee) and lower India VIX
         # (less expected volatility) are generally supportive; higher values are headwinds.
         if name == "USD/INR":
@@ -1139,9 +1149,9 @@ try:
     if brent_snap:
         last, change, pct = brent_snap
         brent_date = pd.to_datetime(last["Date"])
-        brent_source = "Upstox quote" if "Source" in brent_frame.columns and str(last.get("Source", "")) == "Upstox" else "EIA daily spot"
+        brent_source = str(last.get("Source", "EIA")).strip() if "Source" in brent_frame.columns else "EIA"
         brent_age_days = (now_ist.date() - brent_date.date()).days
-        if brent_source == "EIA daily spot" and brent_age_days > 3:
+        if brent_source.upper().startswith("EIA") and brent_age_days > 3:
             sentiment_errors.append(f"Brent crude excluded from sentiment: EIA observation is stale ({brent_date.strftime('%Y-%m-%d')}, {brent_age_days} days old)")
         else:
             contribution = -float(np.clip(pct, -5, 5)) * 0.10
@@ -1294,7 +1304,9 @@ _sentiment_change("ICICI Bank ADR", "IBN", 0.00, inverse=False)
 _sentiment_change("Reliance Industries GDR", "RIGD.L", 0.00, inverse=False)
 # Do not publish a confident full-market direction when the highest-weight GIFT Nifty cue is missing.
 # Partial score remains visible for transparency, but the headline is explicitly marked incomplete.
-gift_available = any(str(item.get("Factor", "")).startswith("GIFT Nifty") for item in sentiment_details)
+# Only a quote successfully parsed during this run counts as live/usable GIFT Nifty.
+# The stale reference row is displayed for context but must never satisfy this check.
+gift_available = bool(gift_loaded)
 sentiment_weight = sum(weight for _, weight in sentiment_parts)
 sentiment_score = sum(score * weight for score, weight in sentiment_parts) / sentiment_weight if sentiment_weight else np.nan
 if not gift_available:
