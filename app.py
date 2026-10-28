@@ -1747,7 +1747,7 @@ else:
 
 # Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
 st.markdown("### Leading sectors vs NIFTY 50")
-st.caption("Top 3 sectors ranked by relative performance versus NIFTY 50 over the latest 5 trading sessions. Cards are ranked by weekly outperformance; 1-month relative performance is shown for confirmation.")
+st.caption("Top 3 sectors with positive relative performance versus NIFTY 50 over the latest 5 trading sessions (sector 5-session return minus NIFTY 50 5-session return). Cards are ranked by weekly outperformance; 1-month relative performance is shown for confirmation. Under each sector, the top 5 stocks are ranked by their own 5-session price return within the dashboard's tracked stock universe. Data uses latest available daily closes and may be delayed.")
 # Representative liquid stocks by sector; rank only when source history is available.
 SECTOR_LEADING_STOCKS = {
     "Pharma": [("SUN Pharma", "SUNPHARMA.NS"), ("Dr Reddy's", "DRREDDY.NS"), ("Cipla", "CIPLA.NS"), ("Divi's Labs", "DIVISLAB.NS"), ("Lupin", "LUPIN.NS"), ("Torrent Pharma", "TORNTPHARM.NS")],
@@ -1862,9 +1862,9 @@ if leading_sector_rows:
                     if len(stock_close) >= 6 and stock_close.iloc[-6] != 0:
                         stock_return = (float(stock_close.iloc[-1]) / float(stock_close.iloc[-6]) - 1) * 100
                         stock_leaders.append({"Stock": stock_name, "Ticker": stock_ticker, "1W return (%)": stock_return})
-            leader_col.markdown("**Top 2 stocks · latest 5 sessions**")
+            leader_col.markdown("**Top 5 stocks · latest 5 sessions**")
             if stock_leaders:
-                stock_leaders = sorted(stock_leaders, key=lambda row: row["1W return (%)"], reverse=True)[:2]
+                stock_leaders = sorted(stock_leaders, key=lambda row: row["1W return (%)"], reverse=True)[:5]
                 for rank, stock in enumerate(stock_leaders, start=1):
                     stock_color = "#22c55e" if stock["1W return (%)"] >= 0 else "#ef4444"
                     leader_col.markdown(
