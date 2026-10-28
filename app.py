@@ -681,6 +681,65 @@ def get_upstox_brent_quote() -> tuple[pd.DataFrame, str | None]:
         return pd.DataFrame(), f"Upstox Brent quote failed: {type(exc).__name__}: {str(exc)[:160]}"
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def get_tradingeconomics_brent_quote() -> tuple[pd.DataFrame, str | None]:
+    """Read Trading Economics' public Brent page as a fallback reference quote.
+    This is a CFD-based market reference, not an official Brent futures settlement.
+    """
+    url = "https://tradingeconomics.com/commodity/brent-crude-oil"
+    try:
+        response = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; MarketIntelligenceTerminal/1.0)", "Accept": "text/html"},
+            timeout=15,
+        )
+        if not response.ok:
+            return pd.DataFrame(), f"Trading Economics Brent page unavailable (HTTP {response.status_code})."
+        tables = pd.read_html(response.text)
+        price = change = None
+        for table in tables:
+            if table.empty:
+                continue
+            for _, row in table.iterrows():
+                values = [str(v).strip() for v in row.tolist()]
+                if not values or not any(re.search(r"\\bBrent\\b", v, re.I) for v in values[:2]):
+                    continue
+                numeric = []
+                for value in values[1:]:
+                    cleaned = value.replace(",", "").replace("%", "").strip()
+                    try:
+                        numeric.append(float(cleaned))
+                    except Exception:
+                        continue
+                if len(numeric) >= 2 and numeric[0] > 0:
+                    price, change = numeric[0], numeric[1]
+                    break
+            if price is not None:
+                break
+        if price is None or change is None:
+            return pd.DataFrame(), "Trading Economics page did not expose a parsable Brent price/change."
+        # The page summary gives the date of its latest daily observation; never pretend it is intraday.
+        html_text = re.sub(r"<[^>]+>", " ", response.text)
+        html_text = re.sub(r"\\s+", " ", html_text)
+        date_match = re.search(r"Brent rose to [0-9,.]+ USD/Bbl on ([A-Za-z]+ \\d{1,2}, \\d{4})", html_text, re.I)
+        if date_match:
+            stamp = pd.to_datetime(date_match.group(1), errors="coerce")
+        else:
+            return pd.DataFrame(), "Trading Economics page did not provide a reliable observation date."
+        if pd.isna(stamp):
+            return pd.DataFrame(), "Trading Economics Brent observation date could not be parsed."
+        previous_close = float(price) - float(change)
+        if previous_close <= 0:
+            return pd.DataFrame(), "Trading Economics Brent quote returned an invalid previous-close calculation."
+        frame = pd.DataFrame([
+            {"Date": stamp - pd.Timedelta(days=1), "Open": previous_close, "High": previous_close, "Low": previous_close, "Close": previous_close, "Volume": np.nan, "Source": "Trading Economics"},
+            {"Date": stamp, "Open": price, "High": price, "Low": price, "Close": float(price), "Volume": np.nan, "Source": "Trading Economics"},
+        ])
+        return frame, None
+    except Exception as exc:
+        return pd.DataFrame(), f"Trading Economics Brent fetch failed ({type(exc).__name__})."
+
+
 @st.cache_data(ttl=21600, show_spinner=False)
 def get_eia_brent_spot() -> tuple[pd.DataFrame, str | None]:
     """Fetch official EIA daily Europe Brent spot prices (not futures) via EIA API."""
@@ -875,12 +934,17 @@ with st.spinner("Loading best-effort public market data…"):
         # Prefer Upstox's exact global Oil (Brent) instrument; fall back to official EIA spot.
         if name == "Brent Crude":
             hist, err = get_upstox_brent_quote()
+            # If Upstox authorization is unavailable, try the user's requested Trading Economics page.
             if hist.empty:
-                eia_hist, eia_err = get_eia_brent_spot()
-                if not eia_hist.empty:
-                    hist, err = eia_hist, None
+                te_hist, te_err = get_tradingeconomics_brent_quote()
+                if not te_hist.empty:
+                    hist, err = te_hist, None
                 else:
-                    err = "; ".join(x for x in [err, eia_err] if x)
+                    eia_hist, eia_err = get_eia_brent_spot()
+                    if not eia_hist.empty:
+                        hist, err = eia_hist, None
+                    else:
+                        err = "; ".join(x for x in [err, te_err, eia_err] if x)
         else:
             hist, err = get_history(ticker, period, "1d")
         market_data[name], market_errors[name] = hist, err
