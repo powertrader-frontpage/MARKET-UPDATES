@@ -672,9 +672,10 @@ def get_upstox_brent_quote() -> tuple[pd.DataFrame, str | None]:
         if previous_close <= 0:
             return pd.DataFrame(), "Upstox Brent quote returned an invalid previous-close calculation."
         # Two rows preserve the existing quote_snapshot interface; values are from the same Upstox quote.
+        daily_change_pct = float(net_change) / previous_close * 100
         frame = pd.DataFrame([
-            {"Date": stamp - pd.Timedelta(days=1), "Open": previous_close, "High": previous_close, "Low": previous_close, "Close": previous_close, "Volume": np.nan, "Source": "Upstox"},
-            {"Date": stamp, "Open": quote.get("ohlc", {}).get("open", last_price), "High": quote.get("ohlc", {}).get("high", last_price), "Low": quote.get("ohlc", {}).get("low", last_price), "Close": float(last_price), "Volume": quote.get("volume", np.nan), "Source": "Upstox"},
+            {"Date": stamp - pd.Timedelta(days=1), "Open": previous_close, "High": previous_close, "Low": previous_close, "Close": previous_close, "Volume": np.nan, "Source": "Upstox", "DailyChange": float(net_change), "DailyChangePct": daily_change_pct},
+            {"Date": stamp, "Open": quote.get("ohlc", {}).get("open", last_price), "High": quote.get("ohlc", {}).get("high", last_price), "Low": quote.get("ohlc", {}).get("low", last_price), "Close": float(last_price), "Volume": quote.get("volume", np.nan), "Source": "Upstox", "DailyChange": float(net_change), "DailyChangePct": daily_change_pct},
         ])
         return frame, None
     except Exception as exc:
@@ -731,9 +732,10 @@ def get_tradingeconomics_brent_quote() -> tuple[pd.DataFrame, str | None]:
         previous_close = float(price) - float(change)
         if previous_close <= 0:
             return pd.DataFrame(), "Trading Economics Brent quote returned an invalid previous-close calculation."
+        daily_change_pct = float(change) / previous_close * 100
         frame = pd.DataFrame([
-            {"Date": stamp - pd.Timedelta(days=1), "Open": previous_close, "High": previous_close, "Low": previous_close, "Close": previous_close, "Volume": np.nan, "Source": "Trading Economics"},
-            {"Date": stamp, "Open": price, "High": price, "Low": price, "Close": float(price), "Volume": np.nan, "Source": "Trading Economics"},
+            {"Date": stamp - pd.Timedelta(days=1), "Open": previous_close, "High": previous_close, "Low": previous_close, "Close": previous_close, "Volume": np.nan, "Source": "Trading Economics", "DailyChange": float(change), "DailyChangePct": daily_change_pct},
+            {"Date": stamp, "Open": price, "High": price, "Low": price, "Close": float(price), "Volume": np.nan, "Source": "Trading Economics", "DailyChange": float(change), "DailyChangePct": daily_change_pct},
         ])
         return frame, None
     except Exception as exc:
@@ -984,10 +986,14 @@ for col, name in zip(cols, headline_names):
         if name == "Brent Crude":
             brent_date = pd.to_datetime(last["Date"])
             brent_age_days = (now_ist.date() - brent_date.date()).days
-            brent_source = "Upstox quote" if "Source" in df.columns and str(last.get("Source", "")) == "Upstox" else "EIA daily spot"
+            brent_source = str(last.get("Source", "EIA daily spot")) if "Source" in df.columns else "EIA daily spot"
             if brent_source == "EIA daily spot" and brent_age_days > 3:
                 col.metric(name, fmt(last["Close"]), f"STALE · EIA date {brent_date.strftime('%d %b %Y')}", delta_color="off")
                 continue
+            # Use the quote feed's explicit daily change instead of inferring it from row order.
+            if brent_source in ("Upstox", "Trading Economics") and pd.notna(last.get("DailyChange")) and pd.notna(last.get("DailyChangePct")):
+                change = float(last["DailyChange"])
+                pct = float(last["DailyChangePct"])
         # Inverse-impact instruments: lower USD/INR (stronger rupee) and lower India VIX
         # (less expected volatility) are generally supportive; higher values are headwinds.
         if name == "USD/INR":
