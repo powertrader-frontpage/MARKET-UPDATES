@@ -1859,6 +1859,7 @@ if leading_sector_rows:
         leader_cols = st.columns(len(leaders))
         for leader_col, (_, leader) in zip(leader_cols, leaders.iterrows()):
             month_confirmation = f'{leader["1M outperformance (pp)"]:+.2f} pp' if pd.notna(leader["1M outperformance (pp)"]) else "N/A"
+            three_month_confirmation = f'{leader["3M outperformance (pp)"]:+.2f} pp' if pd.notna(leader["3M outperformance (pp)"]) else "N/A"
             is_new_sector = leader["Sector"] in newly_entered_sectors
             card_border = "#eab308" if is_new_sector else "#166534"
             card_accent = "#eab308" if is_new_sector else "#22c55e"
@@ -1868,9 +1869,9 @@ if leading_sector_rows:
             leader_col.markdown(
                 f'<div style="border:1px solid {card_border};border-left:4px solid {card_accent};border-radius:12px;padding:12px 14px;min-height:118px;background:{card_bg};">'
                 f'<div style="font-size:13px;color:{card_title};margin-bottom:8px;">{"🟨 NEW · " if is_new_sector else ""}{leader["Sector"]}</div>'
-                f'<div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{card_accent};">{leader["Multi-timeframe score (pp)"]:+.2f} score</div>'
+                f'<div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{card_accent};">{leader["Multi-timeframe score (pp)"]:+.2f} pp composite</div>'
                 f'<div style="font-size:12px;color:{card_text};">1W: sector {leader["Sector 1W (%)"]:+.2f}% · NIFTY {leader["NIFTY 1W (%)"]:+.2f}%</div>'
-                f'<div style="font-size:12px;color:{card_text};">Relative vs NIFTY · 1W {leader["1W outperformance (pp)"]:+.2f} pp · 1M {month_confirmation} · 3M {f"{leader[\"3M outperformance (pp)\"]:+.2f} pp" if pd.notna(leader["3M outperformance (pp)"]) else "N/A"}</div>'
+                f'<div style="font-size:12px;color:{card_text};">Relative vs NIFTY · 1W {leader["1W outperformance (pp)"]:+.2f} pp · 1M {month_confirmation} · 3M {three_month_confirmation}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
