@@ -511,10 +511,17 @@ with st.sidebar:
                     st.success("FYERS session refreshed.")
                     st.rerun()
                 else:
-                    st.error(f"Token refresh failed: {refresh_error}. The refresh token may have expired; reconnect FYERS if needed.")
+                    st.error(f"Token refresh failed: {refresh_error}. Reconnect using the full FYERS login below.")
+            # Always keep a full-login option visible when a refresh token exists but no longer works.
+            st.link_button(
+                "Log in to FYERS",
+                fyers_login_url(fyers_app_id, fyers_redirect_uri, fyers_make_state(fyers_app_secret)),
+                use_container_width=True,
+            )
+            st.caption("Use full FYERS login if session refresh fails. Access tokens expire daily at 6:30 AM.")
         else:
             st.link_button(
-                "Connect FYERS account",
+                "Log in to FYERS",
                 fyers_login_url(fyers_app_id, fyers_redirect_uri, fyers_make_state(fyers_app_secret)),
                 use_container_width=True,
             )
