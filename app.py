@@ -1739,7 +1739,7 @@ else:
                 gauge_fig.update_layout(template="plotly_dark", height=250, margin=dict(l=8,r=8,t=48,b=8), paper_bgcolor="rgba(0,0,0,0)")
                 fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
                 fear_col.markdown(f'<div style="text-align:center;font-weight:700;color:{fear_color};font-size:16px;margin-top:-8px;">{fear_label}</div>', unsafe_allow_html=True)
-                fear_col.caption("Proxy score from RSI, EMA trend, 20-session momentum and India VIX. Not an official index or trading signal.")
+                # Explanatory caption removed to save vertical space.
             else:
                 fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
 
@@ -1747,7 +1747,7 @@ else:
 
 # Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
 st.markdown("### Leading sectors")
-st.caption("Top 4 sectors with positive relative performance versus NIFTY 50 over the latest 5 trading sessions, ranked by weekly outperformance. 1-month relative performance confirms the trend. Each sector shows its top 5 stocks by 5-session return. Data may be delayed.")
+# Explanatory caption removed to save vertical space.
 # Representative liquid stocks by sector; rank only when source history is available.
 SECTOR_LEADING_STOCKS = {
     "Pharma": [("SUN Pharma", "SUNPHARMA.NS"), ("Dr Reddy's", "DRREDDY.NS"), ("Cipla", "CIPLA.NS"), ("Divi's Labs", "DIVISLAB.NS"), ("Lupin", "LUPIN.NS"), ("Torrent Pharma", "TORNTPHARM.NS")],
