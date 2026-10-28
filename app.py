@@ -1765,12 +1765,13 @@ SECTOR_LEADING_STOCKS = {
 }
 
 leading_sector_rows = []
-with st.spinner("Checking weekly sector momentum…"):
+with st.spinner("Checking multi-timeframe sector strength…"):
     weekly_nifty_df, weekly_nifty_err = get_history("^NSEI", "3mo", "1d")
     weekly_nifty_close = weekly_nifty_df["Close"].dropna() if not weekly_nifty_df.empty else pd.Series(dtype=float)
     if len(weekly_nifty_close) >= 6:
         nifty_week_return = (float(weekly_nifty_close.iloc[-1]) / float(weekly_nifty_close.iloc[-6]) - 1) * 100
         nifty_month_return = (float(weekly_nifty_close.iloc[-1]) / float(weekly_nifty_close.iloc[-22]) - 1) * 100 if len(weekly_nifty_close) >= 22 else np.nan
+        nifty_3m_return = (float(weekly_nifty_close.iloc[-1]) / float(weekly_nifty_close.iloc[-63]) - 1) * 100 if len(weekly_nifty_close) >= 63 else np.nan
         for sector, ticker in SECTOR_TICKERS.items():
             sector_df, sector_err = get_history(ticker, "3mo", "1d")
             if not sector_df.empty:
@@ -1778,20 +1779,27 @@ with st.spinner("Checking weekly sector momentum…"):
                 if len(sector_close) >= 6 and len(weekly_nifty_close) >= 6:
                     sector_week_return = (float(sector_close.iloc[-1]) / float(sector_close.iloc[-6]) - 1) * 100
                     sector_month_return = (float(sector_close.iloc[-1]) / float(sector_close.iloc[-22]) - 1) * 100 if len(sector_close) >= 22 else np.nan
+                    sector_3m_return = (float(sector_close.iloc[-1]) / float(sector_close.iloc[-63]) - 1) * 100 if len(sector_close) >= 63 else np.nan
                     relative_week = sector_week_return - nifty_week_return
                     relative_month = sector_month_return - nifty_month_return if pd.notna(sector_month_return) and pd.notna(nifty_month_return) else np.nan
-                    if pd.notna(relative_week):
+                    relative_3m = sector_3m_return - nifty_3m_return if pd.notna(sector_3m_return) and pd.notna(nifty_3m_return) else np.nan
+                    score_parts = [(relative_week, 0.30), (relative_month, 0.40), (relative_3m, 0.30)]
+                    valid_parts = [(value, weight) for value, weight in score_parts if pd.notna(value)]
+                    leadership_score = sum(value * weight for value, weight in valid_parts) / sum(weight for _, weight in valid_parts) if valid_parts else np.nan
+                    if pd.notna(leadership_score):
                         leading_sector_rows.append({
                             "Sector": sector,
                             "Sector 1W (%)": sector_week_return,
                             "NIFTY 1W (%)": nifty_week_return,
                             "1W outperformance (pp)": relative_week,
                             "1M outperformance (pp)": relative_month,
+                            "3M outperformance (pp)": relative_3m,
+                            "Multi-timeframe score (pp)": leadership_score,
                         })
 if leading_sector_rows:
     leading_df = pd.DataFrame(leading_sector_rows)
-    ranked_sectors = leading_df.sort_values("1W outperformance (pp)", ascending=False).copy()
-    leaders = ranked_sectors[ranked_sectors["1W outperformance (pp)"] > 0].head(4).copy()
+    ranked_sectors = leading_df.sort_values("Multi-timeframe score (pp)", ascending=False).copy()
+    leaders = ranked_sectors[ranked_sectors["Multi-timeframe score (pp)"] > 0].head(4).copy()
     current_top_names = leaders["Sector"].tolist()
 
     # Detect a genuine transition from relative underperformance (<= 0 pp)
@@ -1846,7 +1854,7 @@ if leading_sector_rows:
                 st.warning("🔔 Sector leadership changed · " + " · ".join(alert_parts))
     st.session_state["previous_top_4_sectors"] = current_top_names
     if leaders.empty:
-        st.info("No sector is outperforming NIFTY 50 over the latest 5 trading sessions.")
+        st.info("No sector has a positive multi-timeframe leadership score versus NIFTY 50.")
     else:
         leader_cols = st.columns(len(leaders))
         for leader_col, (_, leader) in zip(leader_cols, leaders.iterrows()):
@@ -1860,9 +1868,9 @@ if leading_sector_rows:
             leader_col.markdown(
                 f'<div style="border:1px solid {card_border};border-left:4px solid {card_accent};border-radius:12px;padding:12px 14px;min-height:118px;background:{card_bg};">'
                 f'<div style="font-size:13px;color:{card_title};margin-bottom:8px;">{"🟨 NEW · " if is_new_sector else ""}{leader["Sector"]}</div>'
-                f'<div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{card_accent};">+{leader["1W outperformance (pp)"]:.2f} pp</div>'
+                f'<div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{card_accent};">{leader["Multi-timeframe score (pp)"]:+.2f} score</div>'
                 f'<div style="font-size:12px;color:{card_text};">1W: sector {leader["Sector 1W (%)"]:+.2f}% · NIFTY {leader["NIFTY 1W (%)"]:+.2f}%</div>'
-                f'<div style="font-size:12px;color:{card_text};">1M relative strength: {month_confirmation}</div>'
+                f'<div style="font-size:12px;color:{card_text};">Relative vs NIFTY · 1W {leader["1W outperformance (pp)"]:+.2f} pp · 1M {month_confirmation} · 3M {f"{leader[\"3M outperformance (pp)\"]:+.2f} pp" if pd.notna(leader["3M outperformance (pp)"]) else "N/A"}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
