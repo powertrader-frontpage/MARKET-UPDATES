@@ -584,6 +584,41 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
 
 
 
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_eia_brent_spot() -> tuple[pd.DataFrame, str | None]:
+    """Fetch official EIA daily Europe Brent spot prices (not futures) via EIA API."""
+    try:
+        url = "https://api.eia.gov/v2/petroleum/pri/spt/data/"
+        params = {
+            "api_key": "DEMO_KEY",
+            "frequency": "daily",
+            "data[0]": "value",
+            "facets[series][]": "RBRTE",
+            "sort[0][column]": "period",
+            "sort[0][direction]": "desc",
+            "length": "30",
+        }
+        response = requests.get(url, params=params, timeout=15, headers={"User-Agent": "MarketIntelligenceTerminal/1.0"})
+        response.raise_for_status()
+        rows = response.json().get("response", {}).get("data", [])
+        if not rows:
+            return pd.DataFrame(), "EIA returned no daily Brent spot observations."
+        frame = pd.DataFrame(rows)
+        frame["Date"] = pd.to_datetime(frame["period"], errors="coerce")
+        frame["Close"] = pd.to_numeric(frame["value"], errors="coerce")
+        frame = frame.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
+        if frame.empty:
+            return pd.DataFrame(), "EIA Brent data contained no valid dated prices."
+        frame["Open"] = frame["Close"]
+        frame["High"] = frame["Close"]
+        frame["Low"] = frame["Close"]
+        frame["Volume"] = np.nan
+        frame["Date"] = frame["Date"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
+        return frame[["Date", "Open", "High", "Low", "Close", "Volume"]].reset_index(drop=True), None
+    except Exception as exc:
+        return pd.DataFrame(), f"EIA Brent fetch failed: {type(exc).__name__}: {str(exc)[:180]}"
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, str | None]:
     """Fetch best-effort market history from Yahoo Finance via yfinance; never synthesize rows."""
@@ -739,8 +774,11 @@ market_data: dict[str, pd.DataFrame] = {}
 market_errors: dict[str, str | None] = {}
 with st.spinner("Loading best-effort public market data…"):
     for name, ticker in INDEXES.items():
-        # For equities and indices, fetch daily bars for stable technical calculations.
-        hist, err = get_history(ticker, period, "1d")
+        # Use official EIA daily Brent spot, not a rolling futures ticker.
+        if name == "Brent Crude":
+            hist, err = get_eia_brent_spot()
+        else:
+            hist, err = get_history(ticker, period, "1d")
         market_data[name], market_errors[name] = hist, err
 
 now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
@@ -771,12 +809,6 @@ st.markdown("""
 cols = st.columns(5)
 for col, name in zip(cols, headline_names):
     df = market_data[name]
-    # Yahoo's continuous Brent ticker (BZ=F) is currently diverging materially
-    # from the published ICE/Reuters benchmark. Do not display an unverified
-    # Brent price as if it were the benchmark until the source is reconciled.
-    if name == "Brent Crude":
-        col.metric(name, "Source mismatch", "Temporarily excluded from signals")
-        continue
     snap = quote_snapshot(df)
     if snap:
         last, change, pct = snap
@@ -909,8 +941,24 @@ if not gift_loaded:
         "Source bar": "24 Oct 2026 · stale",
     })
     sentiment_errors.append("GIFT Nifty live quote unavailable; showing the last confirmed 24 Oct snapshot for reference only (" + "; ".join(gift_failures) + ")")
-# Brent is deliberately excluded from global sentiment until its source/contract
-# can be reconciled with the published benchmark; a bad reading must not distort the score.
+# Use the same official EIA Brent spot series as the headline; do not mix futures data.
+try:
+    brent_frame = market_data.get("Brent Crude", pd.DataFrame())
+    brent_snap = quote_snapshot(brent_frame)
+    if brent_snap:
+        last, change, pct = brent_snap
+        contribution = -float(np.clip(pct, -5, 5)) * 0.10
+        sentiment_parts.append((contribution, 0.10))
+        sentiment_details.append({
+            "Factor": "Brent crude spot (inverse impact)",
+            "Latest change": f"{fmt(change)} ({fmt(pct)}%)",
+            "Signal": "Positive" if change < 0 else "Negative" if change > 0 else "Neutral",
+            "Source bar": pd.to_datetime(last["Date"]).strftime("%Y-%m-%d") + " · EIA daily spot",
+        })
+    else:
+        sentiment_errors.append("Brent crude spot: EIA data unavailable")
+except Exception as exc:
+    sentiment_errors.append("Brent crude spot: " + type(exc).__name__)
 _sentiment_change("USD/INR (inverse impact)", "INR=X", 0.05, inverse=True)
 
 # Fetch the latest NSE-published cash-market FII/FPI and DII net flows.
