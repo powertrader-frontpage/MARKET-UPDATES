@@ -1275,9 +1275,17 @@ def _nse_fii_dii_latest():
             current = result.get(key)
             if current is None or (pd.notna(parsed_date) and (pd.isna(current.get("_parsed_date")) or parsed_date > current["_parsed_date"])):
                 result[key] = {"net": net_value, "date": date_label, "_parsed_date": parsed_date}
+        # Only publish the pair when both categories have a valid, matching reporting date.
+        # This prevents a newer FII value being combined with an older DII value.
+        if "FII/FPI" not in result or "DII" not in result:
+            return {}
+        fii_date = result["FII/FPI"].get("_parsed_date")
+        dii_date = result["DII"].get("_parsed_date")
+        if pd.isna(fii_date) or pd.isna(dii_date) or pd.Timestamp(fii_date).date() != pd.Timestamp(dii_date).date():
+            return {}
         for value in result.values():
             value.pop("_parsed_date", None)
-        return result if "FII/FPI" in result and "DII" in result else {}
+        return result
 
     session = requests.Session()
     try:
@@ -2409,7 +2417,17 @@ with tabs[4]:
 
 with tabs[5]:
     st.subheader("FII/DII and macro data")
-    st.info("This free edition does not scrape or invent FII/DII values. Use the official reports below; values are not shown as current unless a source has actually been connected and timestamped.")
+    if fii_dii_flows and "FII/FPI" in fii_dii_flows and "DII" in fii_dii_flows:
+        fii_row = fii_dii_flows["FII/FPI"]
+        dii_row = fii_dii_flows["DII"]
+        fii_dii_table = pd.DataFrame([
+            {"Investor category": "FII / FPI", "Net cash-market flow (₹ crore)": fii_row["net"], "Flow": "Net buying" if fii_row["net"] > 0 else "Net selling" if fii_row["net"] < 0 else "Neutral", "Reporting date": fii_row["date"], "Source": "NSE"},
+            {"Investor category": "DII", "Net cash-market flow (₹ crore)": dii_row["net"], "Flow": "Net buying" if dii_row["net"] > 0 else "Net selling" if dii_row["net"] < 0 else "Neutral", "Reporting date": dii_row["date"], "Source": "NSE"},
+        ])
+        st.dataframe(fii_dii_table, use_container_width=True, hide_index=True)
+        st.caption("Source: NSE published cash-market flows. Both categories are shown only when their reporting dates match. Figures may be provisional or revised; this is not an intraday feed.")
+    else:
+        st.warning("FII/DII values are currently unavailable or could not be verified for the same reporting date. No values are estimated. Check the official NSE report below.")
     st.markdown("- [NSE FII/DII reports](https://www.nseindia.com/reports/fii-dii) — official published data")
     st.markdown("- [NSE all reports](https://www.nseindia.com/all-reports)")
     st.markdown("- [RBI statistics and publications](https://www.rbi.org.in/)")
