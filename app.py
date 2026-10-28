@@ -819,6 +819,13 @@ for col, name in zip(cols, headline_names):
     snap = quote_snapshot(df)
     if snap:
         last, change, pct = snap
+        # EIA Brent spot is published with a lag. Never present an old observation as current.
+        if name == "Brent Crude":
+            brent_date = pd.to_datetime(last["Date"])
+            brent_age_days = (now_ist.date() - brent_date.date()).days
+            if brent_age_days > 3:
+                col.metric(name, fmt(last["Close"]), f"STALE · EIA date {brent_date.strftime('%d %b %Y')}", delta_color="off")
+                continue
         # Inverse-impact instruments: lower USD/INR (stronger rupee) and lower India VIX
         # (less expected volatility) are generally supportive; higher values are headwinds.
         if name == "USD/INR":
@@ -954,14 +961,19 @@ try:
     brent_snap = quote_snapshot(brent_frame)
     if brent_snap:
         last, change, pct = brent_snap
-        contribution = -float(np.clip(pct, -5, 5)) * 0.10
-        sentiment_parts.append((contribution, 0.10))
-        sentiment_details.append({
-            "Factor": "Brent crude spot (inverse impact)",
-            "Latest change": f"{fmt(change)} ({fmt(pct)}%)",
-            "Signal": "Positive" if change < 0 else "Negative" if change > 0 else "Neutral",
-            "Source bar": pd.to_datetime(last["Date"]).strftime("%Y-%m-%d") + " · EIA daily spot",
-        })
+        brent_date = pd.to_datetime(last["Date"])
+        brent_age_days = (now_ist.date() - brent_date.date()).days
+        if brent_age_days > 3:
+            sentiment_errors.append(f"Brent crude spot excluded from sentiment: EIA observation is stale ({brent_date.strftime('%Y-%m-%d')}, {brent_age_days} days old)")
+        else:
+            contribution = -float(np.clip(pct, -5, 5)) * 0.10
+            sentiment_parts.append((contribution, 0.10))
+            sentiment_details.append({
+                "Factor": "Brent crude spot (inverse impact)",
+                "Latest change": f"{fmt(change)} ({fmt(pct)}%)",
+                "Signal": "Positive" if change < 0 else "Negative" if change > 0 else "Neutral",
+                "Source bar": brent_date.strftime("%Y-%m-%d") + " · EIA daily spot",
+            })
     else:
         sentiment_errors.append("Brent crude spot: EIA data unavailable")
 except Exception as exc:
