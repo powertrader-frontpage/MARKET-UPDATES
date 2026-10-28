@@ -1799,7 +1799,8 @@ with st.spinner("Checking multi-timeframe sector strength…"):
 if leading_sector_rows:
     leading_df = pd.DataFrame(leading_sector_rows)
     ranked_sectors = leading_df.sort_values("Multi-timeframe score (pp)", ascending=False).copy()
-    leaders = ranked_sectors[ranked_sectors["Multi-timeframe score (pp)"] > 0].head(4).copy()
+    # Always show the four strongest sectors, even if fewer than four have a positive composite score.
+    leaders = ranked_sectors.head(4).copy()
     current_top_names = leaders["Sector"].tolist()
 
     # Detect a genuine transition from relative underperformance (<= 0 pp)
@@ -1854,7 +1855,7 @@ if leading_sector_rows:
                 st.warning("🔔 Sector leadership changed · " + " · ".join(alert_parts))
     st.session_state["previous_top_4_sectors"] = current_top_names
     if leaders.empty:
-        st.info("No sector has a positive multi-timeframe leadership score versus NIFTY 50.")
+        st.info("Sector strength data is currently unavailable.")
     else:
         leader_cols = st.columns(len(leaders))
         for leader_col, (_, leader) in zip(leader_cols, leaders.iterrows()):
@@ -1867,11 +1868,11 @@ if leading_sector_rows:
             card_title = "#fde68a" if is_new_sector else "#86efac"
             card_text = "#fef3c7" if is_new_sector else "#a7f3d0"
             leader_col.markdown(
-                f'<div style="border:1px solid {card_border};border-left:4px solid {card_accent};border-radius:12px;padding:12px 14px;min-height:118px;background:{card_bg};">'
-                f'<div style="font-size:13px;color:{card_title};margin-bottom:8px;">{"🟨 NEW · " if is_new_sector else ""}{leader["Sector"]}</div>'
-                f'<div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{card_accent};">{leader["Multi-timeframe score (pp)"]:+.2f} pp composite</div>'
-                f'<div style="font-size:12px;color:{card_text};">1W: sector {leader["Sector 1W (%)"]:+.2f}% · NIFTY {leader["NIFTY 1W (%)"]:+.2f}%</div>'
-                f'<div style="font-size:12px;color:{card_text};">Relative vs NIFTY · 1W {leader["1W outperformance (pp)"]:+.2f} pp · 1M {month_confirmation} · 3M {three_month_confirmation}</div>'
+                f'<div style="border:1px solid {card_border};border-left:4px solid {card_accent};border-radius:10px;padding:9px 10px;min-height:100px;background:{card_bg};">'
+                f'<div style="font-size:12px;color:{card_title};margin-bottom:4px;">{"🟨 NEW · " if is_new_sector else ""}{leader["Sector"]}</div>'
+                f'<div style="font-size:clamp(17px,2vw,22px);font-weight:700;color:{card_accent};">{leader["Multi-timeframe score (pp)"]:+.2f} pp</div>'
+                f'<div style="font-size:10px;color:{card_text};">1W: {leader["Sector 1W (%)"]:+.2f}% · NIFTY {leader["NIFTY 1W (%)"]:+.2f}%</div>'
+                f'<div style="font-size:10px;color:{card_text};">vs NIFTY: 1W {leader["1W outperformance (pp)"]:+.2f} · 1M {month_confirmation} · 3M {three_month_confirmation}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
