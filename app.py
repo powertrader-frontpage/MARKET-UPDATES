@@ -1303,7 +1303,17 @@ def _nse_fii_dii_latest():
             return {}
         fii_date = result["FII/FPI"].get("_parsed_date")
         dii_date = result["DII"].get("_parsed_date")
-        if pd.isna(fii_date) or pd.isna(dii_date) or pd.Timestamp(fii_date).date() != pd.Timestamp(dii_date).date():
+        # Compare parsed dates when possible. If the source date format cannot be parsed,
+        # accept only identical normalized date labels instead of suppressing valid values.
+        dates_match = (
+            pd.notna(fii_date) and pd.notna(dii_date)
+            and pd.Timestamp(fii_date).date() == pd.Timestamp(dii_date).date()
+        )
+        if pd.isna(fii_date) or pd.isna(dii_date):
+            fii_label = re.sub(r"[^a-z0-9]", "", str(result["FII/FPI"].get("date", "")).lower())
+            dii_label = re.sub(r"[^a-z0-9]", "", str(result["DII"].get("date", "")).lower())
+            dates_match = bool(fii_label) and fii_label == dii_label
+        if not dates_match:
             return {}
         for value in result.values():
             value.pop("_parsed_date", None)
