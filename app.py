@@ -1407,7 +1407,7 @@ def _nse_fii_dii_latest():
         payload = fallback_response.json()
         source_name = str(payload.get("source", "")).strip().lower()
         date_raw = payload.get("date", "")
-        parsed_date = pd.to_datetime(str(date_raw), errors="coerce")
+        parsed_date = pd.to_datetime(str(date_raw), errors="coerce", dayfirst=True)
         today = pd.Timestamp.now(tz="Asia/Kolkata").date()
         if source_name not in {"", "placeholder"} and pd.notna(parsed_date) and 0 <= (today - parsed_date.date()).days <= 5:
             equity = payload.get("equity", {})
