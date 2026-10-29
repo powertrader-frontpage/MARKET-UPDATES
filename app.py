@@ -1093,6 +1093,29 @@ sentiment_details = []
 sentiment_errors = []
 def _sentiment_change(label, ticker, weight, inverse=False):
     try:
+        # Yahoo Finance can leave the London-listed Reliance GDR on the prior session.
+        # Use Sharecast's current quote for this instrument and never present a stale Yahoo bar as today's move.
+        if ticker == "RIGD.L":
+            rigd_url = "https://www.sharecast.com/equity/Reliance_Industries_Ltd_GDR_144A/charts"
+            rigd_response = requests.get(
+                rigd_url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36"},
+                timeout=12,
+            )
+            rigd_response.raise_for_status()
+            rigd_text = html.unescape(re.sub(r"<[^>]+>", " ", rigd_response.text))
+            rigd_text = re.sub(r"\\s+", " ", rigd_text)
+            rigd_pct_match = re.search(r"%\\s*Change\\s*([+-]?\\d+(?:\\.\\d+)?)\\s*%", rigd_text, re.IGNORECASE)
+            rigd_date_match = re.search(r"(\\d{1,2}:\\d{2})\\s+(\\d{1,2}/\\d{1,2}/\\d{2})", rigd_text)
+            if not rigd_pct_match:
+                raise ValueError("Sharecast did not provide a parseable current percentage change")
+            pct = float(rigd_pct_match.group(1))
+            score = 1 if pct > 0 else -1 if pct < 0 else 0
+            sentiment_parts.append((score, weight))
+            sentiment_signal = "Positive" if score > 0 else "Negative" if score < 0 else "Flat"
+            quote_stamp = f"{rigd_date_match.group(2)} {rigd_date_match.group(1)} UK time" if rigd_date_match else "current quote; timestamp unavailable"
+            sentiment_details.append({"Factor": label, "Weight": f"{weight * 100:g}%", "Latest change": f"{pct:+.2f}%", "Signal": sentiment_signal, "Source bar": f"Sharecast · {quote_stamp}"})
+            return
         frame, err = get_history(ticker, "1mo", "1d")
         snap = quote_snapshot(frame)
         if not snap:
