@@ -1380,6 +1380,47 @@ def _nse_fii_dii_latest():
                 }
     except Exception:
         pass
+
+    # Secondary public-source fallback: Groww publishes the same daily cash-market flow
+    # figures in a structured HTML table when NSE endpoints are blocked for cloud hosts.
+    try:
+        groww_response = requests.get(
+            "https://groww.in/fii-dii-data",
+            headers={
+                "User-Agent": headers["User-Agent"],
+                "Accept-Language": "en-IN,en;q=0.9",
+            },
+            timeout=12,
+        )
+        groww_response.raise_for_status()
+        for table in pd.read_html(groww_response.text):
+            table = table.copy()
+            if isinstance(table.columns, pd.MultiIndex):
+                table.columns = [" ".join(str(part) for part in col if str(part) != "nan").strip() for col in table.columns]
+            column_names = {str(col).strip().lower(): col for col in table.columns}
+            date_col = next((col for name, col in column_names.items() if name == "date" or "date" in name), None)
+            fii_col = next((col for name, col in column_names.items() if "fii" in name and ("net" in name or "buy/sell" in name)), None)
+            dii_col = next((col for name, col in column_names.items() if "dii" in name and ("net" in name or "buy/sell" in name)), None)
+            if fii_col is None or dii_col is None:
+                # Groww's daily table may use grouped headers; inspect flattened labels.
+                continue
+            for _, row in table.iterrows():
+                date_raw = row.get(date_col, "") if date_col is not None else ""
+                parsed_date = pd.to_datetime(str(date_raw), errors="coerce", dayfirst=True)
+                today = pd.Timestamp.now(tz="Asia/Kolkata").date()
+                if pd.isna(parsed_date) or not 0 <= (today - parsed_date.date()).days <= 5:
+                    continue
+                fii_net = _number(row.get(fii_col))
+                dii_net = _number(row.get(dii_col))
+                if pd.notna(fii_net) and pd.notna(dii_net):
+                    date_label = _date_text(date_raw)
+                    label = "Groww (NSE cash-market data)"
+                    return {
+                        "FII/FPI": {"net": float(fii_net), "date": date_label, "source": label},
+                        "DII": {"net": float(dii_net), "date": date_label, "source": label},
+                    }
+    except Exception:
+        pass
     return {}
 
 fii_dii_flows = _nse_fii_dii_latest()
