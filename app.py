@@ -1351,14 +1351,43 @@ def _nse_fii_dii_latest():
                 return normalized
     except Exception:
         pass
+
+    # Last-resort fallback: independent public collector that publishes NSE-sourced
+    # daily cash-market flows as JSON. Reject placeholders, stale dates, and mismatched values.
+    try:
+        fallback_url = "https://chirag127.github.io/fii-dii-activity-api/data/latest.json"
+        fallback_response = requests.get(
+            fallback_url,
+            headers={"User-Agent": headers["User-Agent"], "Accept": "application/json"},
+            timeout=10,
+        )
+        fallback_response.raise_for_status()
+        payload = fallback_response.json()
+        source_name = str(payload.get("source", "")).strip().lower()
+        date_raw = payload.get("date", "")
+        parsed_date = pd.to_datetime(str(date_raw), errors="coerce")
+        today = pd.Timestamp.now(tz="Asia/Kolkata").date()
+        if source_name not in {"", "placeholder"} and pd.notna(parsed_date) and 0 <= (today - parsed_date.date()).days <= 5:
+            equity = payload.get("equity", {})
+            fii_net = _number(equity.get("fii_net"))
+            dii_net = _number(equity.get("dii_net"))
+            if pd.notna(fii_net) and pd.notna(dii_net):
+                date_label = _date_text(date_raw)
+                label = f"Public FII/DII fallback ({source_name})"
+                return {
+                    "FII/FPI": {"net": float(fii_net), "date": date_label, "source": label},
+                    "DII": {"net": float(dii_net), "date": date_label, "source": label},
+                }
+    except Exception:
+        pass
     return {}
 
 fii_dii_flows = _nse_fii_dii_latest()
 for flow_name, flow_weight in [("FII/FPI", 0.025), ("DII", 0.025)]:
     flow = fii_dii_flows.get(flow_name)
     if flow is None:
-        sentiment_errors.append(f"{flow_name} cash-market flow: unavailable from NSE")
-        sentiment_details.append({"Factor": f"{flow_name} net flow (NSE cash market)", "Weight": f"{flow_weight * 100:g}%", "Latest change": "Unavailable", "Signal": "Unavailable", "Source bar": "NSE data not retrieved"})
+        sentiment_errors.append(f"{flow_name} cash-market flow: unavailable from configured sources")
+        sentiment_details.append({"Factor": f"{flow_name} net flow (cash market)", "Weight": f"{flow_weight * 100:g}%", "Latest change": "Unavailable", "Signal": "Unavailable", "Source bar": "No verified data retrieved"})
         continue
     net_flow = flow["net"]
     flow_score = 1 if net_flow > 0 else -1 if net_flow < 0 else 0
@@ -2468,11 +2497,11 @@ with tabs[5]:
         fii_row = fii_dii_flows["FII/FPI"]
         dii_row = fii_dii_flows["DII"]
         fii_dii_table = pd.DataFrame([
-            {"Investor category": "FII / FPI", "Net cash-market flow (₹ crore)": fii_row["net"], "Flow": "Net buying" if fii_row["net"] > 0 else "Net selling" if fii_row["net"] < 0 else "Neutral", "Reporting date": fii_row["date"], "Source": "NSE"},
-            {"Investor category": "DII", "Net cash-market flow (₹ crore)": dii_row["net"], "Flow": "Net buying" if dii_row["net"] > 0 else "Net selling" if dii_row["net"] < 0 else "Neutral", "Reporting date": dii_row["date"], "Source": "NSE"},
+            {"Investor category": "FII / FPI", "Net cash-market flow (₹ crore)": fii_row["net"], "Flow": "Net buying" if fii_row["net"] > 0 else "Net selling" if fii_row["net"] < 0 else "Neutral", "Reporting date": fii_row["date"], "Source": fii_row.get("source", "NSE")},
+            {"Investor category": "DII", "Net cash-market flow (₹ crore)": dii_row["net"], "Flow": "Net buying" if dii_row["net"] > 0 else "Net selling" if dii_row["net"] < 0 else "Neutral", "Reporting date": dii_row["date"], "Source": dii_row.get("source", "NSE")},
         ])
         st.dataframe(fii_dii_table, use_container_width=True, hide_index=True)
-        st.caption("Source: NSE published cash-market flows. Both categories are shown only when their reporting dates match. Figures may be provisional or revised; this is not an intraday feed.")
+        st.caption("NSE data is preferred. If unavailable, a public fallback is used only when its source is identified, its date is recent, and both values are present. Figures are daily cash-market flows, not intraday data.")
     else:
         st.warning("FII/DII values are currently unavailable or could not be verified for the same reporting date. No values are estimated. Check the official NSE report below.")
     st.markdown("- [NSE FII/DII reports](https://www.nseindia.com/reports/fii-dii) — official published data")
