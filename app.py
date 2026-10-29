@@ -2854,7 +2854,20 @@ with tabs[3]:
             for idx, (_, row) in enumerate(ranked.iterrows()):
                 with cards[idx % 2]:
                     zone_color = {"Leading":"#198754","Improving":"#2864c5","Weakening":"#c27c16","Lagging":"#c92a2a"}.get(row["Zone"], "#64748b")
-                    st.markdown(f'<div style="border:1px solid #dbe2ea;border-radius:18px;padding:15px;margin-bottom:12px;background:rgba(255,255,255,.025);"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><span style="background:#2864eb;color:white;border-radius:999px;padding:4px 10px;font-weight:800;">#{idx+1}</span><span style="border:1px solid {zone_color};color:{zone_color};border-radius:999px;padding:3px 10px;font-weight:700;">{row["Zone"]}</span></div><h3 style="margin:12px 0 4px;">{html.escape(str(row["Micro sector"]))}</h3><div style="opacity:.75;font-size:13px;">{html.escape(str(row["Group"]))} · {int(row["Stocks available"])} stocks · Score {int(row["Score"])}</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:14px;">{''.join([f"<div><small>{period_label}</small><br><b style=\"color:{'#198754' if value >= 0 else '#c92a2a'}\">{value:+.1f}%</b></div>" for period_label,value in [('1M',row['1M %']),('3M',row['3M %']),('6M',row['6M %'])]])}</div></div>', unsafe_allow_html=True)
+                    metric_html = "".join(
+                        f'<div><small>{label}</small><br><b style="color:{("#198754" if value >= 0 else "#c92a2a")}">{value:+.1f}%</b></div>'
+                        for label, value in [("1M", row["1M %"]), ("3M", row["3M %"]), ("6M", row["6M %"])]
+                    )
+                    card_html = (
+                        f'<div style="border:1px solid #dbe2ea;border-radius:18px;padding:15px;margin-bottom:12px;background:rgba(255,255,255,.025);">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
+                        f'<span style="background:#2864eb;color:white;border-radius:999px;padding:4px 10px;font-weight:800;">#{idx+1}</span>'
+                        f'<span style="border:1px solid {zone_color};color:{zone_color};border-radius:999px;padding:3px 10px;font-weight:700;">{html.escape(str(row["Zone"]))}</span></div>'
+                        f'<h3 style="margin:12px 0 4px;">{html.escape(str(row["Micro sector"]))}</h3>'
+                        f'<div style="opacity:.75;font-size:13px;">{html.escape(str(row["Group"]))} · {int(row["Stocks available"])} stocks · Score {int(row["Score"])}</div>'
+                        f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:14px;">{metric_html}</div></div>'
+                    )
+                    st.markdown(card_html, unsafe_allow_html=True)
                     hist = micro_histories.get(row["Micro sector"], pd.Series(dtype=float))
                     if len(hist) > 2:
                         spark = go.Figure(go.Scatter(x=hist.index, y=hist.values, mode="lines", line=dict(color="#198754" if hist.iloc[-1] >= hist.iloc[-min(22,len(hist))] else "#c92a2a", width=2), fill="tozeroy"))
@@ -2912,7 +2925,18 @@ with tabs[3]:
             group_cols = st.columns(2)
             for j, (_, gr) in enumerate(group_df.head(12).iterrows()):
                 with group_cols[j % 2]:
-                    st.markdown(f'<div style="border:1px solid #dbe2ea;border-radius:14px;padding:13px;margin-bottom:9px;"><b>{html.escape(str(gr["Group"]))}</b><span style="float:right;font-size:20px;font-weight:800;">{gr["Average score"]:.0f}</span><div style="height:7px;background:#e2e8f0;border-radius:99px;margin:8px 0;"><div style="height:7px;width:{max(0,min(100,gr["Average score"])):.0f}%;background:linear-gradient(90deg,#60a5fa,#16a34a);border-radius:99px;"></div></div><small>{int(gr["Leading"])} of {int(gr["Micro sectors"])} leading · {int(gr["Micro sectors"])} micro sectors</small></div>', unsafe_allow_html=True)
+                    group_score = float(gr["Average score"])
+                    group_name = html.escape(str(gr["Group"]))
+                    group_leading = int(gr["Leading"])
+                    group_count = int(gr["Micro sectors"])
+                    st.markdown(
+                        f'<div style="border:1px solid #dbe2ea;border-radius:14px;padding:13px;margin-bottom:9px;">'
+                        f'<b>{group_name}</b><span style="float:right;font-size:20px;font-weight:800;">{group_score:.0f}</span>'
+                        f'<div style="height:7px;background:#e2e8f0;border-radius:99px;margin:8px 0;">'
+                        f'<div style="height:7px;width:{max(0,min(100,group_score)):.0f}%;background:linear-gradient(90deg,#60a5fa,#16a34a);border-radius:99px;"></div></div>'
+                        f'<small>{group_leading} of {group_count} leading · {group_count} micro sectors</small></div>',
+                        unsafe_allow_html=True,
+                    )
             st.subheader("Find a micro sector or stock")
             choices = sorted(MICRO_SECTORS.keys())
             chosen = st.selectbox("Select micro sector", choices, key="micro_sector_drilldown")
