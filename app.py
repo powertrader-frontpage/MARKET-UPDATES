@@ -1104,9 +1104,9 @@ def _sentiment_change(label, ticker, weight, inverse=False):
             )
             rigd_response.raise_for_status()
             rigd_text = html.unescape(re.sub(r"<[^>]+>", " ", rigd_response.text))
-            rigd_text = re.sub(r"\\s+", " ", rigd_text)
-            rigd_pct_match = re.search(r"%\\s*Change\\s*([+-]?\\d+(?:\\.\\d+)?)\\s*%", rigd_text, re.IGNORECASE)
-            rigd_date_match = re.search(r"(\\d{1,2}:\\d{2})\\s+(\\d{1,2}/\\d{1,2}/\\d{2})", rigd_text)
+            rigd_text = re.sub(r"\s+", " ", rigd_text)
+            rigd_pct_match = re.search(r"%\s*Change\s*([+-]?\d+(?:\.\d+)?)\s*%", rigd_text, re.IGNORECASE)
+            rigd_date_match = re.search(r"(\d{1,2}:\d{2})\s+(\d{1,2}/\d{1,2}/\d{2})", rigd_text)
             if not rigd_pct_match:
                 raise ValueError("Sharecast did not provide a parseable current percentage change")
             pct = float(rigd_pct_match.group(1))
