@@ -1393,11 +1393,11 @@ for flow_name, flow_weight in [("FII/FPI", 0.025), ("DII", 0.025)]:
     flow_score = 1 if net_flow > 0 else -1 if net_flow < 0 else 0
     sentiment_parts.append((flow_score, flow_weight))
     sentiment_details.append({
-        "Factor": f"{flow_name} net flow (NSE cash market)",
+        "Factor": f"{flow_name} net flow (cash market)",
         "Weight": f"{flow_weight * 100:g}%",
         "Latest change": f"₹{net_flow:+,.2f} crore",
         "Signal": "Positive" if flow_score > 0 else "Negative" if flow_score < 0 else "Flat",
-        "Source bar": flow["date"],
+        "Source bar": f'{flow["date"]} · {flow.get("source", "NSE")}',
     })
 _sentiment_change("Infosys ADR", "INFY", 0.10, inverse=False)
 _sentiment_change("Wipro ADR", "WIT", 0.00, inverse=False)
