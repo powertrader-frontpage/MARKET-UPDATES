@@ -48,6 +48,10 @@ div[data-testid="stDataFrame"]{border-radius:10px;overflow:hidden}
 st.title("📈 Market Intelligence Terminal")
 st.caption("Free hybrid edition · No broker API · Source-labelled data · Missing data stays missing")
 
+# Re-run the dashboard periodically so evening FII/DII data is fetched without a manual reload.
+# Streamlit Cloud may sleep when no browser session is active; reopening the app triggers a fresh fetch.
+st_autorefresh(interval=15 * 60 * 1000, key="market_terminal_auto_refresh")
+
 
 
 INDEXES = {
