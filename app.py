@@ -2679,6 +2679,263 @@ with tabs[3]:
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.warning("No sector index series were returned by the public source. No values have been substituted.")
+    # Micro Sector Tracker: custom equal-weight baskets for industries without dedicated NSE indices.
+    # Prices are source data from Yahoo Finance; unavailable constituents are excluded, never fabricated.
+    with st.expander("Micro Sector Tracker · ranked industries, rotation map & stock drill-down", expanded=False):
+        st.caption("Custom equal-weight stock baskets · ranks combine 1M/3M/6M returns and 50-EMA breadth. Public prices may be delayed. This is a research tool, not investment advice.")
+        MICRO_SECTORS = {
+            "API & CDMO": ("Pharma", ["DIVISLAB.NS","LAURUSLABS.NS","NEULANDLAB.NS","SHILPAMED.NS","SUVENPHAR.NS"]),
+            "Gaming": ("Niche", ["NAZARA.NS","ZENTEC.NS","DREAMFOLKS.NS"]),
+            "Engineering R&D": ("Technology", ["LTTS.NS","TATAELXSI.NS","KPITTECH.NS","CYIENT.NS"]),
+            "Telecom Equipment": ("Industrials", ["TEJASNET.NS","HFCL.NS","STLTECH.NS","ITI.NS"]),
+            "Jewellery": ("Consumer", ["TITAN.NS","KALYANKJIL.NS","PNGJL.NS","THANGAMAYL.NS","SENCO.NS"]),
+            "Broadcasting": ("Media & Services", ["SUNTV.NS","ZEEL.NS","TVTODAY.NS","NETWORK18.NS","NAZARA.NS"]),
+            "Brokers": ("Financials", ["ANGELONE.NS","MOTILALOFS.NS","BSE.NS","CDSL.NS","IIFLSEC.NS"]),
+            "Exchanges & Depositories": ("Financials", ["BSE.NS","CDSL.NS","CAMS.NS","KFINTECH.NS"]),
+            "Fintech & Payments": ("Financials", ["PAYTM.NS","POLICYBZR.NS","PBFINTECH.NS","CAMS.NS","KFINTECH.NS"]),
+            "Cooling (ACs & Fans)": ("Consumer Durables", ["VOLTAS.NS","BLUESTARCO.NS","AMBER.NS","HAVELLS.NS","CROMPTON.NS"]),
+            "Fluorochemicals": ("Chemicals", ["SRF.NS","NAVINFLUOR.NS","FLUOROCHEM.NS","GFL.NS"]),
+            "Specialty Chemicals": ("Chemicals", ["AARTIIND.NS","DEEPAKNTR.NS","CLEAN.NS","FINEORG.NS","GALAXYSURF.NS"]),
+            "Agrochemicals": ("Chemicals", ["PIIND.NS","UPL.NS","BAYERCROP.NS","RALLIS.NS","DHANUKA.NS"]),
+            "Paints & Coatings": ("Chemicals", ["ASIANPAINT.NS","BERGEPAINT.NS","KANSAINER.NS","INDIGOPNTS.NS"]),
+            "Cables & Wires": ("Industrials", ["POLYCAB.NS","KEI.NS","RRKABEL.NS","FINCABLES.NS"]),
+            "EMS & Electronics": ("Industrials", ["DIXON.NS","AMBER.NS","KAYNES.NS","SYRMA.NS","AVALON.NS"]),
+            "Defence Electronics": ("Defence", ["BEL.NS","BDL.NS","DATAPATTNS.NS","ASTRAMICRO.NS","PARAS.NS"]),
+            "Shipbuilding": ("Industrials", ["COCHINSHIP.NS","GRSE.NS","MAZDOCK.NS","SWANENERGY.NS"]),
+            "Railway Equipment": ("Industrials", ["TITAGARH.NS","RVNL.NS","TEXRAIL.NS","JWL.NS","RITES.NS"]),
+            "Industrial Automation": ("Industrials", ["ABB.NS","SIEMENS.NS","THERMAX.NS","HONAUT.NS","CGPOWER.NS"]),
+            "Power Transformers": ("Power", ["TRANSFORMERS.NS","VOLTAMP.NS","CGPOWER.NS","POWERINDIA.NS"]),
+            "Renewable Equipment": ("Power", ["SUZLON.NS","INOXWIND.NS","WAAREEENER.NS","PREMIERENE.NS","KPIGREEN.NS"]),
+            "Power Transmission": ("Power", ["KALPATPOWR.NS","KEC.NS","PFC.NS","REC.NS","POWERGRID.NS"]),
+            "Data Centres": ("Technology", ["ANANTRAJ.NS","NETWEB.NS","E2E.NS","TECHNOE.NS"]),
+            "Cybersecurity & IT Services": ("Technology", ["TANLA.NS","KELLTONTEC.NS","ZENSARTECH.NS","CYIENT.NS","LTTS.NS"]),
+            "Digital Platforms": ("Technology", ["INFOEDGE.NS","JUSTDIAL.NS","NAZARA.NS","CARTRADE.NS","INDIAMART.NS"]),
+            "Hospitals": ("Healthcare", ["APOLLOHOSP.NS","MAXHEALTH.NS","FORTIS.NS","RAINBOW.NS","KIMS.NS"]),
+            "Diagnostics": ("Healthcare", ["METROPOLIS.NS","LALPATHLAB.NS","VIJAYA.NS","THYROCARE.NS"]),
+            "Medical Devices": ("Healthcare", ["POLYMED.NS","CONCORDBIO.NS","YATHARTH.NS","ARTEMISMED.NS"]),
+            "Domestic Formulations": ("Pharma", ["ALKEM.NS","MANKIND.NS","TORNTPHARM.NS","GLENMARK.NS","AJANTAPHARM.NS"]),
+            "Biotech & Biosimilars": ("Pharma", ["BIOCON.NS","SYNGENE.NS","DRREDDY.NS","ZYDUSLIFE.NS"]),
+            "Diagnostics & Lab Services": ("Healthcare", ["METROPOLIS.NS","LALPATHLAB.NS","VIJAYA.NS","KRSNAA.NS"]),
+            "QSR & Food Service": ("Consumer", ["JUBLFOOD.NS","DEVYANI.NS","SAPPHIRE.NS","WESTLIFE.NS"]),
+            "Packaged Foods": ("Consumer", ["BRITANNIA.NS","BIKAJI.NS","GODREJAGRO.NS","TATACONSUM.NS","DODLA.NS"]),
+            "Sugar & Ethanol": ("Agri", ["BALRAMCHIN.NS","TRIVENI.NS","DWARKESH.NS","EIDPARRY.NS","RENUKA.NS"]),
+            "Dairy": ("Consumer", ["HATSUN.NS","DODLA.NS","HERITGFOOD.NS","PARAGMILK.NS"]),
+            "Spinning & Yarn": ("Textiles", ["VTL.NS","GOKEX.NS","SANGAMIND.NS","TRIDENT.NS","WELSPUNLIV.NS"]),
+            "Technical Textiles": ("Textiles", ["GARFIBRES.NS","SRF.NS","KPRMILL.NS","WELSPUNLIV.NS"]),
+            "Footwear": ("Consumer", ["BATAINDIA.NS","CAMPUS.NS","RELAXO.NS","METROBRAND.NS"]),
+            "Hotels & Resorts": ("Travel", ["INDHOTEL.NS","LEMONTREE.NS","CHALET.NS","EIHOTEL.NS","ITDC.NS"]),
+            "Travel Platforms": ("Travel", ["EASEMYTRIP.NS","IXIGO.NS","YATRA.NS","THOMASCOOK.NS"]),
+            "Logistics & Warehousing": ("Transport", ["DELHIVERY.NS","TCI.NS","MAHLOG.NS","BLUEDART.NS","ALLCARGO.NS"]),
+            "Ports & Marine Logistics": ("Transport", ["ADANIPORTS.NS","JSWINFRA.NS","GPPL.NS","COCHINSHIP.NS"]),
+            "Passenger Vehicles": ("Auto", ["M&M.NS","MARUTI.NS","TATAMOTORS.NS","HYUNDAI.NS"]),
+            "Auto Components": ("Auto", ["BHARATFORG.NS","BOSCHLTD.NS","SONACOMS.NS","UNOMINDA.NS","MOTHERSON.NS"]),
+            "Tyres": ("Auto", ["MRF.NS","APOLLOTYRE.NS","BALKRISIND.NS","CEATLTD.NS"]),
+            "EV Components": ("Auto", ["EXIDEIND.NS","AMARAJABAT.NS","SONACOMS.NS","UNOMINDA.NS","SANSERA.NS"]),
+            "Two-Wheeler Components": ("Auto", ["ENDURANCE.NS","BOSCHLTD.NS","MOTHERSON.NS","SUPRAJIT.NS"]),
+            "Building Materials": ("Construction", ["ASTRAL.NS","SUPREMEIND.NS","FINOLEXIND.NS","PRINCEPIPE.NS"]),
+            "Cement & Building Products": ("Construction", ["ULTRACEMCO.NS","SHREECEM.NS","DALBHARAT.NS","JKCEMENT.NS","RAMCOCEM.NS"]),
+            "Pipes & Fittings": ("Construction", ["ASTRAL.NS","SUPREMEIND.NS","FINPIPE.NS","JINDALSAW.NS"]),
+            "Real Estate Developers": ("Real Estate", ["DLF.NS","GODREJPROP.NS","OBEROIRLTY.NS","PRESTIGE.NS","PHOENIXLTD.NS"]),
+            "Building Interiors": ("Construction", ["GREENPANEL.NS","CENTURYPLY.NS","GREENPLY.NS","KAJARIACER.NS"]),
+            "Gold Loans": ("Financials", ["MUTHOOTFIN.NS","MANAPPURAM.NS","BAJAJHFL.NS"]),
+            "Microfinance": ("Financials", ["CREDITACC.NS","SPANDANA.NS","SURYODAY.NS","UGROCAP.NS"]),
+            "Small Finance Banks": ("Financials", ["AUBANK.NS","UJJIVANSFB.NS","EQUITASBNK.NS","ESAFSFB.NS"]),
+            "Asset Management": ("Financials", ["HDFCAMC.NS","NAM-INDIA.NS","UTIAMC.NS","ABSLAMC.NS"]),
+            "Insurance": ("Financials", ["HDFCLIFE.NS","SBILIFE.NS","ICICIPRULI.NS","LICI.NS"]),
+            "Capital Market Services": ("Financials", ["CDSL.NS","CAMS.NS","KFINTECH.NS","BSE.NS","MCX.NS"]),
+            "Paper & Packaging": ("Materials", ["JKPAPER.NS","TNPL.NS","HUHTAMAKI.NS","PFOCUS.NS"]),
+            "Glass & Containers": ("Materials", ["BOROSIL.NS","BORORENEW.NS","HINDWAREAP.NS","AGI.NS"]),
+            "Metals Recycling": ("Materials", ["MIDHANI.NS","HINDCOPPER.NS","NATIONALUM.NS","MOIL.NS"]),
+            "Mining & Minerals": ("Materials", ["NMDC.NS","COALINDIA.NS","VEDL.NS","HINDZINC.NS"]),
+            "Oilfield Services": ("Energy", ["OIL.NS","ONGC.NS","SEAMECLTD.NS","GTLINFRA.NS"]),
+            "City Gas Distribution": ("Energy", ["IGL.NS","MGL.NS","GUJGASLTD.NS","ATGL.NS"]),
+            "LPG & Gas Equipment": ("Energy", ["GAIL.NS","PETRONET.NS","GESHIP.NS","GULFPETRO.NS"]),
+            "Water & Waste Management": ("Utilities", ["IONEXCHANG.NS","EMS.NS","VA TECH WABAG.NS","ANTONY.NS"]),
+            "Agri Inputs": ("Agri", ["COROMANDEL.NS","CHAMBLFERT.NS","FACT.NS","NFL.NS"]),
+            "Seeds & Crop Science": ("Agri", ["KAVVERITEL.NS","PIIND.NS","RALLIS.NS","DHANUKA.NS"]),
+            "Fertilizers": ("Agri", ["COROMANDEL.NS","CHAMBLFERT.NS","FACT.NS","RCF.NS","NFL.NS"]),
+            "Education Services": ("Services", ["NIITLTD.NS","NIITMTS.NS","VERANDA.NS","APTECHT.NS"]),
+            "Staffing & HR Services": ("Services", ["TEAMLEASE.NS","QUESS.NS","NIITMTS.NS"]),
+            "Security & Facility Services": ("Services", ["SIS.NS","QUESS.NS","BVCL.NS"]),
+            "Hospitals & Wellness": ("Healthcare", ["KIMS.NS","YATHARTH.NS","RAINBOW.NS","ARTEMISMED.NS"]),
+            "Specialty Retail": ("Consumer", ["TRENT.NS","V2RETAIL.NS","ABFRL.NS","SHOPERSTOP.NS"]),
+            "Home Furnishings": ("Consumer", ["DREAMFOLKS.NS","WELSPUNLIV.NS","TRIDENT.NS","HINDWAREAP.NS"]),
+            "Alcoholic Beverages": ("Consumer", ["UNITDSPR.NS","RADICO.NS","UBL.NS","GLOBUSSPR.NS"]),
+            "Tobacco & Allied": ("Consumer", ["ITC.NS","GODFRYPHLP.NS","VSTIND.NS"]),
+            "Renewable Power Producers": ("Power", ["ADANIGREEN.NS","NTPCGREEN.NS","JSWENERGY.NS","NHPC.NS","SJVN.NS"]),
+            "Power Utilities": ("Power", ["NTPC.NS","POWERGRID.NS","TATAPOWER.NS","CESC.NS","TORNTPOWER.NS"]),
+            "IT Hardware": ("Technology", ["NETWEB.NS","DIXON.NS","KAYNES.NS","SYRMA.NS"]),
+            "Telecom Services": ("Telecom", ["BHARTIARTL.NS","IDEA.NS","INDUSTOWER.NS","TATACOMM.NS"]),
+            "Financial Technology": ("Financials", ["PAYTM.NS","POLICYBZR.NS","PBFINTECH.NS","ANGELONE.NS"]),
+        }
+        micro_tickers = sorted({ticker for _, tickers in MICRO_SECTORS.values() for ticker in tickers} | {"^CRSLDX"})
+        @st.cache_data(ttl=900, show_spinner=False)
+        def _micro_sector_download(symbols):
+            try:
+                raw = yf.download(list(symbols), period="1y", interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=True)
+                return raw
+            except Exception:
+                return pd.DataFrame()
+        if st.button("↻ Refresh micro-sector data", key="refresh_micro_sector_data"):
+            _micro_sector_download.clear()
+        with st.spinner(f"Fetching daily prices for {len(micro_tickers)-1} listed constituents…"):
+            micro_raw = _micro_sector_download(tuple(micro_tickers))
+        def _micro_close(symbol):
+            try:
+                if isinstance(micro_raw.columns, pd.MultiIndex):
+                    if (symbol, "Close") in micro_raw.columns:
+                        return micro_raw[(symbol, "Close")].dropna()
+                    if ("Close", symbol) in micro_raw.columns:
+                        return micro_raw[("Close", symbol)].dropna()
+                    return pd.Series(dtype=float)
+                if symbol == micro_tickers[0] and "Close" in micro_raw.columns:
+                    return micro_raw["Close"].dropna()
+            except Exception:
+                pass
+            return pd.Series(dtype=float)
+        bench = _micro_close("^CRSLDX")
+        if bench.empty:
+            st.warning("NIFTY 500 benchmark history is unavailable. Relative rotation scores are withheld until benchmark data is available.")
+        micro_rows = []
+        micro_histories = {}
+        if not micro_raw.empty:
+            for micro_name, (micro_group, symbols) in MICRO_SECTORS.items():
+                constituent_returns = []
+                constituent_breadth = []
+                constituent_series = []
+                for symbol in symbols:
+                    close = _micro_close(symbol)
+                    if len(close) < 60:
+                        continue
+                    close = close.sort_index()
+                    last = float(close.iloc[-1])
+                    ret1 = (last / float(close.iloc[-min(22, len(close))]) - 1) * 100
+                    ret3 = (last / float(close.iloc[-min(64, len(close))]) - 1) * 100
+                    ret6 = (last / float(close.iloc[-min(127, len(close))]) - 1) * 100
+                    ema50 = close.ewm(span=50, adjust=False, min_periods=50).mean()
+                    constituent_returns.append((ret1, ret3, ret6))
+                    constituent_breadth.append(float(last > float(ema50.iloc[-1])))
+                    constituent_series.append(close / float(close.iloc[-min(127, len(close))]) * 100)
+                if not constituent_returns:
+                    continue
+                arr = np.array(constituent_returns, dtype=float)
+                avg1, avg3, avg6 = np.nanmean(arr, axis=0)
+                breadth = float(np.mean(constituent_breadth)) * 100
+                composite = 0.25 * avg1 + 0.40 * avg3 + 0.25 * avg6 + 0.10 * ((breadth - 50) / 5)
+                micro_rows.append({"Micro sector": micro_name, "Group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1M %": avg1, "3M %": avg3, "6M %": avg6, "50 EMA breadth %": breadth, "_raw_score": composite})
+                if constituent_series:
+                    aligned = pd.concat(constituent_series, axis=1).sort_index()
+                    micro_histories[micro_name] = aligned.mean(axis=1)
+        micro_df = pd.DataFrame(micro_rows)
+        if not micro_df.empty:
+            for col in ["1M %", "3M %", "6M %", "_raw_score"]:
+                micro_df[col] = pd.to_numeric(micro_df[col], errors="coerce")
+            for col in ["1M %", "3M %", "6M %", "50 EMA breadth %"]:
+                micro_df[col + " percentile"] = micro_df[col].rank(pct=True) * 100
+            micro_df["Score"] = (micro_df["1M % percentile"] * 0.25 + micro_df["3M % percentile"] * 0.35 + micro_df["6M % percentile"] * 0.25 + micro_df["50 EMA breadth % percentile"] * 0.15).round().astype(int)
+            bench1 = bench.iloc[-1] / bench.iloc[-min(22, len(bench))] * 100 - 100 if len(bench) >= 22 else np.nan
+            bench3 = bench.iloc[-1] / bench.iloc[-min(64, len(bench))] * 100 - 100 if len(bench) >= 64 else np.nan
+            micro_df["1M vs NIFTY 500 (pp)"] = micro_df["1M %"] - bench1
+            micro_df["3M vs NIFTY 500 (pp)"] = micro_df["3M %"] - bench3
+            def _micro_zone(row):
+                ahead = pd.notna(row["3M vs NIFTY 500 (pp)"]) and row["3M vs NIFTY 500 (pp)"] >= 0
+                rising = pd.notna(row["1M vs NIFTY 500 (pp)"]) and row["1M vs NIFTY 500 (pp)"] >= 0
+                return "Leading" if ahead and rising else "Weakening" if ahead else "Improving" if rising else "Lagging"
+            micro_df["Zone"] = micro_df.apply(_micro_zone, axis=1)
+            micro_df = micro_df.sort_values("Score", ascending=False).reset_index(drop=True)
+            latest_dates = [s.index[-1] for s in [bench] if not s.empty]
+            asof = pd.Timestamp(latest_dates[0]).strftime("%d %b %Y") if latest_dates else "date unavailable"
+            st.markdown(f"**Data date:** {asof} · **Micro sectors available:** {len(micro_df)} · **Constituent prices fetched:** {len(micro_tickers)-1}")
+            rank_metric = st.segmented_control("Rank leading micro sectors by", options=["Score", "1M %", "3M %", "6M %"], default="Score", key="micro_rank_mode")
+            rank_col = rank_metric if rank_metric in micro_df.columns else "Score"
+            ranked = micro_df.sort_values(rank_col, ascending=False).head(6)
+            st.subheader("Leading micro sectors")
+            cards = st.columns(2)
+            for idx, (_, row) in enumerate(ranked.iterrows()):
+                with cards[idx % 2]:
+                    zone_color = {"Leading":"#198754","Improving":"#2864c5","Weakening":"#c27c16","Lagging":"#c92a2a"}.get(row["Zone"], "#64748b")
+                    st.markdown(f'<div style="border:1px solid #dbe2ea;border-radius:18px;padding:15px;margin-bottom:12px;background:rgba(255,255,255,.025);"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><span style="background:#2864eb;color:white;border-radius:999px;padding:4px 10px;font-weight:800;">#{idx+1}</span><span style="border:1px solid {zone_color};color:{zone_color};border-radius:999px;padding:3px 10px;font-weight:700;">{row["Zone"]}</span></div><h3 style="margin:12px 0 4px;">{html.escape(str(row["Micro sector"]))}</h3><div style="opacity:.75;font-size:13px;">{html.escape(str(row["Group"]))} · {int(row["Stocks available"])} stocks · Score {int(row["Score"])}</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:14px;">{''.join([f"<div><small>{period_label}</small><br><b style=\"color:{'#198754' if value >= 0 else '#c92a2a'}\">{value:+.1f}%</b></div>" for period_label,value in [('1M',row['1M %']),('3M',row['3M %']),('6M',row['6M %'])]])}</div></div>', unsafe_allow_html=True)
+                    hist = micro_histories.get(row["Micro sector"], pd.Series(dtype=float))
+                    if len(hist) > 2:
+                        spark = go.Figure(go.Scatter(x=hist.index, y=hist.values, mode="lines", line=dict(color="#198754" if hist.iloc[-1] >= hist.iloc[-min(22,len(hist))] else "#c92a2a", width=2), fill="tozeroy"))
+                        spark.update_layout(height=75, margin=dict(l=0,r=0,t=0,b=0), showlegend=False, xaxis=dict(visible=False), yaxis=dict(visible=False), template="plotly_white")
+                        st.plotly_chart(spark, use_container_width=True, config={"displayModeBar":False}, key=f"micro_spark_{idx}")
+            st.subheader("Rotation zones")
+            zone_counts = micro_df["Zone"].value_counts()
+            zone_cols = st.columns(4)
+            zone_text = {"Leading":"Outperforming over 3M and gaining relative ground over 1M","Improving":"Behind over 3M, but gaining over 1M","Weakening":"Ahead over 3M, but losing relative ground over 1M","Lagging":"Behind over both 3M and 1M"}
+            zone_colors = {"Leading":"#198754","Improving":"#2864c5","Weakening":"#c27c16","Lagging":"#c92a2a"}
+            for j, zone in enumerate(["Leading","Improving","Weakening","Lagging"]):
+                with zone_cols[j]:
+                    st.markdown(f'<div style="border-top:4px solid {zone_colors[zone]};border-radius:12px;padding:12px;border-left:1px solid #dbe2ea;border-right:1px solid #dbe2ea;border-bottom:1px solid #dbe2ea;"><b style="color:{zone_colors[zone]}">{zone} · {int(zone_counts.get(zone,0))}</b><div style="font-size:13px;margin-top:8px;opacity:.8;">{zone_text[zone]}</div></div>', unsafe_allow_html=True)
+            st.subheader("Rotation map: every micro sector against NIFTY 500")
+            map_df = micro_df.dropna(subset=["3M vs NIFTY 500 (pp)", "1M vs NIFTY 500 (pp)"]).copy()
+            if not map_df.empty:
+                map_fig = px.scatter(map_df, x="3M vs NIFTY 500 (pp)", y="1M vs NIFTY 500 (pp)", size="Stocks available", color="Zone", hover_name="Micro sector", hover_data=["Group","Score","1M %","3M %","6M %"], color_discrete_map=zone_colors, template="plotly_white", title="Relative return and momentum")
+                map_fig.add_vline(x=0,line_color="#9ca3af")
+                map_fig.add_hline(y=0,line_color="#9ca3af")
+                map_fig.update_layout(height=560, xaxis_title="3M return vs NIFTY 500 (percentage points)", yaxis_title="1M return vs NIFTY 500 (percentage points)", legend_title="Rotation zone")
+                st.plotly_chart(map_fig, use_container_width=True, config={"displaylogo":False}, key="micro_rotation_map")
+            st.subheader("Rotation signals · zone changes this week")
+            # Daily data may not include a prior saved weekly snapshot; compare latest zone with the zone five sessions ago where enough history exists.
+            signal_rows = []
+            for micro_name, (micro_group, symbols) in MICRO_SECTORS.items():
+                hist = micro_histories.get(micro_name)
+                if hist is None or len(hist) < 30 or bench.empty:
+                    continue
+                b_aligned = pd.concat([hist.rename("sector"), bench.rename("bench")], axis=1).dropna()
+                if len(b_aligned) < 30:
+                    continue
+                def _zone_at(pos):
+                    curr = b_aligned.iloc[:pos+1]
+                    if len(curr) < 22:
+                        return None
+                    r1 = (curr["sector"].iloc[-1] / curr["sector"].iloc[-22] - 1) * 100 - (curr["bench"].iloc[-1] / curr["bench"].iloc[-22] - 1) * 100
+                    r3 = (curr["sector"].iloc[-1] / curr["sector"].iloc[-min(64,len(curr))] - 1) * 100 - (curr["bench"].iloc[-1] / curr["bench"].iloc[-min(64,len(curr))] - 1) * 100
+                    return "Leading" if r3 >= 0 and r1 >= 0 else "Weakening" if r3 >= 0 else "Improving" if r1 >= 0 else "Lagging"
+                old_zone = _zone_at(len(b_aligned)-6)
+                new_zone = _zone_at(len(b_aligned)-1)
+                if old_zone and new_zone and old_zone != new_zone:
+                    signal_rows.append({"Micro sector":micro_name,"Group":micro_group,"Transition":f"{old_zone} → {new_zone}"})
+            if signal_rows:
+                signal_df = pd.DataFrame(signal_rows)
+                signal_cols = st.columns(2)
+                for j, (_, sr) in enumerate(signal_df.iterrows()):
+                    with signal_cols[j % 2]:
+                        new_zone = sr["Transition"].split(" → ")[-1]
+                        zc = zone_colors[new_zone]
+                        st.markdown(f'<div style="border:2px solid {zc}66;border-radius:999px;padding:11px 15px;margin-bottom:8px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;"><b>{html.escape(sr["Micro sector"])}</b><span style="color:{zc};font-weight:750;">{html.escape(sr["Transition"])}</span></div>', unsafe_allow_html=True)
+            else:
+                st.info("No zone changes detected across the latest five available sessions, or insufficient history to verify transitions.")
+            st.subheader("Group strength")
+            group_df = micro_df.groupby("Group", as_index=False).agg(**{"Average score":("Score","mean"),"Micro sectors":("Micro sector","count"),"Leading":("Zone",lambda s:int((s=="Leading").sum()))}).sort_values("Average score",ascending=False)
+            group_cols = st.columns(2)
+            for j, (_, gr) in enumerate(group_df.head(12).iterrows()):
+                with group_cols[j % 2]:
+                    st.markdown(f'<div style="border:1px solid #dbe2ea;border-radius:14px;padding:13px;margin-bottom:9px;"><b>{html.escape(str(gr["Group"]))}</b><span style="float:right;font-size:20px;font-weight:800;">{gr["Average score"]:.0f}</span><div style="height:7px;background:#e2e8f0;border-radius:99px;margin:8px 0;"><div style="height:7px;width:{max(0,min(100,gr["Average score"])):.0f}%;background:linear-gradient(90deg,#60a5fa,#16a34a);border-radius:99px;"></div></div><small>{int(gr["Leading"])} of {int(gr["Micro sectors"])} leading · {int(gr["Micro sectors"])} micro sectors</small></div>', unsafe_allow_html=True)
+            st.subheader("Find a micro sector or stock")
+            choices = sorted(MICRO_SECTORS.keys())
+            chosen = st.selectbox("Select micro sector", choices, key="micro_sector_drilldown")
+            chosen_group, chosen_symbols = MICRO_SECTORS[chosen]
+            st.write(f"**{chosen}** · {chosen_group} · equal-weight basket")
+            drill_rows = []
+            for symbol in chosen_symbols:
+                close = _micro_close(symbol)
+                if len(close) < 2:
+                    continue
+                close = close.sort_index()
+                last = float(close.iloc[-1])
+                prev = float(close.iloc[-2])
+                e50 = close.ewm(span=50, adjust=False, min_periods=50).mean().iloc[-1]
+                drill_rows.append({"Stock":symbol.replace(".NS",""),"Latest close":last,"1D %":(last/prev-1)*100 if prev else np.nan,"1M %":(last/close.iloc[-min(22,len(close))]-1)*100,"3M %":(last/close.iloc[-min(64,len(close))]-1)*100,"Above 50 EMA":bool(last>e50) if pd.notna(e50) else "Insufficient history"})
+            if drill_rows:
+                st.dataframe(pd.DataFrame(drill_rows).sort_values("3M %",ascending=False),use_container_width=True,hide_index=True)
+                st.code(" ".join(s.replace(".NS","") for s in chosen_symbols), language="text")
+                st.caption("Copy the displayed symbols into your TradingView watchlist. Basket membership is a curated starting universe, not an official sector classification.")
+            else:
+                st.warning("No constituent prices were returned for this micro sector.")
+        else:
+            st.warning("No usable micro-sector prices were returned. Refresh later; no sample values are shown.")
 
 
 with tabs[4]:
