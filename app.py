@@ -2595,7 +2595,9 @@ with tabs[3]:
     with st.spinner("Checking available sector index symbols…"):
         base_df = market_data["NIFTY 50"].copy()
         if not base_df.empty:
-            base_df = base_df.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last").set_index(pd.to_datetime(base_df["Date"]).dt.date)["Close"]
+            base_df = base_df.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last").copy()
+            base_df["_day"] = pd.to_datetime(base_df["Date"]).dt.date
+            base_df = base_df.set_index("_day")["Close"]
         for sector, ticker in SECTOR_TICKERS.items():
             sdf, err = get_history(ticker, "6mo", "1d")
             if sdf.empty or len(sdf) < 12 or len(base_df) < 12:
