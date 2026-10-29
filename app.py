@@ -48,10 +48,6 @@ div[data-testid="stDataFrame"]{border-radius:10px;overflow:hidden}
 st.title("📈 Market Intelligence Terminal")
 st.caption("Free hybrid edition · No broker API · Source-labelled data · Missing data stays missing")
 
-# Re-run the dashboard periodically so evening FII/DII data is fetched without a manual reload.
-# Streamlit Cloud may sleep when no browser session is active; reopening the app triggers a fresh fetch.
-st_autorefresh(interval=15 * 60 * 1000, key="market_terminal_auto_refresh")
-
 
 
 INDEXES = {
@@ -184,8 +180,11 @@ with st.sidebar:
     period = st.selectbox("Historical lookback", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=2)
     interval = st.selectbox("Intraday bar interval", ["5m", "15m", "30m", "60m"], index=0)
     st.caption("Intraday Yahoo Finance history is limited by the upstream source. If it is unavailable, the app will show an error instead of substituting sample values.")
-    refresh = st.button("↻ Refresh market data", use_container_width=True)
-    auto_refresh_enabled = st.checkbox("Automatic refresh", value=False, key="market_auto_refresh_enabled", help="Refreshes the dashboard page on a timer. Cached sources may still serve data until their cache expires; this does not make delayed public feeds live.")
+    refresh = st.button("↻ Refresh ALL data now", use_container_width=True, help="Clears Streamlit data caches and reruns every dashboard data fetch.")
+    if refresh:
+        st.cache_data.clear()
+        st.rerun()
+    auto_refresh_enabled = st.checkbox("Automatic refresh", value=True, key="market_auto_refresh_enabled", help="Refreshes the dashboard every 5 minutes by default. Some upstream sources may still publish delayed data.")
     if auto_refresh_enabled:
         auto_refresh_minutes = st.selectbox("Refresh interval", [1, 5, 10, 15, 30], index=1, format_func=lambda n: f"Every {n} minutes", key="market_auto_refresh_minutes")
         st_autorefresh(interval=auto_refresh_minutes * 60 * 1000, limit=None, key="market_auto_refresh_timer")
