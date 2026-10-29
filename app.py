@@ -1899,6 +1899,7 @@ SECTOR_LEADING_STOCKS = {
 }
 
 leading_sector_rows = []
+rotation_zone_rows = []
 with st.spinner("Checking multi-timeframe sector strength…"):
     weekly_nifty_df, weekly_nifty_err = get_history("^NSEI", "3mo", "1d")
     weekly_nifty_close = weekly_nifty_df["Close"].dropna() if not weekly_nifty_df.empty else pd.Series(dtype=float)
@@ -1917,6 +1918,29 @@ with st.spinner("Checking multi-timeframe sector strength…"):
                     relative_week = sector_week_return - nifty_week_return
                     relative_month = sector_month_return - nifty_month_return if pd.notna(sector_month_return) and pd.notna(nifty_month_return) else np.nan
                     relative_3m = sector_3m_return - nifty_3m_return if pd.notna(sector_3m_return) and pd.notna(nifty_3m_return) else np.nan
+                    # Relative-strength quadrant: 1M relative performance and short-term momentum.
+                    def _rotation_zone(rs, momentum):
+                        if pd.isna(rs) or pd.isna(momentum):
+                            return "Insufficient data"
+                        if rs >= 0 and momentum >= 0:
+                            return "Leading"
+                        if rs >= 0 and momentum < 0:
+                            return "Weakening"
+                        if rs < 0 and momentum < 0:
+                            return "Lagging"
+                        return "Improving"
+                    current_zone = _rotation_zone(relative_month, relative_week - relative_month if pd.notna(relative_month) else np.nan)
+                    if len(sector_close) >= 27 and len(weekly_nifty_close) >= 27:
+                        sec_old_week = (float(sector_close.iloc[-6]) / float(sector_close.iloc[-11]) - 1) * 100
+                        nifty_old_week = (float(weekly_nifty_close.iloc[-6]) / float(weekly_nifty_close.iloc[-11]) - 1) * 100
+                        sec_old_month = (float(sector_close.iloc[-6]) / float(sector_close.iloc[-27]) - 1) * 100
+                        nifty_old_month = (float(weekly_nifty_close.iloc[-6]) / float(weekly_nifty_close.iloc[-27]) - 1) * 100
+                        old_week_relative = sec_old_week - nifty_old_week
+                        old_month_relative = sec_old_month - nifty_old_month
+                        previous_zone = _rotation_zone(old_month_relative, old_week_relative - old_month_relative)
+                    else:
+                        previous_zone = "Insufficient data"
+                    rotation_zone_rows.append({"Sector": sector, "Previous zone": previous_zone, "Current zone": current_zone})
                     score_parts = [(relative_week, 0.30), (relative_month, 0.40), (relative_3m, 0.30)]
                     valid_parts = [(value, weight) for value, weight in score_parts if pd.notna(value)]
                     leadership_score = sum(value * weight for value, weight in valid_parts) / sum(weight for _, weight in valid_parts) if valid_parts else np.nan
@@ -1936,6 +1960,26 @@ if leading_sector_rows:
     # Always show the four strongest sectors, even if fewer than four have a positive composite score.
     leaders = ranked_sectors.head(4).copy()
     current_top_names = leaders["Sector"].tolist()
+
+    st.markdown("### Rotation signals · zone changes this week")
+    st.caption("Zones use 1-month relative performance vs NIFTY 50 and short-term momentum (1-week relative performance minus 1-month relative performance). Weekly change compares with the close five sessions earlier.")
+    zone_colors = {"Leading": "#169b62", "Improving": "#316ac5", "Weakening": "#c58a18", "Lagging": "#cf4b55", "Insufficient data": "#64748b"}
+    zone_transition_rows = [row for row in rotation_zone_rows if row["Previous zone"] != row["Current zone"] and row["Previous zone"] != "Insufficient data" and row["Current zone"] != "Insufficient data"]
+    if zone_transition_rows:
+        for row in zone_transition_rows:
+            color = zone_colors.get(row["Current zone"], "#64748b")
+            label = html.escape(row["Sector"])
+            transition = html.escape(row["Previous zone"] + " → " + row["Current zone"])
+            st.markdown(
+                f'<div style="display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;border:1px solid {color}88;border-radius:40px;padding:8px 16px;margin:4px 6px 4px 0;background:rgba(100,116,139,.05);font-size:16px;"><span style="font-weight:750;color:#e5e7eb;">{label}</span><span style="font-weight:750;color:{color};">{transition}</span></div>',
+                unsafe_allow_html=True,
+            )
+    else:
+        st.info("No verified sector-zone changes detected versus five sessions ago, or insufficient historical data.")
+    with st.expander("View all current sector zones", expanded=False):
+        zone_table = pd.DataFrame(rotation_zone_rows)
+        if not zone_table.empty:
+            st.dataframe(zone_table.rename(columns={"Previous zone": "Zone 5 sessions ago"}), use_container_width=True, hide_index=True)
 
     # Detect a genuine transition from relative underperformance (<= 0 pp)
     # to outperformance (> 0 pp), using the prior successful dashboard run.
