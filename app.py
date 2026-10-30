@@ -4173,20 +4173,22 @@ with tabs[9]:
                     continue
                 close = close.sort_index()
                 last = float(close.iloc[-1])
+                ret1w = (last / float(close.iloc[-min(6, len(close))]) - 1) * 100
                 ret1 = (last / float(close.iloc[-min(22, len(close))]) - 1) * 100
                 ret3 = (last / float(close.iloc[-min(64, len(close))]) - 1) * 100
                 ret6 = (last / float(close.iloc[-min(127, len(close))]) - 1) * 100
+                ret1y = (last / float(close.iloc[0]) - 1) * 100
                 ema50 = close.ewm(span=50, adjust=False, min_periods=50).mean()
-                constituent_returns.append((ret1, ret3, ret6))
+                constituent_returns.append((ret1w, ret1, ret3, ret6, ret1y))
                 constituent_breadth.append(float(last > float(ema50.iloc[-1])))
                 constituent_series.append(close / float(close.iloc[-min(127, len(close))]) * 100)
             if not constituent_returns:
                 continue
             arr = np.array(constituent_returns, dtype=float)
-            avg1, avg3, avg6 = np.nanmean(arr, axis=0)
+            avg1w, avg1, avg3, avg6, avg1y = np.nanmean(arr, axis=0)
             breadth = float(np.mean(constituent_breadth)) * 100
             composite = 0.25 * avg1 + 0.40 * avg3 + 0.25 * avg6 + 0.10 * ((breadth - 50) / 5)
-            micro_rows.append({"Micro sector": micro_name, "Group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1M %": avg1, "3M %": avg3, "6M %": avg6, "50 EMA breadth %": breadth, "_raw_score": composite})
+            micro_rows.append({"Micro sector": micro_name, "Group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1W %": avg1w, "1M %": avg1, "3M %": avg3, "6M %": avg6, "1Y %": avg1y, "50 EMA breadth %": breadth, "_raw_score": composite})
             if constituent_series:
                 aligned = pd.concat(constituent_series, axis=1).sort_index()
                 micro_histories[micro_name] = aligned.mean(axis=1)
@@ -4210,7 +4212,7 @@ with tabs[9]:
         latest_dates = [s.index[-1] for s in [bench] if not s.empty]
         asof = pd.Timestamp(latest_dates[0]).strftime("%d %b %Y") if latest_dates else "date unavailable"
         st.markdown(f"**Data date:** {asof} · **Micro sectors available:** {len(micro_df)} · **Constituent prices fetched:** {len(micro_tickers)-1}")
-        rank_metric = st.segmented_control("Rank leading micro sectors by", options=["Score", "1M %", "3M %", "6M %"], default="Score", key="micro_rank_mode")
+        rank_metric = st.segmented_control("Rank leading micro sectors by", options=["Score", "1W %", "1M %", "3M %", "6M %", "1Y %"], default="Score", key="micro_rank_mode")
         rank_col = rank_metric if rank_metric in micro_df.columns else "Score"
         ranked = micro_df.sort_values(rank_col, ascending=False).head(6)
         st.subheader("Leading micro sectors")
@@ -4245,6 +4247,13 @@ with tabs[9]:
         for j, zone in enumerate(["Leading","Improving","Weakening","Lagging"]):
             with zone_cols[j]:
                 st.markdown(f'<div style="border-top:4px solid {zone_colors[zone]};border-radius:12px;padding:12px;border-left:1px solid #dbe2ea;border-right:1px solid #dbe2ea;border-bottom:1px solid #dbe2ea;"><b style="color:{zone_colors[zone]}">{zone} · {int(zone_counts.get(zone,0))}</b><div style="font-size:13px;margin-top:8px;opacity:.8;">{zone_text[zone]}</div></div>', unsafe_allow_html=True)
+        st.subheader("All micro sectors · current rotation status")
+        zone_filter = st.selectbox("Filter micro sectors by rotation zone", ["All zones", "Leading", "Improving", "Weakening", "Lagging"], key="micro_zone_filter")
+        zone_view = micro_df if zone_filter == "All zones" else micro_df[micro_df["Zone"] == zone_filter]
+        display_cols = ["Micro sector", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Stocks available"]
+        st.dataframe(zone_view[display_cols].sort_values("Score", ascending=False), use_container_width=True, hide_index=True)
+        st.caption("This list shows every available micro sector in each rotation zone—not only the top six cards.")
+
         st.subheader("Rotation map: every micro sector against NIFTY 500")
         map_df = micro_df.dropna(subset=["3M vs NIFTY 500 (pp)", "1M vs NIFTY 500 (pp)"]).copy()
         if not map_df.empty:
