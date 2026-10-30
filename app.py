@@ -4316,19 +4316,51 @@ with tabs[9]:
         chosen_group, chosen_symbols = MICRO_SECTORS[chosen]
         st.write(f"**{chosen}** · {chosen_group} · equal-weight basket")
         drill_rows = []
+        stock_transition_rows = []
+        stock_zone_colors = {"Leading":"#198754","Improving":"#2864c5","Weakening":"#c27c16","Lagging":"#c92a2a"}
         for symbol in chosen_symbols:
             close = _micro_close(symbol)
-            if len(close) < 2:
+            if len(close) < 60:
                 continue
             close = close.sort_index()
             last = float(close.iloc[-1])
             prev = float(close.iloc[-2])
-            e50 = close.ewm(span=50, adjust=False, min_periods=50).mean().iloc[-1]
-            drill_rows.append({"Stock":symbol.replace(".NS",""),"Latest close":last,"1D %":(last/prev-1)*100 if prev else np.nan,"1M %":(last/close.iloc[-min(22,len(close))]-1)*100,"3M %":(last/close.iloc[-min(64,len(close))]-1)*100,"Above 50 EMA":bool(last>e50) if pd.notna(e50) else "Insufficient history"})
+            e50_series = close.ewm(span=50, adjust=False, min_periods=50).mean()
+            e50 = e50_series.iloc[-1]
+            stock_aligned = pd.concat([close.rename("stock"), bench.rename("bench")], axis=1).dropna() if not bench.empty else pd.DataFrame()
+            def _stock_zone_at(aligned, pos):
+                current = aligned.iloc[:pos+1]
+                if len(current) < 22:
+                    return None
+                rel1 = (current["stock"].iloc[-1] / current["stock"].iloc[-22] - 1) * 100 - (current["bench"].iloc[-1] / current["bench"].iloc[-22] - 1) * 100
+                rel3 = (current["stock"].iloc[-1] / current["stock"].iloc[-min(64,len(current))] - 1) * 100 - (current["bench"].iloc[-1] / current["bench"].iloc[-min(64,len(current))] - 1) * 100
+                return "Leading" if rel3 >= 0 and rel1 >= 0 else "Weakening" if rel3 >= 0 else "Improving" if rel1 >= 0 else "Lagging"
+            current_zone = _stock_zone_at(stock_aligned, len(stock_aligned)-1) if len(stock_aligned) >= 22 else "Unclassified"
+            previous_zone = _stock_zone_at(stock_aligned, len(stock_aligned)-6) if len(stock_aligned) >= 27 else None
+            transition = f"{previous_zone} → {current_zone}" if previous_zone and current_zone and previous_zone != current_zone else "No zone change"
+            if previous_zone and current_zone and previous_zone != current_zone:
+                stock_transition_rows.append({"Stock":symbol.replace(".NS",""),"Transition":transition})
+            rel1_value = (last / float(close.iloc[-min(22,len(close))]) - 1) * 100 - (float(bench.iloc[-1]) / float(bench.iloc[-min(22,len(bench))]) - 1) * 100 if len(bench) >= 22 else np.nan
+            rel3_value = (last / float(close.iloc[-min(64,len(close))]) - 1) * 100 - (float(bench.iloc[-1]) / float(bench.iloc[-min(64,len(bench))]) - 1) * 100 if len(bench) >= 64 else np.nan
+            drill_rows.append({"Stock":symbol.replace(".NS",""),"Rotation zone":current_zone,"Zone change (5 sessions)":transition,"Latest close":last,"1D %":(last/prev-1)*100 if prev else np.nan,"1M %":(last/close.iloc[-min(22,len(close))]-1)*100,"3M %":(last/close.iloc[-min(64,len(close))]-1)*100,"1M vs NIFTY 500 (pp)":rel1_value,"3M vs NIFTY 500 (pp)":rel3_value,"Above 50 EMA":bool(last>e50) if pd.notna(e50) else "Insufficient history"})
         if drill_rows:
-            st.dataframe(pd.DataFrame(drill_rows).sort_values("3M %",ascending=False),use_container_width=True,hide_index=True)
+            drill_df = pd.DataFrame(drill_rows)
+            st.markdown("**Constituent stock rotation** · each stock is classified against NIFTY 500 using relative 1M and 3M performance.")
+            counts = drill_df["Rotation zone"].value_counts()
+            zone_cols = st.columns(4)
+            for zi, zone in enumerate(["Leading","Improving","Weakening","Lagging"]):
+                with zone_cols[zi]:
+                    st.metric(zone, int(counts.get(zone,0)))
+            st.dataframe(drill_df.sort_values(["Rotation zone","3M vs NIFTY 500 (pp)"],ascending=[True,False]),use_container_width=True,hide_index=True)
+            st.markdown("**Stocks changing rotation zone over the latest five available sessions**")
+            if stock_transition_rows:
+                st.dataframe(pd.DataFrame(stock_transition_rows),use_container_width=True,hide_index=True)
+            else:
+                st.info("No constituent stock zone changes detected over the latest five available sessions.")
+            st.markdown("**Strongest stocks in this micro sector**")
+            st.dataframe(drill_df.sort_values("3M vs NIFTY 500 (pp)",ascending=False).head(5)[["Stock","Rotation zone","1D %","1M %","3M %","1M vs NIFTY 500 (pp)","3M vs NIFTY 500 (pp)"]],use_container_width=True,hide_index=True)
             st.code(" ".join(s.replace(".NS","") for s in chosen_symbols), language="text")
-            st.caption("Copy the displayed symbols into your TradingView watchlist. Basket membership is a curated starting universe, not an official sector classification.")
+            st.caption("Copy the displayed symbols into your TradingView watchlist. Stock rotation zones compare each constituent with NIFTY 500; this is a relative-strength classification, not an investment recommendation.")
         else:
             st.warning("No constituent prices were returned for this micro sector.")
     else:
