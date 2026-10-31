@@ -159,7 +159,7 @@ def render_nse500_screener():
             "This is a transparent rules-based screen, not discretionary chart analysis."
         )
         run_scan = st.button("Run / refresh NSE 500 scan", type="primary", key="run_nse500_weinstein")
-        if run_scan or "nse500_rs_stage_results" not in st.session_state:
+        if run_scan:
             with st.spinner("Loading official NSE 500 constituents and calculating weekly relative strength. The first scan may take a few minutes…"):
                 try:
                     results, sectors, universe_count, priced_count = _calculate()
@@ -194,7 +194,8 @@ def render_nse500_screener():
                 )
             st.markdown("#### Sector strength · median RS and advancing participation")
             st.dataframe(sectors, use_container_width=True, hide_index=True, height=230)
-            st.markdown("#### Full NSE 500 stock screener")
+            st.markdown("<div id=\"full-nse-500-stock-screener\"></div>", unsafe_allow_html=True)
+        st.markdown("#### Full NSE 500 stock screener")
             c1, c2, c3 = st.columns([1.2, 1, 1])
             with c1:
                 query = st.text_input("Search symbol / company", key="nse500_search")
@@ -238,7 +239,7 @@ def render_nse500_screener():
             st.info("Run the scan to calculate the full NSE 500 universe. The first run may take several minutes; no illustrative stock scores are substituted.")
         st.markdown(
             '<div style="display:flex;justify-content:center;margin:14px 0 4px;">'
-            '<a href="https://www.niftyindices.com/indices/equity/broad-based-indices/Nifty-500" target="_blank" '
+            '<a href="#full-nse-500-stock-screener" '
             'style="display:inline-block;background:#16a34a;color:white;text-decoration:none;font-weight:750;'
             'border-radius:9px;padding:10px 20px;">Explore the screener free ↗</a></div>',
             unsafe_allow_html=True,
