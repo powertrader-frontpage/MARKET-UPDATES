@@ -16,6 +16,7 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 import streamlit.components.v1 as components
 import yfinance as yf
+from nse500_screener import render_nse500_screener
 
 import hashlib
 import hmac
@@ -1794,6 +1795,8 @@ else:
                         unsafe_allow_html=True,
                     )
                 st.caption("Classic pivot estimates for information only; not guaranteed price levels.")
+
+        render_nse500_screener()
 
         with fear_col:
             fear_score = np.nan
