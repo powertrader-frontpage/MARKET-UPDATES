@@ -3696,39 +3696,46 @@ with st.expander("Sector rotation", expanded=False):
             perf = (recent["sector"].iloc[-1] / recent["sector"].iloc[0] - 1) * 100
             base_perf = (recent["nifty"].iloc[-1] / recent["nifty"].iloc[0] - 1) * 100
             last_date = pd.to_datetime(aligned.index[-1]).strftime("%d %b %Y")
-            sector_rows.append({"Sector": sector, "Ticker": ticker, "Period return %": perf, "NIFTY return %": base_perf, "Relative return vs NIFTY (pp)": perf-base_perf, "Last source bar": last_date})
+            relative_pp = perf - base_perf
+            sector_rows.append({"Sector": sector, "Ticker": ticker, "Period return %": perf, "NIFTY return %": base_perf, "Relative return vs NIFTY (pp)": relative_pp, "Last source bar": last_date})
             if current_zone:
-                rotation_rows.append({"Sector": sector, "Previous zone": previous_zone or current_zone, "Current zone": current_zone, "Last source bar": last_date})
+                rotation_rows.append({"Sector": sector, "Previous zone": previous_zone or current_zone, "Current zone": current_zone, "Relative return vs NIFTY (pp)": relative_pp, "Last source bar": last_date})
 
     if rotation_rows:
-        zone_colors = {"Leading": "#198754", "Weakening": "#198754", "Improving": "#2864c5", "Lagging": "#64748b"}
-        transition_rows = []
+        zone_colors = {"Leading": "#198754", "Weakening": "#b45309", "Improving": "#2864c5", "Lagging": "#dc3545"}
+        zone_order = {"Leading": 0, "Improving": 1, "Weakening": 2, "Lagging": 3}
         for item in rotation_rows:
-            prev_zone = item["Previous zone"]
-            curr_zone = item["Current zone"]
-            if prev_zone != curr_zone:
-                transition = f"{prev_zone} → {curr_zone}"
-                color = "#198754" if curr_zone == "Leading" else "#2864c5" if curr_zone == "Improving" else "#b45309" if curr_zone == "Weakening" else "#64748b"
-                transition_rows.append((item["Sector"], transition, color, item["Last source bar"]))
-        st.markdown("### Rotation signals · zone changes this week")
-        st.caption("Based on sector/NIFTY relative strength and 5-session momentum from available daily history. These are calculated rotation estimates, not official exchange classifications.")
-        if transition_rows:
-            pills = []
-            for sector_name, transition, color, stamp in transition_rows:
-                pills.append(
-                    f'<div style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:10px;'
-                    f'border:2px solid {color}55;border-radius:999px;background:rgba(255,255,255,.025);'
-                    f'padding:10px 18px;margin:0 8px 8px 0;font-size:clamp(14px,1.5vw,19px);font-weight:650;">'
-                    f'<span style="color:var(--text-color);">{html.escape(sector_name)}</span>'
-                    f'<span style="color:{color};">{html.escape(transition)}</span>'
-                    f'<span style="font-size:11px;font-weight:400;opacity:.7;">{html.escape(stamp)}</span></div>'
-                )
-            st.markdown('<div style="background:rgba(80,120,200,.07);border-radius:24px;padding:18px;">' + "".join(pills) + '</div>', unsafe_allow_html=True)
-        else:
-            st.info("No sector changed rotation zone over the latest five trading sessions.")
-        with st.expander("View current rotation zones", expanded=False):
-            zone_order = {"Leading": 0, "Weakening": 1, "Improving": 2, "Lagging": 3}
-            current_zones = sorted(rotation_rows, key=lambda x: zone_order.get(x["Current zone"], 4))
+            item["Changed this week"] = item["Previous zone"] != item["Current zone"]
+            item["Signal"] = f'{item["Previous zone"]} → {item["Current zone"]}' if item["Changed this week"] else f'{item["Current zone"]} · holding'
+        # Always show six useful sector signals where six sectors have valid data.
+        # Actual zone changes rank first; remaining slots show the strongest current setups by zone and relative strength.
+        top_rotation_signals = sorted(
+            rotation_rows,
+            key=lambda x: (
+                not x["Changed this week"],
+                zone_order.get(x["Current zone"], 4),
+                -float(x.get("Relative return vs NIFTY (pp)", -999))
+            )
+        )[:6]
+        st.markdown("### Top 6 sector rotation signals")
+        st.caption("Actual zone transitions are prioritised. If fewer than six sectors changed zones this week, the remaining cards show the strongest current zone/relative-strength setups and are marked 'holding' rather than presented as new transitions.")
+        pills = []
+        for item in top_rotation_signals:
+            sector_name = item["Sector"]
+            transition = item["Signal"]
+            color = zone_colors.get(item["Current zone"], "#64748b")
+            stamp = item["Last source bar"]
+            pills.append(
+                f'<div style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:10px;'
+                f'border:2px solid {color}55;border-radius:999px;background:rgba(255,255,255,.025);'
+                f'padding:10px 18px;margin:0 8px 8px 0;font-size:clamp(14px,1.5vw,19px);font-weight:650;">'
+                f'<span style="color:var(--text-color);">{html.escape(sector_name)}</span>'
+                f'<span style="color:{color};">{html.escape(transition)}</span>'
+                f'<span style="font-size:11px;font-weight:400;opacity:.7;">{html.escape(stamp)}</span></div>'
+            )
+        st.markdown('<div style="background:rgba(80,120,200,.07);border-radius:24px;padding:18px;">' + "".join(pills) + '</div>', unsafe_allow_html=True)
+        with st.expander("View all current rotation zones", expanded=False):
+            current_zones = sorted(rotation_rows, key=lambda x: (zone_order.get(x["Current zone"], 4), -float(x.get("Relative return vs NIFTY (pp)", -999))))
             st.dataframe(pd.DataFrame(current_zones), use_container_width=True, hide_index=True)
     else:
         st.warning("Not enough overlapping daily sector and NIFTY data to calculate rotation zones. No values have been substituted.")
