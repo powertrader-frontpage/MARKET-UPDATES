@@ -2081,307 +2081,6 @@ if leading_sector_rows:
 else:
     st.info("Weekly sector momentum is temporarily unavailable because usable 3-month daily history was not returned.")
 
-st.markdown("""<div style="font-size:clamp(28px,4vw,42px);font-weight:850;letter-spacing:-1.2px;line-height:1.15;margin:8px 0 6px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Liquidity Board</div>""", unsafe_allow_html=True)
-st.caption("Ranked daily-candle setups · green = bullish, red = bearish. Public data may be delayed.")
-with st.expander("Scan bullish/bearish setups and liquidity sweeps", expanded=False):
-    ob_lookback = st.selectbox("Structure lookback", ["20 sessions", "40 sessions", "60 sessions"], index=0, key="ob_lookback")
-    ob_volume_mode = st.selectbox(
-        "Volume confirmation",
-        ["Off", "On — require at least 1.2× 20-day average"],
-        index=0,
-        key="ob_volume_mode_select",
-        help="When On, liquidity-sweep signals are confirmed only when the latest volume is at least 1.2 times the previous 20-session average."
-    )
-    ob_volume_filter = ob_volume_mode.startswith("On")
-    ob_scan = st.button("Scan NIFTY 50 liquid stocks", key="ob_scan_button", type="primary")
-    if ob_scan:
-        ob_days = int(ob_lookback.split()[0])
-        ob_symbols = [
-            "SBIN.NS", "AXISBANK.NS", "TITAN.NS", "INFY.NS", "WIPRO.NS",
-            "HCLTECH.NS", "HDFCBANK.NS", "ICICIBANK.NS", "RELIANCE.NS", "TCS.NS",
-            "LT.NS", "BHARTIARTL.NS", "BAJFINANCE.NS", "TRENT.NS", "BEL.NS",
-            "SUNPHARMA.NS", "MARUTI.NS", "TATAMOTORS.NS", "NTPC.NS", "ADANIPORTS.NS"
-        ]
-        ob_rows = []
-        with st.spinner("Scanning daily candles and volume…"):
-            for ob_symbol in ob_symbols:
-                ob_df, ob_error = get_history(ob_symbol, "6mo", "1d")
-                if ob_df.empty or len(ob_df) < max(ob_days + 2, 25) or not {"Open","High","Low","Close","Volume"}.issubset(ob_df.columns):
-                    continue
-                ob_df = ob_df.dropna(subset=["Open","High","Low","Close"]).copy()
-                last = ob_df.iloc[-1]
-                prior = ob_df.iloc[-ob_days-1:-1]
-                if prior.empty:
-                    continue
-                prev_high = float(prior["High"].max())
-                prev_low = float(prior["Low"].min())
-                close = float(last["Close"])
-                open_ = float(last["Open"])
-                high = float(last["High"])
-                low = float(last["Low"])
-                prev_close = float(ob_df["Close"].iloc[-2])
-                day_change = (close / prev_close - 1) * 100 if prev_close else np.nan
-                avg_vol = pd.to_numeric(ob_df["Volume"].iloc[-21:-1], errors="coerce").mean()
-                last_vol = pd.to_numeric(last.get("Volume"), errors="coerce")
-                volume_ratio = float(last_vol / avg_vol) if pd.notna(last_vol) and pd.notna(avg_vol) and avg_vol > 0 else np.nan
-                sweep_low = low < prev_low and close > prev_low
-                sweep_high = high > prev_high and close < prev_high
-                volume_ok = (pd.notna(volume_ratio) and volume_ratio >= 1.2) if ob_volume_filter else True
-                # Heuristic demand/supply zones: last opposing candle before a 3-candle displacement.
-                recent = ob_df.tail(8).reset_index(drop=True)
-                demand_zone = None
-                supply_zone = None
-                for j in range(len(recent)-2, 0, -1):
-                    candle = recent.iloc[j]
-                    next_candle = recent.iloc[j+1]
-                    if float(candle["Close"]) < float(candle["Open"]) and float(next_candle["Close"]) > float(candle["High"]):
-                        demand_zone = (float(candle["Low"]), float(max(candle["Open"], candle["Close"])))
-                        break
-                for j in range(len(recent)-2, 0, -1):
-                    candle = recent.iloc[j]
-                    next_candle = recent.iloc[j+1]
-                    if float(candle["Close"]) > float(candle["Open"]) and float(next_candle["Close"]) < float(candle["Low"]):
-                        supply_zone = (float(min(candle["Open"], candle["Close"])), float(candle["High"]))
-                        break
-                if sweep_low and volume_ok:
-                    bias, reason = "Bullish", "Sell-side liquidity sweep"
-                elif sweep_high and volume_ok:
-                    bias, reason = "Bearish", "Buy-side liquidity sweep"
-                elif close > prev_high and day_change > 0:
-                    bias, reason = "Bullish", f"Breakout above {ob_days}-session high"
-                elif close < prev_low and day_change < 0:
-                    bias, reason = "Bearish", f"Breakdown below {ob_days}-session low"
-                elif close > open_ and day_change > 0:
-                    bias, reason = "Bullish", "Positive daily candle"
-                elif close < open_ and day_change < 0:
-                    bias, reason = "Bearish", "Negative daily candle"
-                else:
-                    bias, reason = "Mixed", "No clear daily direction"
-                ob_rows.append({
-                    "Symbol": ob_symbol.removesuffix(".NS"),
-                    "Bias": bias,
-                    "Daily change (%)": day_change,
-                    "Volume / 20D avg": volume_ratio,
-                    "Liquidity event": "Sweep low · bullish reversal proxy" if sweep_low else "Sweep high · bearish reversal proxy" if sweep_high else "None detected",
-                    "Setup": reason,
-                    "Demand zone (approx.)": f"{demand_zone[0]:.2f}–{demand_zone[1]:.2f}" if demand_zone else "Not detected",
-                    "Supply zone (approx.)": f"{supply_zone[0]:.2f}–{supply_zone[1]:.2f}" if supply_zone else "Not detected",
-                    "Latest candle": last["Date"].strftime("%d %b %Y"),
-                })
-        ob_results = pd.DataFrame(ob_rows)
-        if ob_results.empty:
-            st.warning("No usable OHLCV data returned. Try again later; no sample values are substituted.")
-        else:
-            ob_results = ob_results.sort_values("Daily change (%)", ascending=False, na_position="last")
-            st.session_state["ob_scan_results"] = ob_results
-    if "ob_scan_results" in st.session_state:
-        ob_results = st.session_state["ob_scan_results"]
-        bull, bear = st.columns(2)
-        bullish = ob_results[ob_results["Bias"] == "Bullish"].sort_values("Daily change (%)", ascending=False).head(3)
-        bearish = ob_results[ob_results["Bias"] == "Bearish"].sort_values("Daily change (%)", ascending=True).head(3)
-        with bull:
-            st.markdown("""<div style="font-size:20px;font-weight:750;color:#20dda0;margin:8px 0 12px;">↗ Strongest bullish setups</div>""", unsafe_allow_html=True)
-            if bullish.empty:
-                st.info("No bullish setups detected.")
-            else:
-                for rank, (_, item) in enumerate(bullish.iterrows(), 1):
-                    vol_label = f"{item['Volume / 20D avg']:.2f}× 20D avg volume" if pd.notna(item["Volume / 20D avg"]) else "Volume unavailable"
-                    st.markdown(
-                        f'<div style="background:#0d1219;border:1px solid #24313d;border-left:4px solid #20dda0;border-radius:18px;padding:14px 16px;margin:0 0 10px 0;">'
-                        f'<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">'
-                        f'<span style="font-size:17px;font-weight:750;color:#f3f6fa;">{rank}. {item["Symbol"]}</span>'
-                        f'<span style="font-size:17px;font-weight:750;color:#20dda0;">{item["Daily change (%)"]:+.2f}%</span></div>'
-                        f'<div style="color:#c5d0dc;font-size:13px;margin-top:8px;">{item["Setup"]}</div>'
-                        f'<div style="color:#7eeac1;font-size:12px;margin-top:5px;">✓ {vol_label}</div></div>',
-                        unsafe_allow_html=True,
-                    )
-        with bear:
-            st.markdown("""<div style="font-size:20px;font-weight:750;color:#ff647c;margin:8px 0 12px;">↘ Strongest bearish setups</div>""", unsafe_allow_html=True)
-            if bearish.empty:
-                st.info("No bearish setups detected.")
-            else:
-                for rank, (_, item) in enumerate(bearish.iterrows(), 1):
-                    vol_label = f"{item['Volume / 20D avg']:.2f}× 20D avg volume" if pd.notna(item["Volume / 20D avg"]) else "Volume unavailable"
-                    st.markdown(
-                        f'<div style="background:#0d1219;border:1px solid #24313d;border-left:4px solid #ff647c;border-radius:18px;padding:14px 16px;margin:0 0 10px 0;">'
-                        f'<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">'
-                        f'<span style="font-size:17px;font-weight:750;color:#f3f6fa;">{rank}. {item["Symbol"]}</span>'
-                        f'<span style="font-size:17px;font-weight:750;color:#ff647c;">{item["Daily change (%)"]:+.2f}%</span></div>'
-                        f'<div style="color:#c5d0dc;font-size:13px;margin-top:8px;">{item["Setup"]}</div>'
-                        f'<div style="color:#ff9aaa;font-size:12px;margin-top:5px;">✓ {vol_label}</div></div>',
-                        unsafe_allow_html=True,
-                    )
-        st.markdown("""<div style="font-size:clamp(26px,3.5vw,36px);font-weight:850;letter-spacing:-1px;margin:20px 0 10px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Order Block Charts</div>""", unsafe_allow_html=True)
-        zone_cols = st.columns(2)
-        with zone_cols[0]:
-            st.markdown("""<div style="background:#0d1219;border:1px solid #24313d;border-radius:16px;padding:13px 15px;margin-bottom:8px;"><span style="color:#20dda0;font-weight:750;">✓ Demand zones</span><div style="color:#c5d0dc;font-size:13px;margin-top:5px;">Potential support areas from bullish displacement candles</div></div>""", unsafe_allow_html=True)
-        with zone_cols[1]:
-            st.markdown("""<div style="background:#0d1219;border:1px solid #24313d;border-radius:16px;padding:13px 15px;margin-bottom:8px;"><span style="color:#ff647c;font-weight:750;">✓ Supply zones</span><div style="color:#c5d0dc;font-size:13px;margin-top:5px;">Potential resistance areas from bearish displacement candles</div></div>""", unsafe_allow_html=True)
-        st.dataframe(ob_results, use_container_width=True, hide_index=True)
-        st.download_button("Download liquidity scan (CSV)", ob_results.to_csv(index=False).encode("utf-8"), "liquidity_order_block_watchlist.csv", "text/csv", key="ob_scan_download")
-        st.warning("Order blocks and liquidity sweeps here are simplified OHLCV heuristics, not confirmed institutional orders, market depth or guaranteed reversal signals. Data may be delayed. Use a stop-loss and verify prices with your broker.")
-
-
-@st.cache_data(ttl=21600, show_spinner=False)
-def get_turnaround_constituents():
-    sources = {
-        "Mid-cap": "https://www.niftyindices.com/IndexConstituent/ind_niftymidcap150list.csv",
-        "Small-cap": "https://www.niftyindices.com/IndexConstituent/ind_niftysmallcap250list.csv",
-    }
-    rows = []
-    errors = []
-    for segment, url in sources.items():
-        try:
-            response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
-            response.raise_for_status()
-            from io import StringIO
-            frame = pd.read_csv(StringIO(response.text))
-            symbol_col = next((c for c in frame.columns if str(c).strip().lower() == "symbol"), None)
-            name_col = next((c for c in frame.columns if str(c).strip().lower() in ("company name", "companyname")), None)
-            if symbol_col is None:
-                errors.append(f"{segment} constituent list did not contain a Symbol column.")
-                continue
-            for _, row in frame.iterrows():
-                symbol = str(row.get(symbol_col, "")).strip()
-                if symbol and symbol.lower() != "nan":
-                    rows.append({"Symbol": symbol, "Company": str(row.get(name_col, symbol)).strip() if name_col else symbol, "Segment": segment, "Ticker": symbol + ".NS"})
-        except Exception as exc:
-            errors.append(f"{segment} constituent list unavailable ({exc.__class__.__name__}).")
-    if not rows:
-        return pd.DataFrame(), "; ".join(errors) if errors else "No constituents returned."
-    return pd.DataFrame(rows).drop_duplicates(subset=["Ticker"]), "; ".join(errors) if errors else None
-
-@st.cache_data(ttl=21600, show_spinner=False)
-def get_one_turnaround_fundamentals(ticker: str, segment: str, company: str):
-    """Read quarterly income-statement data only; return no row when the source lacks enough data."""
-    try:
-        q = yf.Ticker(ticker).quarterly_income_stmt
-        if q is None or q.empty or q.shape[1] < 2:
-            return None
-        q = q.copy()
-        q.columns = pd.to_datetime(q.columns, errors="coerce")
-        q = q.loc[:, ~q.columns.isna()].sort_index(axis=1, ascending=False)
-        if q.shape[1] < 2:
-            return None
-        def metric(names, col):
-            for name in names:
-                if name in q.index:
-                    try:
-                        value = pd.to_numeric(q.loc[name, col], errors="coerce")
-                        if pd.notna(value):
-                            return float(value)
-                    except Exception:
-                        pass
-            return np.nan
-        rev_names = ["Total Revenue", "Operating Revenue", "Revenue"]
-        profit_names = ["Net Income", "Net Income Common Stockholders", "Net Income From Continuing Operation Net Minority Interest"]
-        op_names = ["Operating Income", "EBIT"]
-        dates = list(q.columns)
-        rev_now, rev_prev = metric(rev_names, dates[0]), metric(rev_names, dates[1])
-        profit_now, profit_prev = metric(profit_names, dates[0]), metric(profit_names, dates[1])
-        op_now = metric(op_names, dates[0])
-        # Prefer year-on-year comparisons when a matching quarter four periods back exists.
-        rev_base = metric(rev_names, dates[4]) if len(dates) >= 5 else np.nan
-        profit_base = metric(profit_names, dates[4]) if len(dates) >= 5 else np.nan
-        op_base = metric(op_names, dates[4]) if len(dates) >= 5 else np.nan
-        if not np.isfinite(rev_now) or rev_now <= 0 or not np.isfinite(profit_now):
-            return None
-        rev_yoy = (rev_now / rev_base - 1) * 100 if np.isfinite(rev_base) and rev_base > 0 else np.nan
-        if np.isfinite(profit_base) and profit_base != 0:
-            profit_yoy = (profit_now / abs(profit_base) - 1) * 100 if profit_base > 0 else np.nan
-        else:
-            profit_yoy = np.nan
-        margin_now = op_now / rev_now * 100 if np.isfinite(op_now) else np.nan
-        margin_prev = metric(op_names, dates[1]) / rev_prev * 100 if np.isfinite(metric(op_names, dates[1])) and np.isfinite(rev_prev) and rev_prev > 0 else np.nan
-        # A recovery from a loss to profit is explicitly flagged; growth rates across negative bases are not fabricated.
-        loss_to_profit = np.isfinite(profit_base) and profit_base < 0 and profit_now > 0
-        improving_profit = np.isfinite(profit_yoy) and profit_yoy >= 15
-        improving_sales = np.isfinite(rev_yoy) and rev_yoy >= 10
-        margin_improving = np.isfinite(margin_now) and np.isfinite(margin_prev) and margin_now > margin_prev
-        signals = sum([improving_sales, improving_profit, margin_improving, loss_to_profit])
-        if signals < 2:
-            return None
-        latest_date = dates[0].strftime("%Y-%m-%d") if hasattr(dates[0], "strftime") else str(dates[0])
-        return {
-            "Company": company, "Symbol": ticker.replace(".NS", ""), "Segment": segment,
-            "Latest quarter": latest_date, "Sales growth YoY %": round(rev_yoy, 1) if np.isfinite(rev_yoy) else np.nan,
-            "Profit growth YoY %": round(profit_yoy, 1) if np.isfinite(profit_yoy) else ("Loss → profit" if loss_to_profit else np.nan),
-            "Operating margin %": round(margin_now, 1) if np.isfinite(margin_now) else np.nan,
-            "Margin improved QoQ": bool(margin_improving) if np.isfinite(margin_now) and np.isfinite(margin_prev) else "Insufficient data",
-            "Turnaround signals": int(signals),
-            "Reason flagged": ", ".join([label for label, ok in [
-                ("Sales growth ≥10% YoY", improving_sales),
-                ("Profit growth ≥15% YoY", improving_profit),
-                ("Loss-to-profit recovery", loss_to_profit),
-                ("Operating margin improved QoQ", margin_improving),
-            ] if ok]),
-            "Source": "Yahoo Finance quarterly income statement",
-        }
-    except Exception:
-        return None
-
-def run_turnaround_scan(segments: tuple[str, ...]):
-    universe, universe_error = get_turnaround_constituents()
-    if universe.empty:
-        return pd.DataFrame(), universe_error or "Index constituent data unavailable."
-    universe = universe[universe["Segment"].isin(segments)]
-    # A modest worker pool keeps the screen practical while covering the selected index constituents.
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    found = []
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = [pool.submit(get_one_turnaround_fundamentals, row["Ticker"], row["Segment"], row["Company"]) for _, row in universe.iterrows()]
-        for future in as_completed(futures):
-            try:
-                item = future.result()
-                if item:
-                    found.append(item)
-            except Exception:
-                continue
-    result = pd.DataFrame(found)
-    if not result.empty:
-        result["_sort"] = pd.to_numeric(result["Turnaround signals"], errors="coerce")
-        result = result.sort_values(["_sort", "Sales growth YoY %"], ascending=[False, False], na_position="last").drop(columns=["_sort"])
-    return result, universe_error
-
-st.markdown("""<div style="font-size:clamp(28px,4vw,42px);font-weight:850;letter-spacing:-1.2px;line-height:1.15;margin:8px 0 6px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Turnaround Board</div>""", unsafe_allow_html=True)
-st.caption("Small-cap + mid-cap candidates · improving sales, profit recovery and operating margins. Public data may be delayed or incomplete.")
-with st.expander("Scan small-cap / mid-cap turnaround stocks", expanded=False):
-    st.write("Scans current Nifty Midcap 150 and Nifty Smallcap 250 constituents. Newly qualifying stocks can appear when the source data updates. Research watchlist only, not a buy signal.")
-    segment_choice = st.multiselect("Segments to scan", ["Mid-cap", "Small-cap"], default=["Mid-cap", "Small-cap"], key="turnaround_segments")
-    st.caption("Fundamentals: Yahoo Finance quarterly income statements · Constituents: Nifty Indices CSV lists · Cached for up to 6 hours. Initial scans may take a few minutes.")
-    auto_turnaround_scan = st.checkbox(
-        "Automatically refresh turnaround scan when dashboard refreshes",
-        value=False,
-        key="auto_turnaround_scan_enabled",
-        help="Opt-in because a first scan can take several minutes. Fundamental source data is cached for up to 6 hours."
-    )
-    turnaround_scan_clicked = st.button("Scan / refresh turnaround stocks", type="primary", key="run_auto_turnaround_scan", disabled=not segment_choice)
-    if (turnaround_scan_clicked or auto_turnaround_scan) and segment_choice:
-        with st.spinner("Scanning index constituents for improving fundamentals. This can take a few minutes…"):
-            scan_df, scan_warning = run_turnaround_scan(tuple(sorted(segment_choice)))
-        st.session_state["auto_turnaround_scan_results"] = scan_df
-        st.session_state["auto_turnaround_scan_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
-        st.session_state["auto_turnaround_scan_segments"] = ", ".join(segment_choice)
-        st.session_state["auto_turnaround_scan_warning"] = scan_warning
-    scan_df = st.session_state.get("auto_turnaround_scan_results", pd.DataFrame())
-    if st.session_state.get("auto_turnaround_scan_time"):
-        st.caption("Last scan: " + st.session_state["auto_turnaround_scan_time"] + " · Segments: " + st.session_state.get("auto_turnaround_scan_segments", ""))
-    if st.session_state.get("auto_turnaround_scan_warning"):
-        st.warning(st.session_state["auto_turnaround_scan_warning"])
-    if isinstance(scan_df, pd.DataFrame) and not scan_df.empty:
-        st.success(f"{len(scan_df)} potential turnaround candidate(s) matched the current rules.")
-        st.dataframe(scan_df, use_container_width=True, hide_index=True, height=520)
-        st.download_button("Download turnaround watchlist CSV", scan_df.to_csv(index=False).encode("utf-8"), file_name="small_midcap_turnaround_watchlist.csv", mime="text/csv", key="download_auto_turnaround_csv")
-        st.caption("Missing metrics remain blank. Profit growth across a negative comparison base is not calculated; loss-to-profit is flagged separately. Debt, cash flow and valuation are not screened in this first version because quarterly statement coverage is inconsistent.")
-    elif "auto_turnaround_scan_time" in st.session_state:
-        st.info("No candidates met the current rules, or the data provider returned insufficient quarterly data. This is not proof that no turnaround stocks exist.")
-    else:
-        st.info("Select segments and press Scan / refresh to generate the first watchlist. Re-run after market-data refresh to catch new qualifying stocks.")
-
-
-
-
-
 st.markdown("### NIFTY 50 stock heatmap")
 st.caption("NIFTY 50 constituents only · Tile size is equal-weighted in this view · Green = positive daily change, red = negative daily change")
 NIFTY50_HEATMAP_SYMBOLS = [
@@ -4455,5 +4154,305 @@ with tabs[9]:
             st.warning("No constituent prices were returned for this micro sector.")
     else:
         st.warning("No usable micro-sector prices were returned. Refresh later; no sample values are shown.")
+
+st.markdown("""<div style="font-size:clamp(28px,4vw,42px);font-weight:850;letter-spacing:-1.2px;line-height:1.15;margin:8px 0 6px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Liquidity Board</div>""", unsafe_allow_html=True)
+st.caption("Ranked daily-candle setups · green = bullish, red = bearish. Public data may be delayed.")
+with st.expander("Scan bullish/bearish setups and liquidity sweeps", expanded=False):
+    ob_lookback = st.selectbox("Structure lookback", ["20 sessions", "40 sessions", "60 sessions"], index=0, key="ob_lookback")
+    ob_volume_mode = st.selectbox(
+        "Volume confirmation",
+        ["Off", "On — require at least 1.2× 20-day average"],
+        index=0,
+        key="ob_volume_mode_select",
+        help="When On, liquidity-sweep signals are confirmed only when the latest volume is at least 1.2 times the previous 20-session average."
+    )
+    ob_volume_filter = ob_volume_mode.startswith("On")
+    ob_scan = st.button("Scan NIFTY 50 liquid stocks", key="ob_scan_button", type="primary")
+    if ob_scan:
+        ob_days = int(ob_lookback.split()[0])
+        ob_symbols = [
+            "SBIN.NS", "AXISBANK.NS", "TITAN.NS", "INFY.NS", "WIPRO.NS",
+            "HCLTECH.NS", "HDFCBANK.NS", "ICICIBANK.NS", "RELIANCE.NS", "TCS.NS",
+            "LT.NS", "BHARTIARTL.NS", "BAJFINANCE.NS", "TRENT.NS", "BEL.NS",
+            "SUNPHARMA.NS", "MARUTI.NS", "TATAMOTORS.NS", "NTPC.NS", "ADANIPORTS.NS"
+        ]
+        ob_rows = []
+        with st.spinner("Scanning daily candles and volume…"):
+            for ob_symbol in ob_symbols:
+                ob_df, ob_error = get_history(ob_symbol, "6mo", "1d")
+                if ob_df.empty or len(ob_df) < max(ob_days + 2, 25) or not {"Open","High","Low","Close","Volume"}.issubset(ob_df.columns):
+                    continue
+                ob_df = ob_df.dropna(subset=["Open","High","Low","Close"]).copy()
+                last = ob_df.iloc[-1]
+                prior = ob_df.iloc[-ob_days-1:-1]
+                if prior.empty:
+                    continue
+                prev_high = float(prior["High"].max())
+                prev_low = float(prior["Low"].min())
+                close = float(last["Close"])
+                open_ = float(last["Open"])
+                high = float(last["High"])
+                low = float(last["Low"])
+                prev_close = float(ob_df["Close"].iloc[-2])
+                day_change = (close / prev_close - 1) * 100 if prev_close else np.nan
+                avg_vol = pd.to_numeric(ob_df["Volume"].iloc[-21:-1], errors="coerce").mean()
+                last_vol = pd.to_numeric(last.get("Volume"), errors="coerce")
+                volume_ratio = float(last_vol / avg_vol) if pd.notna(last_vol) and pd.notna(avg_vol) and avg_vol > 0 else np.nan
+                sweep_low = low < prev_low and close > prev_low
+                sweep_high = high > prev_high and close < prev_high
+                volume_ok = (pd.notna(volume_ratio) and volume_ratio >= 1.2) if ob_volume_filter else True
+                # Heuristic demand/supply zones: last opposing candle before a 3-candle displacement.
+                recent = ob_df.tail(8).reset_index(drop=True)
+                demand_zone = None
+                supply_zone = None
+                for j in range(len(recent)-2, 0, -1):
+                    candle = recent.iloc[j]
+                    next_candle = recent.iloc[j+1]
+                    if float(candle["Close"]) < float(candle["Open"]) and float(next_candle["Close"]) > float(candle["High"]):
+                        demand_zone = (float(candle["Low"]), float(max(candle["Open"], candle["Close"])))
+                        break
+                for j in range(len(recent)-2, 0, -1):
+                    candle = recent.iloc[j]
+                    next_candle = recent.iloc[j+1]
+                    if float(candle["Close"]) > float(candle["Open"]) and float(next_candle["Close"]) < float(candle["Low"]):
+                        supply_zone = (float(min(candle["Open"], candle["Close"])), float(candle["High"]))
+                        break
+                if sweep_low and volume_ok:
+                    bias, reason = "Bullish", "Sell-side liquidity sweep"
+                elif sweep_high and volume_ok:
+                    bias, reason = "Bearish", "Buy-side liquidity sweep"
+                elif close > prev_high and day_change > 0:
+                    bias, reason = "Bullish", f"Breakout above {ob_days}-session high"
+                elif close < prev_low and day_change < 0:
+                    bias, reason = "Bearish", f"Breakdown below {ob_days}-session low"
+                elif close > open_ and day_change > 0:
+                    bias, reason = "Bullish", "Positive daily candle"
+                elif close < open_ and day_change < 0:
+                    bias, reason = "Bearish", "Negative daily candle"
+                else:
+                    bias, reason = "Mixed", "No clear daily direction"
+                ob_rows.append({
+                    "Symbol": ob_symbol.removesuffix(".NS"),
+                    "Bias": bias,
+                    "Daily change (%)": day_change,
+                    "Volume / 20D avg": volume_ratio,
+                    "Liquidity event": "Sweep low · bullish reversal proxy" if sweep_low else "Sweep high · bearish reversal proxy" if sweep_high else "None detected",
+                    "Setup": reason,
+                    "Demand zone (approx.)": f"{demand_zone[0]:.2f}–{demand_zone[1]:.2f}" if demand_zone else "Not detected",
+                    "Supply zone (approx.)": f"{supply_zone[0]:.2f}–{supply_zone[1]:.2f}" if supply_zone else "Not detected",
+                    "Latest candle": last["Date"].strftime("%d %b %Y"),
+                })
+        ob_results = pd.DataFrame(ob_rows)
+        if ob_results.empty:
+            st.warning("No usable OHLCV data returned. Try again later; no sample values are substituted.")
+        else:
+            ob_results = ob_results.sort_values("Daily change (%)", ascending=False, na_position="last")
+            st.session_state["ob_scan_results"] = ob_results
+    if "ob_scan_results" in st.session_state:
+        ob_results = st.session_state["ob_scan_results"]
+        bull, bear = st.columns(2)
+        bullish = ob_results[ob_results["Bias"] == "Bullish"].sort_values("Daily change (%)", ascending=False).head(3)
+        bearish = ob_results[ob_results["Bias"] == "Bearish"].sort_values("Daily change (%)", ascending=True).head(3)
+        with bull:
+            st.markdown("""<div style="font-size:20px;font-weight:750;color:#20dda0;margin:8px 0 12px;">↗ Strongest bullish setups</div>""", unsafe_allow_html=True)
+            if bullish.empty:
+                st.info("No bullish setups detected.")
+            else:
+                for rank, (_, item) in enumerate(bullish.iterrows(), 1):
+                    vol_label = f"{item['Volume / 20D avg']:.2f}× 20D avg volume" if pd.notna(item["Volume / 20D avg"]) else "Volume unavailable"
+                    st.markdown(
+                        f'<div style="background:#0d1219;border:1px solid #24313d;border-left:4px solid #20dda0;border-radius:18px;padding:14px 16px;margin:0 0 10px 0;">'
+                        f'<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">'
+                        f'<span style="font-size:17px;font-weight:750;color:#f3f6fa;">{rank}. {item["Symbol"]}</span>'
+                        f'<span style="font-size:17px;font-weight:750;color:#20dda0;">{item["Daily change (%)"]:+.2f}%</span></div>'
+                        f'<div style="color:#c5d0dc;font-size:13px;margin-top:8px;">{item["Setup"]}</div>'
+                        f'<div style="color:#7eeac1;font-size:12px;margin-top:5px;">✓ {vol_label}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+        with bear:
+            st.markdown("""<div style="font-size:20px;font-weight:750;color:#ff647c;margin:8px 0 12px;">↘ Strongest bearish setups</div>""", unsafe_allow_html=True)
+            if bearish.empty:
+                st.info("No bearish setups detected.")
+            else:
+                for rank, (_, item) in enumerate(bearish.iterrows(), 1):
+                    vol_label = f"{item['Volume / 20D avg']:.2f}× 20D avg volume" if pd.notna(item["Volume / 20D avg"]) else "Volume unavailable"
+                    st.markdown(
+                        f'<div style="background:#0d1219;border:1px solid #24313d;border-left:4px solid #ff647c;border-radius:18px;padding:14px 16px;margin:0 0 10px 0;">'
+                        f'<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">'
+                        f'<span style="font-size:17px;font-weight:750;color:#f3f6fa;">{rank}. {item["Symbol"]}</span>'
+                        f'<span style="font-size:17px;font-weight:750;color:#ff647c;">{item["Daily change (%)"]:+.2f}%</span></div>'
+                        f'<div style="color:#c5d0dc;font-size:13px;margin-top:8px;">{item["Setup"]}</div>'
+                        f'<div style="color:#ff9aaa;font-size:12px;margin-top:5px;">✓ {vol_label}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+        st.markdown("""<div style="font-size:clamp(26px,3.5vw,36px);font-weight:850;letter-spacing:-1px;margin:20px 0 10px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Order Block Charts</div>""", unsafe_allow_html=True)
+        zone_cols = st.columns(2)
+        with zone_cols[0]:
+            st.markdown("""<div style="background:#0d1219;border:1px solid #24313d;border-radius:16px;padding:13px 15px;margin-bottom:8px;"><span style="color:#20dda0;font-weight:750;">✓ Demand zones</span><div style="color:#c5d0dc;font-size:13px;margin-top:5px;">Potential support areas from bullish displacement candles</div></div>""", unsafe_allow_html=True)
+        with zone_cols[1]:
+            st.markdown("""<div style="background:#0d1219;border:1px solid #24313d;border-radius:16px;padding:13px 15px;margin-bottom:8px;"><span style="color:#ff647c;font-weight:750;">✓ Supply zones</span><div style="color:#c5d0dc;font-size:13px;margin-top:5px;">Potential resistance areas from bearish displacement candles</div></div>""", unsafe_allow_html=True)
+        st.dataframe(ob_results, use_container_width=True, hide_index=True)
+        st.download_button("Download liquidity scan (CSV)", ob_results.to_csv(index=False).encode("utf-8"), "liquidity_order_block_watchlist.csv", "text/csv", key="ob_scan_download")
+        st.warning("Order blocks and liquidity sweeps here are simplified OHLCV heuristics, not confirmed institutional orders, market depth or guaranteed reversal signals. Data may be delayed. Use a stop-loss and verify prices with your broker.")
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_turnaround_constituents():
+    sources = {
+        "Mid-cap": "https://www.niftyindices.com/IndexConstituent/ind_niftymidcap150list.csv",
+        "Small-cap": "https://www.niftyindices.com/IndexConstituent/ind_niftysmallcap250list.csv",
+    }
+    rows = []
+    errors = []
+    for segment, url in sources.items():
+        try:
+            response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+            response.raise_for_status()
+            from io import StringIO
+            frame = pd.read_csv(StringIO(response.text))
+            symbol_col = next((c for c in frame.columns if str(c).strip().lower() == "symbol"), None)
+            name_col = next((c for c in frame.columns if str(c).strip().lower() in ("company name", "companyname")), None)
+            if symbol_col is None:
+                errors.append(f"{segment} constituent list did not contain a Symbol column.")
+                continue
+            for _, row in frame.iterrows():
+                symbol = str(row.get(symbol_col, "")).strip()
+                if symbol and symbol.lower() != "nan":
+                    rows.append({"Symbol": symbol, "Company": str(row.get(name_col, symbol)).strip() if name_col else symbol, "Segment": segment, "Ticker": symbol + ".NS"})
+        except Exception as exc:
+            errors.append(f"{segment} constituent list unavailable ({exc.__class__.__name__}).")
+    if not rows:
+        return pd.DataFrame(), "; ".join(errors) if errors else "No constituents returned."
+    return pd.DataFrame(rows).drop_duplicates(subset=["Ticker"]), "; ".join(errors) if errors else None
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_one_turnaround_fundamentals(ticker: str, segment: str, company: str):
+    """Read quarterly income-statement data only; return no row when the source lacks enough data."""
+    try:
+        q = yf.Ticker(ticker).quarterly_income_stmt
+        if q is None or q.empty or q.shape[1] < 2:
+            return None
+        q = q.copy()
+        q.columns = pd.to_datetime(q.columns, errors="coerce")
+        q = q.loc[:, ~q.columns.isna()].sort_index(axis=1, ascending=False)
+        if q.shape[1] < 2:
+            return None
+        def metric(names, col):
+            for name in names:
+                if name in q.index:
+                    try:
+                        value = pd.to_numeric(q.loc[name, col], errors="coerce")
+                        if pd.notna(value):
+                            return float(value)
+                    except Exception:
+                        pass
+            return np.nan
+        rev_names = ["Total Revenue", "Operating Revenue", "Revenue"]
+        profit_names = ["Net Income", "Net Income Common Stockholders", "Net Income From Continuing Operation Net Minority Interest"]
+        op_names = ["Operating Income", "EBIT"]
+        dates = list(q.columns)
+        rev_now, rev_prev = metric(rev_names, dates[0]), metric(rev_names, dates[1])
+        profit_now, profit_prev = metric(profit_names, dates[0]), metric(profit_names, dates[1])
+        op_now = metric(op_names, dates[0])
+        # Prefer year-on-year comparisons when a matching quarter four periods back exists.
+        rev_base = metric(rev_names, dates[4]) if len(dates) >= 5 else np.nan
+        profit_base = metric(profit_names, dates[4]) if len(dates) >= 5 else np.nan
+        op_base = metric(op_names, dates[4]) if len(dates) >= 5 else np.nan
+        if not np.isfinite(rev_now) or rev_now <= 0 or not np.isfinite(profit_now):
+            return None
+        rev_yoy = (rev_now / rev_base - 1) * 100 if np.isfinite(rev_base) and rev_base > 0 else np.nan
+        if np.isfinite(profit_base) and profit_base != 0:
+            profit_yoy = (profit_now / abs(profit_base) - 1) * 100 if profit_base > 0 else np.nan
+        else:
+            profit_yoy = np.nan
+        margin_now = op_now / rev_now * 100 if np.isfinite(op_now) else np.nan
+        margin_prev = metric(op_names, dates[1]) / rev_prev * 100 if np.isfinite(metric(op_names, dates[1])) and np.isfinite(rev_prev) and rev_prev > 0 else np.nan
+        # A recovery from a loss to profit is explicitly flagged; growth rates across negative bases are not fabricated.
+        loss_to_profit = np.isfinite(profit_base) and profit_base < 0 and profit_now > 0
+        improving_profit = np.isfinite(profit_yoy) and profit_yoy >= 15
+        improving_sales = np.isfinite(rev_yoy) and rev_yoy >= 10
+        margin_improving = np.isfinite(margin_now) and np.isfinite(margin_prev) and margin_now > margin_prev
+        signals = sum([improving_sales, improving_profit, margin_improving, loss_to_profit])
+        if signals < 2:
+            return None
+        latest_date = dates[0].strftime("%Y-%m-%d") if hasattr(dates[0], "strftime") else str(dates[0])
+        return {
+            "Company": company, "Symbol": ticker.replace(".NS", ""), "Segment": segment,
+            "Latest quarter": latest_date, "Sales growth YoY %": round(rev_yoy, 1) if np.isfinite(rev_yoy) else np.nan,
+            "Profit growth YoY %": round(profit_yoy, 1) if np.isfinite(profit_yoy) else ("Loss → profit" if loss_to_profit else np.nan),
+            "Operating margin %": round(margin_now, 1) if np.isfinite(margin_now) else np.nan,
+            "Margin improved QoQ": bool(margin_improving) if np.isfinite(margin_now) and np.isfinite(margin_prev) else "Insufficient data",
+            "Turnaround signals": int(signals),
+            "Reason flagged": ", ".join([label for label, ok in [
+                ("Sales growth ≥10% YoY", improving_sales),
+                ("Profit growth ≥15% YoY", improving_profit),
+                ("Loss-to-profit recovery", loss_to_profit),
+                ("Operating margin improved QoQ", margin_improving),
+            ] if ok]),
+            "Source": "Yahoo Finance quarterly income statement",
+        }
+    except Exception:
+        return None
+
+def run_turnaround_scan(segments: tuple[str, ...]):
+    universe, universe_error = get_turnaround_constituents()
+    if universe.empty:
+        return pd.DataFrame(), universe_error or "Index constituent data unavailable."
+    universe = universe[universe["Segment"].isin(segments)]
+    # A modest worker pool keeps the screen practical while covering the selected index constituents.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    found = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(get_one_turnaround_fundamentals, row["Ticker"], row["Segment"], row["Company"]) for _, row in universe.iterrows()]
+        for future in as_completed(futures):
+            try:
+                item = future.result()
+                if item:
+                    found.append(item)
+            except Exception:
+                continue
+    result = pd.DataFrame(found)
+    if not result.empty:
+        result["_sort"] = pd.to_numeric(result["Turnaround signals"], errors="coerce")
+        result = result.sort_values(["_sort", "Sales growth YoY %"], ascending=[False, False], na_position="last").drop(columns=["_sort"])
+    return result, universe_error
+
+st.markdown("""<div style="font-size:clamp(28px,4vw,42px);font-weight:850;letter-spacing:-1.2px;line-height:1.15;margin:8px 0 6px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Turnaround Board</div>""", unsafe_allow_html=True)
+st.caption("Small-cap + mid-cap candidates · improving sales, profit recovery and operating margins. Public data may be delayed or incomplete.")
+with st.expander("Scan small-cap / mid-cap turnaround stocks", expanded=False):
+    st.write("Scans current Nifty Midcap 150 and Nifty Smallcap 250 constituents. Newly qualifying stocks can appear when the source data updates. Research watchlist only, not a buy signal.")
+    segment_choice = st.multiselect("Segments to scan", ["Mid-cap", "Small-cap"], default=["Mid-cap", "Small-cap"], key="turnaround_segments")
+    st.caption("Fundamentals: Yahoo Finance quarterly income statements · Constituents: Nifty Indices CSV lists · Cached for up to 6 hours. Initial scans may take a few minutes.")
+    auto_turnaround_scan = st.checkbox(
+        "Automatically refresh turnaround scan when dashboard refreshes",
+        value=False,
+        key="auto_turnaround_scan_enabled",
+        help="Opt-in because a first scan can take several minutes. Fundamental source data is cached for up to 6 hours."
+    )
+    turnaround_scan_clicked = st.button("Scan / refresh turnaround stocks", type="primary", key="run_auto_turnaround_scan", disabled=not segment_choice)
+    if (turnaround_scan_clicked or auto_turnaround_scan) and segment_choice:
+        with st.spinner("Scanning index constituents for improving fundamentals. This can take a few minutes…"):
+            scan_df, scan_warning = run_turnaround_scan(tuple(sorted(segment_choice)))
+        st.session_state["auto_turnaround_scan_results"] = scan_df
+        st.session_state["auto_turnaround_scan_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
+        st.session_state["auto_turnaround_scan_segments"] = ", ".join(segment_choice)
+        st.session_state["auto_turnaround_scan_warning"] = scan_warning
+    scan_df = st.session_state.get("auto_turnaround_scan_results", pd.DataFrame())
+    if st.session_state.get("auto_turnaround_scan_time"):
+        st.caption("Last scan: " + st.session_state["auto_turnaround_scan_time"] + " · Segments: " + st.session_state.get("auto_turnaround_scan_segments", ""))
+    if st.session_state.get("auto_turnaround_scan_warning"):
+        st.warning(st.session_state["auto_turnaround_scan_warning"])
+    if isinstance(scan_df, pd.DataFrame) and not scan_df.empty:
+        st.success(f"{len(scan_df)} potential turnaround candidate(s) matched the current rules.")
+        st.dataframe(scan_df, use_container_width=True, hide_index=True, height=520)
+        st.download_button("Download turnaround watchlist CSV", scan_df.to_csv(index=False).encode("utf-8"), file_name="small_midcap_turnaround_watchlist.csv", mime="text/csv", key="download_auto_turnaround_csv")
+        st.caption("Missing metrics remain blank. Profit growth across a negative comparison base is not calculated; loss-to-profit is flagged separately. Debt, cash flow and valuation are not screened in this first version because quarterly statement coverage is inconsistent.")
+    elif "auto_turnaround_scan_time" in st.session_state:
+        st.info("No candidates met the current rules, or the data provider returned insufficient quarterly data. This is not proof that no turnaround stocks exist.")
+    else:
+        st.info("Select segments and press Scan / refresh to generate the first watchlist. Re-run after market-data refresh to catch new qualifying stocks.")
+
+
+
 
 
