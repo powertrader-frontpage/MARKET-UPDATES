@@ -338,6 +338,7 @@ def _calculate():
 
 def render_nse500_screener():
     with st.expander("NSE 500 · Relative Strength & Weinstein Stage Screener", expanded=False):
+        st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#f97316,#facc15,#22c55e);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">NSE 500 · Relative Strength & Weinstein Stage Screener</div>""", unsafe_allow_html=True)
         st.markdown("**Find market leaders, fresh Stage 2 breakouts and sector participation across the full NSE 500.**")
         st.caption(
             "RS is a 1–99 percentile rank using a 3M/6M/12M momentum blend versus the scanned NSE 500 universe. "
@@ -441,11 +442,11 @@ def render_nse500_screener():
                 key="download_nse500_all_stage2",
             )
 
-            st.markdown("#### Sector strength · median RS and advancing participation")
+            st.markdown("""<div style="font-size:22px;font-weight:800;background:linear-gradient(90deg,#34d399,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Sector strength · median RS and advancing participation</div>""", unsafe_allow_html=True)
             st.dataframe(sectors, use_container_width=True, hide_index=True, height=230)
 
             st.markdown('<div id="full-nse-500-stock-screener"></div>', unsafe_allow_html=True)
-            st.markdown("#### Full NSE 500 stock screener")
+            st.markdown("""<div style="font-size:22px;font-weight:800;background:linear-gradient(90deg,#fbbf24,#fb7185);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Full NSE 500 stock screener</div>""", unsafe_allow_html=True)
             stage_selection = st.selectbox(
                 "Select Stage",
                 ["All Stage 2", "Fresh Stage 2 (B1)", "Stage 2 – B2 Stocks (Fresh)", "Stage 2 – B2 Stocks"],
