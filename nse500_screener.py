@@ -404,6 +404,11 @@ def render_nse500_screener():
 
             st.markdown('<div id="full-nse-500-stock-screener"></div>', unsafe_allow_html=True)
             st.markdown("#### Full NSE 500 stock screener")
+            stage_selection = st.selectbox(
+                "Select Stage",
+                ["All Stage 2", "Fresh Stage 2 (B1)", "Stage 2 – B2 Stocks (Fresh)", "Stage 2 – B2 Stocks"],
+                key="nse500_base_stage_filter",
+            )
             c1, c2, c3 = st.columns([1.2, 1, 1])
             with c1:
                 query = st.text_input("Search symbol / company", key="nse500_search")
@@ -411,11 +416,6 @@ def render_nse500_screener():
                 stage_filter = st.multiselect("Weinstein stage", STAGES, default=[STAGE_2], key="nse500_stage_filter")
             with c3:
                 sector_filter = st.selectbox("Sector", ["All sectors"] + sorted(results["Sector"].dropna().astype(str).unique()), key="nse500_sector_filter")
-            stage_selection = st.selectbox(
-                "Select Stage",
-                ["All Stage 2", "Fresh Stage 2 (B1)", "Stage 2 – B2 Stocks (Fresh)", "Stage 2 – B2 Stocks"],
-                key="nse500_base_stage_filter",
-            )
             filtered = results.copy()
             if query.strip():
                 q = query.strip().lower()
