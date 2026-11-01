@@ -223,6 +223,51 @@ def render_nse500_screener():
             fresh = results[results["New Stage 2"]].copy().sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False])
             current_stage2 = results[results["Stage"] == STAGE_2].copy().sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False])
 
+            # Visual market overview: compact cards first, detailed tables remain below.
+            counts = results["Stage"].value_counts()
+            stage_colors = [(STAGE_1, "#d6a84f"), (STAGE_2, "#3ba77a"), (STAGE_3, "#d98a45"), (STAGE_4, "#c85b62")]
+            metric_cols = st.columns(4)
+            for metric_col, (stage_name, stage_color) in zip(metric_cols, stage_colors):
+                metric_col.markdown(
+                    f'<div style="background:#171d1b;border:1px solid #35433c;border-top:3px solid {stage_color};border-radius:12px;padding:12px 14px;">'
+                    f'<div style="font-size:11px;color:#a8b5ad;">{stage_name}</div>'
+                    f'<div style="font-size:27px;font-weight:800;color:{stage_color};">{int(counts.get(stage_name, 0))}</div></div>',
+                    unsafe_allow_html=True,
+                )
+
+            leaders = results.sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False]).head(6)
+            daily_climbers = results.sort_values("Daily Change %", ascending=False).head(6)
+            daily_fallers = results.sort_values("Daily Change %", ascending=True).head(6)
+            board_left, board_right = st.columns(2, gap="medium")
+            with board_left:
+                st.markdown("**RS LEADERS · NSE 500**")
+                for pos, (_, stock) in enumerate(leaders.iterrows(), 1):
+                    st.markdown(
+                        f'<div style="display:flex;justify-content:space-between;gap:10px;padding:9px 11px;border-bottom:1px solid #34413a;background:rgba(255,255,255,.025);">'
+                        f'<span><b>#{pos} {stock["Symbol"]}</b><small style="display:block;color:#aab6ae;">{stock["Sector"]} · {stock["Stage"]}</small></span>'
+                        f'<span style="text-align:right;color:#e5c46d;font-weight:800;">RS {int(stock["RS Rank"])}<small style="display:block;color:#aab6ae;">{float(stock["Gap vs 30W %"]):+.1f}% vs 30W</small></span></div>',
+                        unsafe_allow_html=True,
+                    )
+            with board_right:
+                st.markdown("**TODAY’S BIGGEST MOVERS**")
+                mover_mode = st.segmented_control("Show movers", ["Climbers", "Fallers"], default="Climbers", key="nse500_mover_mode", label_visibility="collapsed")
+                mover_frame = daily_climbers if mover_mode == "Climbers" else daily_fallers
+                for pos, (_, stock) in enumerate(mover_frame.iterrows(), 1):
+                    move = float(stock["Daily Change %"]) if pd.notna(stock["Daily Change %"]) else 0.0
+                    move_color = "#3ba77a" if move >= 0 else "#d46b72"
+                    st.markdown(
+                        f'<div style="display:flex;justify-content:space-between;gap:10px;padding:9px 11px;border-bottom:1px solid #34413a;background:rgba(255,255,255,.025);">'
+                        f'<span><b>#{pos} {stock["Symbol"]}</b><small style="display:block;color:#aab6ae;">{stock["Sector"]} · RS {int(stock["RS Rank"])}</small></span>'
+                        f'<span style="color:{move_color};font-weight:800;">{move:+.2f}%</span></div>',
+                        unsafe_allow_html=True,
+                    )
+            st.markdown(
+                f'<div style="margin:12px 0 18px;padding:11px 14px;border:1px solid #6a5934;border-radius:10px;background:rgba(190,150,70,.08);">'
+                f'<b style="color:#e5c46d;">FRESH STAGE 2 ENTRIES</b> · {len(fresh)} confirmed Stage 1 → Stage 2 transitions this completed week · '
+                f'<b style="color:#e5c46d;">{len(current_stage2)}</b> stocks currently in Stage 2</div>',
+                unsafe_allow_html=True,
+            )
+
             st.markdown("#### 🟢 Fresh Stage 2 entries · Stage 1 → Stage 2")
             st.caption("Only stocks whose completed weekly classification changed from Stage 1 last week to Stage 2 this week appear here.")
             if fresh.empty:
