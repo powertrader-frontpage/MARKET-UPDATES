@@ -421,6 +421,39 @@ def render_nse500_screener():
             st.markdown("""<div style="font-size:22px;font-weight:800;background:linear-gradient(90deg,#34d399,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Sector strength · median RS and advancing participation</div>""", unsafe_allow_html=True)
             st.dataframe(sectors, use_container_width=True, hide_index=True, height=230)
 
+            # Sector-wise Stage 2 participation: fresh Stage 2 entries and B2 base stocks.
+            fresh_sector_stocks = results[
+                (results["Stage"] == STAGE_2) & results["New Stage 2"]
+            ].copy()
+            b2_sector_stocks = results[
+                (results["Stage"] == STAGE_2) & (results["Base Count"] == 2)
+            ].copy()
+
+            def _stage2_sector_summary(frame):
+                if frame.empty:
+                    return pd.DataFrame(columns=["Sector", "Stocks", "Symbols"])
+                summary = frame.groupby("Sector", dropna=False).agg(
+                    Stocks=("Symbol", "count"),
+                    Symbols=("Symbol", lambda values: ", ".join(sorted(map(str, values)))),
+                ).reset_index()
+                return summary.sort_values(["Stocks", "Sector"], ascending=[False, True])
+
+            fresh_sector_summary = _stage2_sector_summary(fresh_sector_stocks)
+            b2_sector_summary = _stage2_sector_summary(b2_sector_stocks)
+            st.markdown("""<div style="font-size:22px;font-weight:800;background:linear-gradient(90deg,#22c55e,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Stage 2 sectors · Fresh entries (B1)</div>""", unsafe_allow_html=True)
+            st.caption("Sectors ranked by the number of stocks that moved from Stage 1 to Stage 2 in the latest completed week.")
+            if fresh_sector_summary.empty:
+                st.info("No fresh Stage 2 entries are currently confirmed.")
+            else:
+                st.dataframe(fresh_sector_summary, use_container_width=True, hide_index=True, height=min(320, 45 + 38 * len(fresh_sector_summary)))
+
+            st.markdown("""<div style="font-size:22px;font-weight:800;background:linear-gradient(90deg,#f59e0b,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Stage 2 sectors · B2 stocks</div>""", unsafe_allow_html=True)
+            st.caption("Sectors ranked by the number of current Stage 2 stocks that have completed their second confirmed base.")
+            if b2_sector_summary.empty:
+                st.info("No current Stage 2 B2 stocks are detected.")
+            else:
+                st.dataframe(b2_sector_summary, use_container_width=True, hide_index=True, height=min(320, 45 + 38 * len(b2_sector_summary)))
+
             st.markdown('<div id="full-nse-500-stock-screener"></div>', unsafe_allow_html=True)
             st.markdown("""<div style="font-size:22px;font-weight:800;background:linear-gradient(90deg,#fbbf24,#fb7185);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Full NSE 500 stock screener</div>""", unsafe_allow_html=True)
             stage_selection = st.selectbox(
