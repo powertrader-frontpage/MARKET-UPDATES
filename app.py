@@ -52,7 +52,6 @@ st.caption("Free hybrid edition · No broker API · Source-labelled data · Miss
 # Force a fresh source fetch once per new browser session, rather than reusing data cached by a prior visit.
 # This is session-scoped so normal reruns can still benefit from short source caches.
 if not st.session_state.get("_market_data_cache_cleared_on_open", False):
-    st.cache_data.clear()
     st.session_state["_market_data_cache_cleared_on_open"] = True
 
 
