@@ -41,11 +41,12 @@ def _constituents():
     return out.reset_index(drop=True)
 
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def _daily_prices(tickers):
-    batches = []
-    for start in range(0, len(tickers), 60):
-        batch = list(tickers[start:start + 60])
+@st.cache_data(ttl=21600, show_spinner=False)
+def _daily_ohlc(tickers):
+    """Fetch adjusted daily OHLC once per batch; shared by RS and Weinstein calculations."""
+    close_parts, high_parts, low_parts = [], [], []
+    for start in range(0, len(tickers), 80):
+        batch = list(tickers[start:start + 80])
         raw = yf.download(
             tickers=batch, period="2y", interval="1d", auto_adjust=True,
             group_by="ticker", threads=False, progress=False, timeout=25,
@@ -56,48 +57,22 @@ def _daily_prices(tickers):
             level0 = set(map(str, raw.columns.get_level_values(0)))
             level1 = set(map(str, raw.columns.get_level_values(1)))
             for ticker in batch:
-                if ticker in level0 and "Close" in level1:
-                    batches.append(raw[ticker][["Close"]].rename(columns={"Close": ticker}))
-                elif ticker in level1 and "Close" in level0:
-                    batches.append(raw["Close"][ticker].to_frame(name=ticker))
-        elif len(batch) == 1 and "Close" in raw.columns:
-            batches.append(raw[["Close"]].rename(columns={"Close": batch[0]}))
-    if not batches:
-        return pd.DataFrame()
-    return pd.concat(batches, axis=1).loc[:, lambda d: ~d.columns.duplicated()].sort_index()
-
-
-
-@st.cache_data(ttl=86400, show_spinner=False)
-def _daily_high_low(tickers):
-    """Fetch daily highs/lows for Weinstein base detection."""
-    high_parts, low_parts = [], []
-    for start in range(0, len(tickers), 60):
-        batch = list(tickers[start:start + 60])
-        raw = yf.download(
-            tickers=batch, period="2y", interval="1d", auto_adjust=True,
-            group_by="ticker", threads=False, progress=False, timeout=25,
-        )
-        if raw is None or raw.empty:
-            continue
-        if isinstance(raw.columns, pd.MultiIndex):
-            level0 = set(map(str, raw.columns.get_level_values(0)))
-            level1 = set(map(str, raw.columns.get_level_values(1)))
-            for ticker in batch:
-                if ticker in level0 and {"High", "Low"}.issubset(level1):
-                    high_parts.append(raw[ticker]["High"].rename(ticker))
-                    low_parts.append(raw[ticker]["Low"].rename(ticker))
-                elif ticker in level1 and {"High", "Low"}.issubset(level0):
+                if ticker in level0 and {"Close", "High", "Low"}.issubset(level1):
+                    part = raw[ticker]
+                    close_parts.append(part["Close"].rename(ticker))
+                    high_parts.append(part["High"].rename(ticker))
+                    low_parts.append(part["Low"].rename(ticker))
+                elif ticker in level1 and {"Close", "High", "Low"}.issubset(level0):
+                    close_parts.append(raw["Close"][ticker].rename(ticker))
                     high_parts.append(raw["High"][ticker].rename(ticker))
                     low_parts.append(raw["Low"][ticker].rename(ticker))
-        elif len(batch) == 1 and {"High", "Low"}.issubset(raw.columns):
+        elif len(batch) == 1 and {"Close", "High", "Low"}.issubset(raw.columns):
+            close_parts.append(raw["Close"].rename(batch[0]))
             high_parts.append(raw["High"].rename(batch[0]))
             low_parts.append(raw["Low"].rename(batch[0]))
-    if not high_parts or not low_parts:
-        return pd.DataFrame(), pd.DataFrame()
-    highs = pd.concat(high_parts, axis=1).loc[:, lambda d: ~d.columns.duplicated()].sort_index()
-    lows = pd.concat(low_parts, axis=1).loc[:, lambda d: ~d.columns.duplicated()].sort_index()
-    return highs, lows
+    def combine(parts):
+        return pd.concat(parts, axis=1).loc[:, lambda d: ~d.columns.duplicated()].sort_index() if parts else pd.DataFrame()
+    return combine(close_parts), combine(high_parts), combine(low_parts)
 
 
 def _pine_rma(series, length):
@@ -216,11 +191,11 @@ def _stage_at(weekly, ticker, position, weekly_high, weekly_low):
     stage_series, _, _, _ = _pine_stage_series(weekly[ticker], weekly_high[ticker], weekly_low[ticker])
     return stage_series.iloc[position]
 
+@st.cache_data(ttl=21600, show_spinner=False)
 def _calculate():
     universe = _constituents()
     tickers = tuple(universe["Ticker"].tolist())
-    prices = _daily_prices(tickers)
-    daily_high, daily_low = _daily_high_low(tickers)
+    prices, daily_high, daily_low = _daily_ohlc(tickers)
     if prices.empty or len(prices.index) < 160:
         raise ValueError("Insufficient daily history returned for a full-universe scan.")
     prices = prices.apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
