@@ -293,17 +293,6 @@ def render_nse500_screener():
                 key="download_nse500_all_stage2",
             )
 
-            counts = results["Stage"].value_counts()
-            cols = st.columns(4)
-            stage_colors = [(STAGE_1, "#f59e0b"), (STAGE_2, "#22c55e"), (STAGE_3, "#fb923c"), (STAGE_4, "#ef4444")]
-            for col, (stage, color) in zip(cols, stage_colors):
-                col.markdown(
-                    f'<div style="border:1px solid #343a46;border-left:4px solid {color};border-radius:10px;padding:9px 11px;">'
-                    f'<div style="font-size:11px;color:#aeb6c2;">{stage}</div>'
-                    f'<div style="font-size:23px;font-weight:800;color:{color};">{int(counts.get(stage, 0))}</div></div>',
-                    unsafe_allow_html=True,
-                )
-
             st.markdown("#### Sector strength · median RS and advancing participation")
             st.dataframe(sectors, use_container_width=True, hide_index=True, height=230)
 
