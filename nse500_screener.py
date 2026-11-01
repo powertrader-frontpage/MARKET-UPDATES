@@ -72,7 +72,7 @@ def _daily_ohlc(tickers):
             close_parts.append(raw["Close"].rename(batch[0]))
             high_parts.append(raw["High"].rename(batch[0]))
             low_parts.append(raw["Low"].rename(batch[0]))
-            volume_parts.append(raw["Volume"].rename(batch[0])))
+            volume_parts.append(raw["Volume"].rename(batch[0]))
     def combine(parts):
         return pd.concat(parts, axis=1).loc[:, lambda d: ~d.columns.duplicated()].sort_index() if parts else pd.DataFrame()
     return combine(close_parts), combine(high_parts), combine(low_parts), combine(volume_parts)
