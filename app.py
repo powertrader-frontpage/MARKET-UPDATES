@@ -2234,11 +2234,11 @@ else:
                             for label, value in [("1M", row["1M %"]), ("3M", row["3M %"]), ("6M", row["6M %"])]
                         )
                         card_html = (
-                            f'<div style="border:1px solid #dbe2ea;border-radius:18px;padding:15px;margin-bottom:12px;background:rgba(255,255,255,.025);">'
+                            f'<div style="border:1px solid #5b5747;border-radius:16px;padding:15px;margin-bottom:12px;background:#171d1b;color:#f2f0e8;">'
                             f'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
-                            f'<span style="background:#2864eb;color:white;border-radius:999px;padding:4px 10px;font-weight:800;">#{idx+1}</span>'
+                            f'<span style="background:#d7b967;color:#20251f;border-radius:999px;padding:4px 10px;font-weight:800;">#{idx+1}</span>'
                             f'<span style="border:1px solid {zone_color};color:{zone_color};border-radius:999px;padding:3px 10px;font-weight:700;">{html.escape(str(row["Zone"]))}</span></div>'
-                            f'<h3 style="margin:12px 0 4px;">{html.escape(str(row["Micro sector"]))}</h3>'
+                            f'<h3 style="margin:12px 0 4px;color:#f2f0e8;">{html.escape(str(row["Micro sector"]))}</h3>'
                             f'<div style="opacity:.75;font-size:13px;">{html.escape(str(row["Group"]))} · {int(row["Stocks available"])} stocks · Score {int(row["Score"])}</div>'
                             f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:14px;">{metric_html}</div></div>'
                         )
