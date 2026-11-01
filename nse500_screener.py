@@ -100,8 +100,32 @@ def _daily_high_low(tickers):
     return highs, lows
 
 
-def _base_progress(close, high, low, min_advance_pct=9.0, min_base_weeks=4):
-    """Return weekly B-count series following the supplied Weinstein base rules."""
+def _pine_stage_series(close, high, low, ma_length=30, atr_length=14):
+    """Python port of the Pine engine's weekly Weinstein stage/flatness rules."""
+    sma = close.rolling(ma_length, min_periods=ma_length).mean()
+    # Weekly ATR(14), using true range from weekly high/low/previous close.
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(atr_length, min_periods=atr_length).mean()
+    sma_delta = sma - sma.shift(2)
+    flat_flag = sma_delta.abs() < (atr * 0.05)
+    rising = sma_delta > 0
+    falling = sma_delta < 0
+    stage = pd.Series("Unclassified", index=close.index, dtype="object")
+    ready = sma.notna() & atr.notna() & close.notna()
+    stage.loc[ready & (close > sma) & flat_flag] = STAGE_1
+    stage.loc[ready & (close > sma) & rising & ~flat_flag] = STAGE_2
+    stage.loc[ready & (close < sma) & falling & ~flat_flag] = STAGE_4
+    stage.loc[ready & (stage == "Unclassified")] = STAGE_3
+    return stage, sma, atr, flat_flag
+
+
+def _pine_base_progress(close, high, low, stage_series, min_advance_pct=9.0, min_base_weeks=4):
+    """Port of Pine base counting: duration, breakout, advance and explosive-base exception."""
     count = 0
     stage2_low = np.nan
     base_low = np.nan
@@ -109,23 +133,18 @@ def _base_progress(close, high, low, min_advance_pct=9.0, min_base_weeks=4):
     last_breakout = np.nan
     base_start = None
     counts = []
+    fresh_b2 = []
     for i in range(len(close)):
         c, h, l = close.iloc[i], high.iloc[i], low.iloc[i]
-        if any(pd.isna(v) for v in (c, h, l)):
-            counts.append(0)
-            continue
-        stage2_now = False
-        if i >= 30:
-            ma30 = close.iloc[:i + 1].rolling(30, min_periods=30).mean().iloc[-1]
-            ma30_4 = close.iloc[:i - 3].rolling(30, min_periods=30).mean().iloc[-1] if i >= 33 else np.nan
-            ma10 = close.iloc[:i + 1].rolling(10, min_periods=10).mean().iloc[-1]
-            stage2_now = pd.notna(ma30) and pd.notna(ma30_4) and pd.notna(ma10) and ma30_4 != 0 and c > ma30 and ma10 > ma30 and (ma30 / ma30_4 - 1) * 100 >= 1.0
-        if not stage2_now:
+        in_stage2 = stage_series.iloc[i] == STAGE_2
+        if not in_stage2 or any(pd.isna(v) for v in (c, h, l)):
             count = 0
             stage2_low = base_low = base_high = last_breakout = np.nan
             base_start = None
             counts.append(0)
+            fresh_b2.append(False)
             continue
+        prior_count = count
         if count == 0:
             count = 1
             stage2_low = l
@@ -133,6 +152,7 @@ def _base_progress(close, high, low, min_advance_pct=9.0, min_base_weeks=4):
             last_breakout = h
             base_start = i
             counts.append(count)
+            fresh_b2.append(False)
             continue
         if l < stage2_low:
             count = 1
@@ -141,46 +161,37 @@ def _base_progress(close, high, low, min_advance_pct=9.0, min_base_weeks=4):
             last_breakout = h
             base_start = i
             counts.append(count)
+            fresh_b2.append(False)
             continue
         prior_base_high = base_high
         base_low = min(base_low, l)
         base_high = max(base_high, h)
         duration = i - base_start
-        range_pct = ((base_high - base_low) / base_low * 100) if base_low > 0 else 0
-        duration_ok = duration >= min_base_weeks or (duration >= 2 and range_pct >= 90)
-        advance_ok = pd.notna(last_breakout) and last_breakout > 0 and (c / last_breakout - 1) * 100 >= min_advance_pct
-        if c > prior_base_high and duration_ok and advance_ok:
+        explosive_range_pct = ((base_high - base_low) / base_low * 100) if base_low > 0 else 0.0
+        duration_ok = duration >= min_base_weeks or (duration >= 2 and explosive_range_pct >= 90.0)
+        advance_ok = (
+            pd.notna(last_breakout) and last_breakout > 0
+            and ((c / last_breakout - 1) * 100) >= min_advance_pct
+        )
+        broke_out = c > prior_base_high
+        if broke_out and duration_ok and advance_ok:
             count += 1
             base_low, base_high = l, h
             last_breakout = c
             base_start = i
         counts.append(count)
-    return pd.Series(counts, index=close.index, dtype="int64")
+        fresh_b2.append(prior_count == 1 and count == 2)
+    return (
+        pd.Series(counts, index=close.index, dtype="int64"),
+        pd.Series(fresh_b2, index=close.index, dtype="bool"),
+    )
 
-def _stage_at(weekly, ticker, position):
-    """Classify one completed weekly bar using the same strict Weinstein rules."""
-    if position < 30 or ticker not in weekly.columns:
-        return "Unclassified"
-    close = weekly.iloc[position].get(ticker)
-    ma30_series = weekly[ticker].rolling(30, min_periods=30).mean()
-    ma10_series = weekly[ticker].rolling(10, min_periods=10).mean()
-    ma30_now = ma30_series.iloc[position]
-    ma30_four = ma30_series.iloc[position - 4]
-    ma10_now = ma10_series.iloc[position]
-    if any(pd.isna(x) for x in (close, ma30_now, ma30_four, ma10_now)) or not ma30_four:
-        return "Unclassified"
-    slope_pct = (ma30_now / ma30_four - 1) * 100
-    gap_pct = (close / ma30_now - 1) * 100
-    if close > ma30_now and ma10_now > ma30_now and slope_pct >= 1.0:
-        return STAGE_2
-    if close < ma30_now and slope_pct <= -1.0:
-        return STAGE_4
-    if abs(slope_pct) < 1.0 and abs(gap_pct) <= 5.0:
-        return STAGE_1
-    if close < ma30_now or slope_pct < 1.0:
-        return STAGE_3
-    return "Unclassified"
 
+def _stage_at(weekly, ticker, position, weekly_high, weekly_low):
+    if position < 30 or ticker not in weekly.columns or ticker not in weekly_high.columns or ticker not in weekly_low.columns:
+        return "Unclassified"
+    stage_series, _, _, _ = _pine_stage_series(weekly[ticker], weekly_high[ticker], weekly_low[ticker])
+    return stage_series.iloc[position]
 
 def _calculate():
     universe = _constituents()
@@ -223,9 +234,22 @@ def _calculate():
     ranks = (composite.rank(pct=True, method="average") * 99).round().clip(1, 99)
 
     ma30 = weekly.rolling(30, min_periods=30).mean()
-    ma30_now, ma30_four = ma30.iloc[-1], ma30.iloc[-5]
+    ma30_now = ma30.iloc[-1]
     ma10_now = weekly.rolling(10, min_periods=10).mean().iloc[-1]
-    slope = (ma30_now / ma30_four - 1) * 100
+    stage_series_by_ticker = {}
+    base_series_by_ticker = {}
+    fresh_b2_series_by_ticker = {}
+    for ticker in weekly.columns:
+        if ticker in weekly_high.columns and ticker in weekly_low.columns:
+            stage_s, _, _, _ = _pine_stage_series(weekly[ticker], weekly_high[ticker], weekly_low[ticker])
+            base_s, fresh_s = _pine_base_progress(weekly[ticker], weekly_high[ticker], weekly_low[ticker], stage_s, min_advance_pct=9.0, min_base_weeks=4)
+            stage_series_by_ticker[ticker] = stage_s
+            base_series_by_ticker[ticker] = base_s
+            fresh_b2_series_by_ticker[ticker] = fresh_s
+    stage_frame = pd.DataFrame(stage_series_by_ticker, index=weekly.index)
+    base_frame = pd.DataFrame(base_series_by_ticker, index=weekly.index)
+    fresh_b2_frame = pd.DataFrame(fresh_b2_series_by_ticker, index=weekly.index)
+    slope = (ma30_now / ma30.shift(2).iloc[-1] - 1) * 100
     high52 = weekly.tail(52).max()
     daily_now, daily_prev = prices.iloc[-1], prices.iloc[-2]
     current_week_label = weekly.index[-1]
@@ -246,16 +270,11 @@ def _calculate():
         gap = (price / avg30 - 1) * 100
         high = high52.get(ticker)
         high_gap = (price / high - 1) * 100 if pd.notna(high) and high else np.nan
-        stage = _stage_at(weekly, ticker, len(weekly) - 1)
-        previous_stage = _stage_at(weekly, ticker, len(weekly) - 2)
+        stage = stage_frame[ticker].iloc[-1] if ticker in stage_frame.columns else "Unclassified"
+        previous_stage = stage_frame[ticker].iloc[-2] if ticker in stage_frame.columns else "Unclassified"
         newly_stage2 = previous_stage == STAGE_1 and stage == STAGE_2
-        if ticker in weekly_high.columns and ticker in weekly_low.columns:
-            base_counts = _base_progress(weekly[ticker], weekly_high[ticker], weekly_low[ticker], min_advance_pct=9.0)
-            base_count = int(base_counts.iloc[-1])
-            previous_base_count = int(base_counts.iloc[-2]) if len(base_counts) > 1 else 0
-        else:
-            base_count, previous_base_count = 0, 0
-        fresh_b2 = stage == STAGE_2 and previous_base_count == 1 and base_count == 2
+        base_count = int(base_frame[ticker].iloc[-1]) if ticker in base_frame.columns else 0
+        fresh_b2 = bool(fresh_b2_frame[ticker].iloc[-1]) if ticker in fresh_b2_frame.columns else False
 
         extension = (
             "Extended" if gap >= 10 else
