@@ -48,7 +48,7 @@ def _daily_prices(tickers):
         batch = list(tickers[start:start + 60])
         raw = yf.download(
             tickers=batch, period="2y", interval="1d", auto_adjust=True,
-            group_by="ticker", threads=True, progress=False, timeout=25,
+            group_by="ticker", threads=False, progress=False, timeout=25,
         )
         if raw is None or raw.empty:
             continue
@@ -76,7 +76,7 @@ def _daily_high_low(tickers):
         batch = list(tickers[start:start + 60])
         raw = yf.download(
             tickers=batch, period="2y", interval="1d", auto_adjust=True,
-            group_by="ticker", threads=True, progress=False, timeout=25,
+            group_by="ticker", threads=False, progress=False, timeout=25,
         )
         if raw is None or raw.empty:
             continue
