@@ -233,7 +233,9 @@ def _calculate():
 
     ma30 = weekly.rolling(30, min_periods=30).mean()
     ma30_now = ma30.iloc[-1]
-    ma10_now = weekly.rolling(10, min_periods=10).mean().iloc[-1]
+    ma10_all = weekly.rolling(10, min_periods=10).mean()
+    ma10_now = ma10_all.iloc[-1]
+    ma10_prev = ma10_all.iloc[-2]
     stage_series_by_ticker = {}
     base_series_by_ticker = {}
     fresh_b2_series_by_ticker = {}
@@ -261,6 +263,7 @@ def _calculate():
         price = float(latest[ticker])
         avg30 = float(ma30_now[ticker])
         avg10 = ma10_now.get(ticker)
+        prev_avg10 = ma10_prev.get(ticker)
         ma_slope = slope.get(ticker)
         rank = ranks.get(ticker)
         if pd.isna(avg10) or pd.isna(ma_slope) or pd.isna(rank):
@@ -271,6 +274,11 @@ def _calculate():
         stage = stage_frame[ticker].iloc[-1] if ticker in stage_frame.columns else "Unclassified"
         previous_stage = stage_frame[ticker].iloc[-2] if ticker in stage_frame.columns else "Unclassified"
         newly_stage2 = previous_stage == STAGE_1 and stage == STAGE_2
+        reclaimed_10w = (
+            pd.notna(prev_avg10) and float(weekly[ticker].iloc[-2]) <= float(prev_avg10)
+            and price > float(avg10)
+        )
+        gap_vs_10w = (price / float(avg10) - 1) * 100 if float(avg10) else np.nan
         base_count = int(base_frame[ticker].iloc[-1]) if ticker in base_frame.columns else 0
         fresh_b2 = bool(fresh_b2_frame[ticker].iloc[-1]) if ticker in fresh_b2_frame.columns else False
 
@@ -285,7 +293,8 @@ def _calculate():
         records.append({
             "Symbol": item["Symbol"], "Company": item["Company"], "Sector": item["Sector"],
             "Price": price, "RS Rank": int(rank), "Stage": stage, "Previous Stage": previous_stage,
-            "New Stage 2": newly_stage2, "Base Count": base_count,
+            "New Stage 2": newly_stage2, "Reclaimed 10W": reclaimed_10w,
+            "Gap vs 10W %": gap_vs_10w, "Base Count": base_count,
             "Fresh B2": fresh_b2, "30W Avg": avg30,
             "Gap vs 30W %": gap, "52W High Gap %": high_gap,
             "Extension": extension, "30W Slope %": float(ma_slope), "Daily Change %": day_change,
@@ -407,6 +416,21 @@ def render_nse500_screener():
                     key="download_nse500_fresh_stage2",
                 )
 
+            reclaimed = results[results["Reclaimed 10W"]].copy().sort_values(["RS Rank", "Gap vs 10W %"], ascending=[False, False])
+            st.markdown("""<div style="font-size:22px;font-weight:800;background:linear-gradient(90deg,#2dd4bf,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Reclaimed 10-week · Early recovery watchlist</div>""", unsafe_allow_html=True)
+            st.caption("Stocks that closed at or below their 10-week SMA in the previous completed week and closed above it in the latest completed week. This is an early recovery signal, not a Weinstein Stage 2 confirmation.")
+            if reclaimed.empty:
+                st.info("No confirmed 10-week reclaim signals in the latest completed week.")
+            else:
+                reclaimed_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "30W Avg", "Gap vs 10W %", "Stage", "Daily Change %"]
+                st.dataframe(reclaimed[reclaimed_cols], use_container_width=True, hide_index=True, height=min(360, 42 + 38 * len(reclaimed)))
+                st.download_button(
+                    "Download reclaimed 10-week stocks (CSV)",
+                    reclaimed[reclaimed_cols].to_csv(index=False).encode("utf-8"),
+                    "nse500_reclaimed_10_week.csv", "text/csv",
+                    key="download_nse500_reclaimed_10w",
+                )
+
             st.markdown("#### Current Stage 2 watchlist · all confirmed uptrends")
             st.caption(f"{len(current_stage2)} NSE 500 stocks currently meet the Stage 2 rules; fresh entries are flagged separately above.")
             stage2_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Gap vs 30W %", "Extension", "New Stage 2"]
@@ -487,7 +511,7 @@ def render_nse500_screener():
                 filtered = filtered[(filtered["Stage"] == STAGE_2) & (filtered["Base Count"] == 2)]
             if sector_filter != "All sectors":
                 filtered = filtered[filtered["Sector"].astype(str) == sector_filter]
-            columns = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Stage", "Previous Stage", "New Stage 2", "Base Count", "Fresh B2", "Gap vs 30W %", "Extension", "Daily Change %"]
+            columns = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Stage", "Previous Stage", "New Stage 2", "Reclaimed 10W", "Gap vs 10W %", "Base Count", "Fresh B2", "Gap vs 30W %", "Extension", "Daily Change %"]
             st.dataframe(filtered[columns], use_container_width=True, hide_index=True, height=520)
             st.download_button(
                 "Download filtered NSE 500 screener (CSV)",
