@@ -320,9 +320,10 @@ def render_nse500_screener():
             "Weinstein stages match the supplied weekly Pine engine: 30-week SMA, two-week SMA slope and ATR(14) flatness. "
             "A fresh Stage 2 entry means the stock was Stage 1 in the previous completed week and is Stage 2 now."
         )
-        run_scan = st.button("Run / refresh NSE 500 scan", type="primary", key="run_nse500_weinstein")
-        if run_scan:
-            with st.spinner("Loading official NSE 500 constituents and calculating weekly relative strength and stage transitions. The first scan may take a few minutes…"):
+        # Automatically calculate the screener when the section is first opened.
+        # The calculation is cached, so reruns and repeat visits reuse recent results.
+        if "nse500_rs_stage_results" not in st.session_state:
+            with st.spinner("Loading NSE 500 screener for the first time…"):
                 try:
                     results, sectors, universe_count, priced_count, current_week, previous_week = _calculate()
                     st.session_state["nse500_rs_stage_results"] = results
