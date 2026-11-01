@@ -67,6 +67,96 @@ def _daily_prices(tickers):
     return pd.concat(batches, axis=1).loc[:, lambda d: ~d.columns.duplicated()].sort_index()
 
 
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _daily_high_low(tickers):
+    """Fetch daily highs/lows for Weinstein base detection."""
+    high_parts, low_parts = [], []
+    for start in range(0, len(tickers), 60):
+        batch = list(tickers[start:start + 60])
+        raw = yf.download(
+            tickers=batch, period="2y", interval="1d", auto_adjust=True,
+            group_by="ticker", threads=True, progress=False, timeout=25,
+        )
+        if raw is None or raw.empty:
+            continue
+        if isinstance(raw.columns, pd.MultiIndex):
+            level0 = set(map(str, raw.columns.get_level_values(0)))
+            level1 = set(map(str, raw.columns.get_level_values(1)))
+            for ticker in batch:
+                if ticker in level0 and {"High", "Low"}.issubset(level1):
+                    high_parts.append(raw[ticker]["High"].rename(ticker))
+                    low_parts.append(raw[ticker]["Low"].rename(ticker))
+                elif ticker in level1 and {"High", "Low"}.issubset(level0):
+                    high_parts.append(raw["High"][ticker].rename(ticker))
+                    low_parts.append(raw["Low"][ticker].rename(ticker))
+        elif len(batch) == 1 and {"High", "Low"}.issubset(raw.columns):
+            high_parts.append(raw["High"].rename(batch[0]))
+            low_parts.append(raw["Low"].rename(batch[0]))
+    if not high_parts or not low_parts:
+        return pd.DataFrame(), pd.DataFrame()
+    highs = pd.concat(high_parts, axis=1).loc[:, lambda d: ~d.columns.duplicated()].sort_index()
+    lows = pd.concat(low_parts, axis=1).loc[:, lambda d: ~d.columns.duplicated()].sort_index()
+    return highs, lows
+
+
+def _base_progress(close, high, low, min_advance_pct=9.0, min_base_weeks=4):
+    """Return weekly B-count series following the supplied Weinstein base rules."""
+    count = 0
+    stage2_low = np.nan
+    base_low = np.nan
+    base_high = np.nan
+    last_breakout = np.nan
+    base_start = None
+    counts = []
+    for i in range(len(close)):
+        c, h, l = close.iloc[i], high.iloc[i], low.iloc[i]
+        if any(pd.isna(v) for v in (c, h, l)):
+            counts.append(0)
+            continue
+        stage2_now = False
+        if i >= 30:
+            ma30 = close.iloc[:i + 1].rolling(30, min_periods=30).mean().iloc[-1]
+            ma30_4 = close.iloc[:i - 3].rolling(30, min_periods=30).mean().iloc[-1] if i >= 33 else np.nan
+            ma10 = close.iloc[:i + 1].rolling(10, min_periods=10).mean().iloc[-1]
+            stage2_now = pd.notna(ma30) and pd.notna(ma30_4) and pd.notna(ma10) and ma30_4 != 0 and c > ma30 and ma10 > ma30 and (ma30 / ma30_4 - 1) * 100 >= 1.0
+        if not stage2_now:
+            count = 0
+            stage2_low = base_low = base_high = last_breakout = np.nan
+            base_start = None
+            counts.append(0)
+            continue
+        if count == 0:
+            count = 1
+            stage2_low = l
+            base_low, base_high = l, h
+            last_breakout = h
+            base_start = i
+            counts.append(count)
+            continue
+        if l < stage2_low:
+            count = 1
+            stage2_low = l
+            base_low, base_high = l, h
+            last_breakout = h
+            base_start = i
+            counts.append(count)
+            continue
+        prior_base_high = base_high
+        base_low = min(base_low, l)
+        base_high = max(base_high, h)
+        duration = i - base_start
+        range_pct = ((base_high - base_low) / base_low * 100) if base_low > 0 else 0
+        duration_ok = duration >= min_base_weeks or (duration >= 2 and range_pct >= 90)
+        advance_ok = pd.notna(last_breakout) and last_breakout > 0 and (c / last_breakout - 1) * 100 >= min_advance_pct
+        if c > prior_base_high and duration_ok and advance_ok:
+            count += 1
+            base_low, base_high = l, h
+            last_breakout = c
+            base_start = i
+        counts.append(count)
+    return pd.Series(counts, index=close.index, dtype="int64")
+
 def _stage_at(weekly, ticker, position):
     """Classify one completed weekly bar using the same strict Weinstein rules."""
     if position < 30 or ticker not in weekly.columns:
@@ -94,11 +184,15 @@ def _stage_at(weekly, ticker, position):
 
 def _calculate():
     universe = _constituents()
-    prices = _daily_prices(tuple(universe["Ticker"].tolist()))
+    tickers = tuple(universe["Ticker"].tolist())
+    prices = _daily_prices(tickers)
+    daily_high, daily_low = _daily_high_low(tickers)
     if prices.empty or len(prices.index) < 160:
         raise ValueError("Insufficient daily history returned for a full-universe scan.")
     prices = prices.apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
     weekly_all = prices.resample("W-FRI").last().dropna(how="all")
+    weekly_high_all = daily_high.resample("W-FRI").max().reindex(weekly_all.index) if not daily_high.empty else pd.DataFrame(index=weekly_all.index)
+    weekly_low_all = daily_low.resample("W-FRI").min().reindex(weekly_all.index) if not daily_low.empty else pd.DataFrame(index=weekly_all.index)
     if len(weekly_all) < 34:
         raise ValueError("At least 34 weekly closes are required for current and prior Weinstein stages.")
 
@@ -109,8 +203,12 @@ def _calculate():
         now.date() < current_friday or (now.date() == current_friday and now.time() < time(15, 45))
     ):
         weekly = weekly_all.iloc[:-1].copy()
+        weekly_high = weekly_high_all.reindex(weekly.index)
+        weekly_low = weekly_low_all.reindex(weekly.index)
     else:
         weekly = weekly_all.copy()
+        weekly_high = weekly_high_all.reindex(weekly.index)
+        weekly_low = weekly_low_all.reindex(weekly.index)
     if len(weekly) < 34:
         raise ValueError("Not enough completed weekly bars after excluding the in-progress week.")
 
@@ -151,6 +249,13 @@ def _calculate():
         stage = _stage_at(weekly, ticker, len(weekly) - 1)
         previous_stage = _stage_at(weekly, ticker, len(weekly) - 2)
         newly_stage2 = previous_stage == STAGE_1 and stage == STAGE_2
+        if ticker in weekly_high.columns and ticker in weekly_low.columns:
+            base_counts = _base_progress(weekly[ticker], weekly_high[ticker], weekly_low[ticker], min_advance_pct=9.0)
+            base_count = int(base_counts.iloc[-1])
+            previous_base_count = int(base_counts.iloc[-2]) if len(base_counts) > 1 else 0
+        else:
+            base_count, previous_base_count = 0, 0
+        fresh_b2 = stage == STAGE_2 and previous_base_count == 1 and base_count == 2
 
         extension = (
             "Extended" if gap >= 10 else
@@ -163,7 +268,8 @@ def _calculate():
         records.append({
             "Symbol": item["Symbol"], "Company": item["Company"], "Sector": item["Sector"],
             "Price": price, "RS Rank": int(rank), "Stage": stage, "Previous Stage": previous_stage,
-            "New Stage 2": newly_stage2, "30W Avg": avg30,
+            "New Stage 2": newly_stage2, "Base Count": base_count,
+            "Fresh B2": fresh_b2, "30W Avg": avg30,
             "Gap vs 30W %": gap, "52W High Gap %": high_gap,
             "Extension": extension, "30W Slope %": float(ma_slope), "Daily Change %": day_change,
         })
@@ -298,12 +404,18 @@ def render_nse500_screener():
 
             st.markdown('<div id="full-nse-500-stock-screener"></div>', unsafe_allow_html=True)
             st.markdown("#### Full NSE 500 stock screener")
-            c1, c2, c3 = st.columns([1.2, 1, 1])
+            c1, c2, c3, c4 = st.columns([1.2, 1, 1.15, 1])
             with c1:
                 query = st.text_input("Search symbol / company", key="nse500_search")
             with c2:
                 stage_filter = st.multiselect("Weinstein stage", STAGES, default=[STAGE_2], key="nse500_stage_filter")
             with c3:
+                stage_selection = st.selectbox(
+                    "Select Stage",
+                    ["All Stage 2", "Fresh Stage 2 (B1)", "Stage 2 – B2 Stocks (Fresh)", "Stage 2 – B2 Stocks"],
+                    key="nse500_base_stage_filter",
+                )
+            with c4:
                 sector_filter = st.selectbox("Sector", ["All sectors"] + sorted(results["Sector"].dropna().astype(str).unique()), key="nse500_sector_filter")
             filtered = results.copy()
             if query.strip():
@@ -314,9 +426,17 @@ def render_nse500_screener():
                 ]
             if stage_filter:
                 filtered = filtered[filtered["Stage"].isin(stage_filter)]
+            if stage_selection == "All Stage 2":
+                filtered = filtered[filtered["Stage"] == STAGE_2]
+            elif stage_selection == "Fresh Stage 2 (B1)":
+                filtered = filtered[(filtered["Stage"] == STAGE_2) & (filtered["New Stage 2"])]
+            elif stage_selection == "Stage 2 – B2 Stocks (Fresh)":
+                filtered = filtered[(filtered["Stage"] == STAGE_2) & filtered["Fresh B2"]]
+            elif stage_selection == "Stage 2 – B2 Stocks":
+                filtered = filtered[(filtered["Stage"] == STAGE_2) & (filtered["Base Count"] == 2)]
             if sector_filter != "All sectors":
                 filtered = filtered[filtered["Sector"].astype(str) == sector_filter]
-            columns = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Stage", "Previous Stage", "New Stage 2", "Gap vs 30W %", "Extension", "Daily Change %"]
+            columns = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Stage", "Previous Stage", "New Stage 2", "Base Count", "Fresh B2", "Gap vs 30W %", "Extension", "Daily Change %"]
             st.dataframe(filtered[columns], use_container_width=True, hide_index=True, height=520)
             st.download_button(
                 "Download filtered NSE 500 screener (CSV)",
