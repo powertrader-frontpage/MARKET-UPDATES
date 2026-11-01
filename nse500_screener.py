@@ -44,7 +44,7 @@ def _constituents():
 @st.cache_data(ttl=21600, show_spinner=False)
 def _daily_ohlc(tickers):
     """Fetch adjusted daily OHLC once per batch; shared by RS and Weinstein calculations."""
-    close_parts, high_parts, low_parts = [], [], []
+    close_parts, high_parts, low_parts, volume_parts = [], [], [], []
     for start in range(0, len(tickers), 80):
         batch = list(tickers[start:start + 80])
         raw = yf.download(
@@ -57,22 +57,25 @@ def _daily_ohlc(tickers):
             level0 = set(map(str, raw.columns.get_level_values(0)))
             level1 = set(map(str, raw.columns.get_level_values(1)))
             for ticker in batch:
-                if ticker in level0 and {"Close", "High", "Low"}.issubset(level1):
+                if ticker in level0 and {"Close", "High", "Low", "Volume"}.issubset(level1):
                     part = raw[ticker]
                     close_parts.append(part["Close"].rename(ticker))
                     high_parts.append(part["High"].rename(ticker))
                     low_parts.append(part["Low"].rename(ticker))
-                elif ticker in level1 and {"Close", "High", "Low"}.issubset(level0):
+                    volume_parts.append(part["Volume"].rename(ticker))
+                elif ticker in level1 and {"Close", "High", "Low", "Volume"}.issubset(level0):
                     close_parts.append(raw["Close"][ticker].rename(ticker))
                     high_parts.append(raw["High"][ticker].rename(ticker))
                     low_parts.append(raw["Low"][ticker].rename(ticker))
-        elif len(batch) == 1 and {"Close", "High", "Low"}.issubset(raw.columns):
+                    volume_parts.append(raw["Volume"][ticker].rename(ticker))
+        elif len(batch) == 1 and {"Close", "High", "Low", "Volume"}.issubset(raw.columns):
             close_parts.append(raw["Close"].rename(batch[0]))
             high_parts.append(raw["High"].rename(batch[0]))
             low_parts.append(raw["Low"].rename(batch[0]))
+            volume_parts.append(raw["Volume"].rename(batch[0])))
     def combine(parts):
         return pd.concat(parts, axis=1).loc[:, lambda d: ~d.columns.duplicated()].sort_index() if parts else pd.DataFrame()
-    return combine(close_parts), combine(high_parts), combine(low_parts)
+    return combine(close_parts), combine(high_parts), combine(low_parts), combine(volume_parts)
 
 
 def _pine_rma(series, length):
@@ -195,13 +198,14 @@ def _stage_at(weekly, ticker, position, weekly_high, weekly_low):
 def _calculate():
     universe = _constituents()
     tickers = tuple(universe["Ticker"].tolist())
-    prices, daily_high, daily_low = _daily_ohlc(tickers)
+    prices, daily_high, daily_low, daily_volume = _daily_ohlc(tickers)
     if prices.empty or len(prices.index) < 160:
         raise ValueError("Insufficient daily history returned for a full-universe scan.")
     prices = prices.apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
     weekly_all = prices.resample("W-FRI").last().dropna(how="all")
     weekly_high_all = daily_high.resample("W-FRI").max().reindex(weekly_all.index) if not daily_high.empty else pd.DataFrame(index=weekly_all.index)
     weekly_low_all = daily_low.resample("W-FRI").min().reindex(weekly_all.index) if not daily_low.empty else pd.DataFrame(index=weekly_all.index)
+    weekly_volume_all = daily_volume.resample("W-FRI").sum(min_count=1).reindex(weekly_all.index) if not daily_volume.empty else pd.DataFrame(index=weekly_all.index)
     if len(weekly_all) < 34:
         raise ValueError("At least 34 weekly closes are required for current and prior Weinstein stages.")
 
@@ -214,10 +218,12 @@ def _calculate():
         weekly = weekly_all.iloc[:-1].copy()
         weekly_high = weekly_high_all.reindex(weekly.index)
         weekly_low = weekly_low_all.reindex(weekly.index)
+        weekly_volume = weekly_volume_all.reindex(weekly.index)
     else:
         weekly = weekly_all.copy()
         weekly_high = weekly_high_all.reindex(weekly.index)
         weekly_low = weekly_low_all.reindex(weekly.index)
+        weekly_volume = weekly_volume_all.reindex(weekly.index)
     if len(weekly) < 34:
         raise ValueError("Not enough completed weekly bars after excluding the in-progress week.")
 
@@ -236,6 +242,8 @@ def _calculate():
     ma10_all = weekly.rolling(10, min_periods=10).mean()
     ma10_now = ma10_all.iloc[-1]
     ma10_prev = ma10_all.iloc[-2]
+    avg10_volume = weekly_volume.shift(1).rolling(10, min_periods=8).mean().iloc[-1]
+    latest_volume = weekly_volume.iloc[-1]
     stage_series_by_ticker = {}
     base_series_by_ticker = {}
     fresh_b2_series_by_ticker = {}
@@ -269,6 +277,9 @@ def _calculate():
         if pd.isna(avg10) or pd.isna(ma_slope) or pd.isna(rank):
             continue
         gap = (price / avg30 - 1) * 100
+        vol_now = latest_volume.get(ticker)
+        vol_avg = avg10_volume.get(ticker)
+        volume_ratio = float(vol_now / vol_avg) if pd.notna(vol_now) and pd.notna(vol_avg) and float(vol_avg) > 0 else np.nan
         high = high52.get(ticker)
         high_gap = (price / high - 1) * 100 if pd.notna(high) and high else np.nan
         stage = stage_frame[ticker].iloc[-1] if ticker in stage_frame.columns else "Unclassified"
@@ -295,7 +306,8 @@ def _calculate():
             "Price": price, "RS Rank": int(rank), "Stage": stage, "Previous Stage": previous_stage,
             "New Stage 2": newly_stage2, "Reclaimed 10W": reclaimed_10w,
             "Gap vs 10W %": gap_vs_10w, "Base Count": base_count,
-            "Fresh B2": fresh_b2, "30W Avg": avg30,
+            "Fresh B2": fresh_b2, "Volume vs 10W Avg": volume_ratio,
+            "30W Avg": avg30,
             "Gap vs 30W %": gap, "52W High Gap %": high_gap,
             "Extension": extension, "30W Slope %": float(ma_slope), "Daily Change %": day_change,
         })
@@ -316,6 +328,26 @@ def _calculate():
         })
     sectors = pd.DataFrame(sector_rows).sort_values(
         ["Median RS", "Advancing Stocks %"], ascending=False
+    )
+    sector_rs_map = sectors.set_index("Sector")["Median RS"].to_dict()
+    result["Sector Median RS"] = result["Sector"].map(sector_rs_map).fillna(0)
+    # Transparent 100-point quality score: relative strength 25, 30W slope 20,
+    # breakout-week volume 20, sector strength 15, base development 10, extension discipline 10.
+    rs_points = (result["RS Rank"].clip(0, 99) / 99) * 25
+    slope_points = (result["30W Slope %"].clip(0, 8) / 8) * 20
+    volume_points = (result["Volume vs 10W Avg"].clip(0, 2) / 2) * 20
+    sector_points = (result["Sector Median RS"].clip(0, 99) / 99) * 15
+    base_points = result["Base Count"].clip(0, 2) / 2 * 10
+    extension_points = np.select(
+        [result["Gap vs 30W %"].between(0, 10), result["Gap vs 30W %"].between(10, 15)],
+        [10, 5], default=0
+    )
+    result["Breakout Quality"] = (rs_points + slope_points + volume_points + sector_points + base_points + extension_points).round(1)
+    # Strict list requires strong RS/trend/volume/sector confirmation and avoids extended entries.
+    result["Strict Quality"] = (
+        (result["Stage"] == STAGE_2) & (result["RS Rank"] >= 80)
+        & (result["30W Slope %"] > 0) & (result["Volume vs 10W Avg"] >= 1.5)
+        & (result["Sector Median RS"] >= 60) & result["Gap vs 30W %"].between(0, 15)
     )
     return result, sectors, len(universe), len(prices.columns), current_week_label, previous_week_label
 
@@ -356,6 +388,19 @@ def render_nse500_screener():
 
             fresh = results[results["New Stage 2"]].copy().sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False])
             current_stage2 = results[results["Stage"] == STAGE_2].copy().sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False])
+            strict_stage2 = results[results["Strict Quality"]].copy().sort_values(["Breakout Quality", "RS Rank"], ascending=[False, False]).head(20)
+            ranked_stage2 = current_stage2.sort_values(["Breakout Quality", "RS Rank"], ascending=[False, False])
+
+            st.markdown("""<div style="font-size:23px;font-weight:850;background:linear-gradient(90deg,#22c55e,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Stage 2 · Breakout Quality Radar</div>""", unsafe_allow_html=True)
+            st.caption("A ranking aid, not a prediction. Strict mode applies hard confirmation filters and shows up to 20 strongest candidates; Broad mode ranks every current Stage 2 stock.")
+            quality_mode = st.radio("Stage 2 view", ["Strict · Top 20", "Broad · All Stage 2"], horizontal=True, key="nse500_quality_mode")
+            quality_frame = strict_stage2 if quality_mode == "Strict · Top 20" else ranked_stage2
+            quality_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Breakout Quality", "Volume vs 10W Avg", "Sector Median RS", "30W Slope %", "Gap vs 30W %", "Base Count"]
+            if quality_frame.empty:
+                st.info("No stocks currently meet all strict breakout-quality filters. Switch to Broad mode to inspect all Stage 2 stocks.")
+            else:
+                st.dataframe(quality_frame[quality_cols], use_container_width=True, hide_index=True, height=min(520, 45 + 38 * len(quality_frame)))
+                st.download_button("Download Stage 2 quality list (CSV)", quality_frame[quality_cols].to_csv(index=False).encode("utf-8"), "nse500_stage2_breakout_quality.csv", "text/csv", key="download_nse500_quality")
 
             # Visual market overview: compact cards first, detailed tables remain below.
             counts = results["Stage"].value_counts()
@@ -511,7 +556,7 @@ def render_nse500_screener():
                 filtered = filtered[(filtered["Stage"] == STAGE_2) & (filtered["Base Count"] == 2)]
             if sector_filter != "All sectors":
                 filtered = filtered[filtered["Sector"].astype(str) == sector_filter]
-            columns = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Stage", "Previous Stage", "New Stage 2", "Reclaimed 10W", "Gap vs 10W %", "Base Count", "Fresh B2", "Gap vs 30W %", "Extension", "Daily Change %"]
+            columns = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Stage", "Previous Stage", "New Stage 2", "Reclaimed 10W", "Gap vs 10W %", "Base Count", "Fresh B2", "Breakout Quality", "Volume vs 10W Avg", "Gap vs 30W %", "Extension", "Daily Change %"]
             st.dataframe(filtered[columns], use_container_width=True, hide_index=True, height=520)
             st.download_button(
                 "Download filtered NSE 500 screener (CSV)",
