@@ -884,7 +884,7 @@ def get_auto_universe(period: str = "2y") -> pd.DataFrame:
     tickers = list(AUTO_UNIVERSE)
     try:
         raw = yf.download(tickers, period=period, interval="1d", auto_adjust=False, group_by="ticker",
-                          threads=True, progress=False, actions=False)
+                          threads=False, progress=False, actions=False)
         if raw is None or raw.empty:
             return pd.DataFrame()
         rows=[]
@@ -1954,7 +1954,7 @@ else:
                 @st.cache_data(ttl=900, show_spinner=False)
                 def _sector_stock_download(symbols):
                     try:
-                        return yf.download(list(symbols), period="1y", interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=True)
+                        return yf.download(list(symbols), period="1y", interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=False)
                     except Exception:
                         return pd.DataFrame()
                 if st.button("↻ Refresh sector constituent data", key="refresh_sector_constituents"):
@@ -2125,7 +2125,7 @@ else:
             @st.cache_data(ttl=900, show_spinner=False)
             def _micro_sector_download(symbols):
                 try:
-                    raw = yf.download(list(symbols), period="1y", interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=True)
+                    raw = yf.download(list(symbols), period="1y", interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=False)
                     return raw
                 except Exception:
                     return pd.DataFrame()
@@ -2679,7 +2679,7 @@ NIFTY50_HEATMAP_SYMBOLS = [
 ]
 @st.cache_data(ttl=300, show_spinner=False)
 def _nifty50_heatmap_data(symbols: tuple[str, ...]):
-    raw = yf.download(list(symbols), period="5d", interval="1d", group_by="ticker", auto_adjust=False, progress=False, threads=True)
+    raw = yf.download(list(symbols), period="5d", interval="1d", group_by="ticker", auto_adjust=False, progress=False, threads=False)
     rows = []
     for symbol in symbols:
         try:
