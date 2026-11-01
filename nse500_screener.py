@@ -100,27 +100,50 @@ def _daily_high_low(tickers):
     return highs, lows
 
 
+def _pine_rma(series, length):
+    """TradingView ta.rma(): SMA seed followed by Wilder's recursive moving average."""
+    values = pd.to_numeric(series, errors="coerce")
+    out = pd.Series(np.nan, index=values.index, dtype="float64")
+    valid = values.dropna()
+    if len(valid) < length:
+        return out
+    seed_pos = values.index.get_loc(valid.index[length - 1])
+    seed = float(valid.iloc[:length].mean())
+    out.iloc[seed_pos] = seed
+    alpha = 1.0 / float(length)
+    for pos in range(seed_pos + 1, len(values)):
+        current = values.iloc[pos]
+        previous = out.iloc[pos - 1]
+        if pd.notna(current) and pd.notna(previous):
+            out.iloc[pos] = previous + alpha * (float(current) - previous)
+    return out
+
+
 def _pine_stage_series(close, high, low, ma_length=30, atr_length=14):
-    """Python port of the Pine engine's weekly Weinstein stage/flatness rules."""
+    """Match the supplied Pine engine: weekly SMA, ta.atr/RMA flatness and its four stage branches."""
     sma = close.rolling(ma_length, min_periods=ma_length).mean()
-    # Weekly ATR(14), using true range from weekly high/low/previous close.
     prev_close = close.shift(1)
     tr = pd.concat([
         high - low,
         (high - prev_close).abs(),
         (low - prev_close).abs(),
     ], axis=1).max(axis=1)
-    atr = tr.rolling(atr_length, min_periods=atr_length).mean()
-    sma_delta = sma - sma.shift(2)
-    flat_flag = sma_delta.abs() < (atr * 0.05)
-    rising = sma_delta > 0
-    falling = sma_delta < 0
-    stage = pd.Series("Unclassified", index=close.index, dtype="object")
-    ready = sma.notna() & atr.notna() & close.notna()
-    stage.loc[ready & (close > sma) & flat_flag] = STAGE_1
-    stage.loc[ready & (close > sma) & rising & ~flat_flag] = STAGE_2
-    stage.loc[ready & (close < sma) & falling & ~flat_flag] = STAGE_4
-    stage.loc[ready & (stage == "Unclassified")] = STAGE_3
+    atr = _pine_rma(tr, atr_length)
+    slope = sma - sma.shift(2)
+    flat_flag = slope.abs() < (atr * 0.05)
+
+    # Pine starts each bar at Stage 1, then evaluates these branches in order.
+    stage = pd.Series(STAGE_1, index=close.index, dtype="object")
+    stage.loc[(close > sma) & (slope > 0) & ~flat_flag] = STAGE_2
+    stage.loc[(close < sma) & (slope < 0) & ~flat_flag] = STAGE_4
+    stage.loc[(close > sma) & flat_flag] = STAGE_1
+    other = ~(
+        ((close > sma) & (slope > 0) & ~flat_flag)
+        | ((close < sma) & (slope < 0) & ~flat_flag)
+        | ((close > sma) & flat_flag)
+    )
+    stage.loc[other] = STAGE_3
+    stage.loc[sma.isna() | atr.isna() | close.isna()] = "Unclassified"
     return stage, sma, atr, flat_flag
 
 
@@ -318,7 +341,7 @@ def render_nse500_screener():
         st.markdown("**Find market leaders, fresh Stage 2 breakouts and sector participation across the full NSE 500.**")
         st.caption(
             "RS is a 1–99 percentile rank using a 3M/6M/12M momentum blend versus the scanned NSE 500 universe. "
-            "Weinstein stages use completed weekly closes, 10-week and 30-week averages, and the 30-week average slope. "
+            "Weinstein stages match the supplied weekly Pine engine: 30-week SMA, two-week SMA slope and ATR(14) flatness. "
             "A fresh Stage 2 entry means the stock was Stage 1 in the previous completed week and is Stage 2 now."
         )
         run_scan = st.button("Run / refresh NSE 500 scan", type="primary", key="run_nse500_weinstein")
@@ -463,7 +486,7 @@ def render_nse500_screener():
                 key="download_nse500_rs_stage",
             )
             st.caption(
-                "Stage 2 requires price > rising 30W average and 10W average > 30W average. "
+                "Stage 2 follows the supplied Pine rules: close above the 30W SMA, positive two-week SMA slope and non-flat ATR(14) slope. "
                 "Fresh entries compare the two latest completed weekly bars; an unfinished current week is excluded. "
                 "Extended is a price-distance label and can coexist with Stage 2. Data cache: 24 hours."
             )
