@@ -2485,192 +2485,192 @@ SECTOR_LEADING_STOCKS = {
     "Consumption": [("Trent", "TRENT.NS"), ("Titan", "TITAN.NS"), ("Eternal", "ETERNAL.NS"), ("Avenue Supermarts", "DMART.NS"), ("Bajaj Consumer", "BAJAJCON.NS"), ("Indian Hotels", "INDHOTEL.NS")],
 }
 
-            if st.button("Load / refresh leading-sector rankings", key="load_leading_sector_rankings"):
-                st.session_state["load_leading_sector_rankings_loaded"] = True
-            if st.session_state.get("load_leading_sector_rankings_loaded", False):
-    leading_sector_rows = []
-    rotation_zone_rows = []
-    with st.spinner("Checking multi-timeframe sector strength…"):
-        weekly_nifty_df, weekly_nifty_err = get_history("^NSEI", "3mo", "1d")
-        weekly_nifty_close = weekly_nifty_df["Close"].dropna() if not weekly_nifty_df.empty else pd.Series(dtype=float)
-        if len(weekly_nifty_close) >= 6:
-            nifty_week_return = (float(weekly_nifty_close.iloc[-1]) / float(weekly_nifty_close.iloc[-6]) - 1) * 100
-            nifty_month_return = (float(weekly_nifty_close.iloc[-1]) / float(weekly_nifty_close.iloc[-22]) - 1) * 100 if len(weekly_nifty_close) >= 22 else np.nan
-            nifty_3m_return = (float(weekly_nifty_close.iloc[-1]) / float(weekly_nifty_close.iloc[-63]) - 1) * 100 if len(weekly_nifty_close) >= 63 else np.nan
-            for sector, ticker in SECTOR_TICKERS.items():
-                sector_df, sector_err = get_history(ticker, "3mo", "1d")
-                if not sector_df.empty:
-                    sector_close = sector_df["Close"].dropna()
-                    if len(sector_close) >= 6 and len(weekly_nifty_close) >= 6:
-                        sector_week_return = (float(sector_close.iloc[-1]) / float(sector_close.iloc[-6]) - 1) * 100
-                        sector_month_return = (float(sector_close.iloc[-1]) / float(sector_close.iloc[-22]) - 1) * 100 if len(sector_close) >= 22 else np.nan
-                        sector_3m_return = (float(sector_close.iloc[-1]) / float(sector_close.iloc[-63]) - 1) * 100 if len(sector_close) >= 63 else np.nan
-                        relative_week = sector_week_return - nifty_week_return
-                        relative_month = sector_month_return - nifty_month_return if pd.notna(sector_month_return) and pd.notna(nifty_month_return) else np.nan
-                        relative_3m = sector_3m_return - nifty_3m_return if pd.notna(sector_3m_return) and pd.notna(nifty_3m_return) else np.nan
-                        # Relative-strength quadrant: 1M relative performance and short-term momentum.
-                        def _rotation_zone(rs, momentum):
-                            if pd.isna(rs) or pd.isna(momentum):
-                                return "Insufficient data"
-                            if rs >= 0 and momentum >= 0:
-                                return "Leading"
-                            if rs >= 0 and momentum < 0:
-                                return "Weakening"
-                            if rs < 0 and momentum < 0:
-                                return "Lagging"
-                            return "Improving"
-                        current_zone = _rotation_zone(relative_month, relative_week - relative_month if pd.notna(relative_month) else np.nan)
-                        if len(sector_close) >= 27 and len(weekly_nifty_close) >= 27:
-                            sec_old_week = (float(sector_close.iloc[-6]) / float(sector_close.iloc[-11]) - 1) * 100
-                            nifty_old_week = (float(weekly_nifty_close.iloc[-6]) / float(weekly_nifty_close.iloc[-11]) - 1) * 100
-                            sec_old_month = (float(sector_close.iloc[-6]) / float(sector_close.iloc[-27]) - 1) * 100
-                            nifty_old_month = (float(weekly_nifty_close.iloc[-6]) / float(weekly_nifty_close.iloc[-27]) - 1) * 100
-                            old_week_relative = sec_old_week - nifty_old_week
-                            old_month_relative = sec_old_month - nifty_old_month
-                            previous_zone = _rotation_zone(old_month_relative, old_week_relative - old_month_relative)
-                        else:
-                            previous_zone = "Insufficient data"
-                        rotation_zone_rows.append({"Sector": sector, "Previous zone": previous_zone, "Current zone": current_zone})
-                        score_parts = [(relative_week, 0.30), (relative_month, 0.40), (relative_3m, 0.30)]
-                        valid_parts = [(value, weight) for value, weight in score_parts if pd.notna(value)]
-                        leadership_score = sum(value * weight for value, weight in valid_parts) / sum(weight for _, weight in valid_parts) if valid_parts else np.nan
-                        if pd.notna(leadership_score):
-                            leading_sector_rows.append({
-                                "Sector": sector,
-                                "Sector 1W (%)": sector_week_return,
-                                "NIFTY 1W (%)": nifty_week_return,
-                                "1W outperformance (pp)": relative_week,
-                                "1M outperformance (pp)": relative_month,
-                                "3M outperformance (pp)": relative_3m,
-                                "Multi-timeframe score (pp)": leadership_score,
-                            })
-    if leading_sector_rows:
-        leading_df = pd.DataFrame(leading_sector_rows)
-        ranked_sectors = leading_df.sort_values("Multi-timeframe score (pp)", ascending=False).copy()
-        # Always show the four strongest sectors, even if fewer than four have a positive composite score.
-        leaders = ranked_sectors.head(4).copy()
-        current_top_names = leaders["Sector"].tolist()
-    
-        st.markdown("### Rotation signals · zone changes this week")
-        st.caption("Zones use 1-month relative performance vs NIFTY 50 and short-term momentum (1-week relative performance minus 1-month relative performance). Weekly change compares with the close five sessions earlier.")
-        zone_colors = {"Leading": "#169b62", "Improving": "#316ac5", "Weakening": "#c58a18", "Lagging": "#cf4b55", "Insufficient data": "#64748b"}
-        zone_transition_rows = [row for row in rotation_zone_rows if row["Previous zone"] != row["Current zone"] and row["Previous zone"] != "Insufficient data" and row["Current zone"] != "Insufficient data"]
-        if zone_transition_rows:
-            for row in zone_transition_rows:
-                color = zone_colors.get(row["Current zone"], "#64748b")
-                label = html.escape(row["Sector"])
-                transition = html.escape(row["Previous zone"] + " → " + row["Current zone"])
-                st.markdown(
-                    f'<div style="display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;border:1px solid {color}88;border-radius:40px;padding:8px 16px;margin:4px 6px 4px 0;background:rgba(100,116,139,.05);font-size:16px;"><span style="font-weight:750;color:#e5e7eb;">{label}</span><span style="font-weight:750;color:{color};">{transition}</span></div>',
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.info("No verified sector-zone changes detected versus five sessions ago, or insufficient historical data.")
-        with st.expander("View all current sector zones", expanded=False):
-            zone_table = pd.DataFrame(rotation_zone_rows)
-            if not zone_table.empty:
-                st.dataframe(zone_table.rename(columns={"Previous zone": "Zone 5 sessions ago"}), use_container_width=True, hide_index=True)
-    
-        # Detect a genuine transition from relative underperformance (<= 0 pp)
-        # to outperformance (> 0 pp), using the prior successful dashboard run.
-        current_relative = {
-            str(row["Sector"]): float(row["1W outperformance (pp)"])
-            for _, row in ranked_sectors.iterrows()
-            if pd.notna(row["1W outperformance (pp)"])
-        }
-        previous_relative = st.session_state.get("previous_sector_relative_performance")
-        if previous_relative is not None:
-            # Alert only for a genuinely fresh leader: it was underperforming,
-            # has now crossed above NIFTY 50, and has entered the current top-three list.
-            newly_outperforming = [
-                name for name, value in current_relative.items()
-                if value > 0
-                and name in previous_relative
-                and previous_relative[name] <= 0
-                and name in current_top_names
-            ]
-            if newly_outperforming:
-                alert_text = "🟨 SECTOR ROTATION ALERT · Now outperforming NIFTY 50: " + ", ".join(newly_outperforming)
-                st.toast(alert_text, icon="🟨")
-                st.markdown(
-                    f'<div style="background:#fef3c7;color:#78350f;border:1px solid #f59e0b;'
-                    f'border-left:6px solid #eab308;border-radius:10px;padding:12px 16px;'
-                    f'font-weight:750;margin:8px 0 12px;">{html.escape(alert_text)}</div>',
-                    unsafe_allow_html=True,
-                )
-        st.session_state["previous_sector_relative_performance"] = current_relative
-    
-        # Newly entered sectors are highlighted yellow for this dashboard session.
-        newly_entered_sectors = []
-        previous_top_names = st.session_state.get("previous_top_4_sectors")
-        if previous_top_names is not None:
-            newly_entered_sectors = [name for name in current_top_names if name not in previous_top_names]
-            exited = [name for name in previous_top_names if name not in current_top_names]
-            if newly_entered_sectors or exited:
-                alert_parts = []
-                if newly_entered_sectors:
-                    alert_parts.append("New sector(s) entering top 4: " + ", ".join(newly_entered_sectors))
-                if exited:
-                    alert_parts.append("Sector(s) leaving top 4: " + ", ".join(exited))
-                if newly_entered_sectors:
+if st.button("Load / refresh leading-sector rankings", key="load_leading_sector_rankings"):
+    st.session_state["load_leading_sector_rankings_loaded"] = True
+if st.session_state.get("load_leading_sector_rankings_loaded", False):
+        leading_sector_rows = []
+        rotation_zone_rows = []
+        with st.spinner("Checking multi-timeframe sector strength…"):
+            weekly_nifty_df, weekly_nifty_err = get_history("^NSEI", "3mo", "1d")
+            weekly_nifty_close = weekly_nifty_df["Close"].dropna() if not weekly_nifty_df.empty else pd.Series(dtype=float)
+            if len(weekly_nifty_close) >= 6:
+                nifty_week_return = (float(weekly_nifty_close.iloc[-1]) / float(weekly_nifty_close.iloc[-6]) - 1) * 100
+                nifty_month_return = (float(weekly_nifty_close.iloc[-1]) / float(weekly_nifty_close.iloc[-22]) - 1) * 100 if len(weekly_nifty_close) >= 22 else np.nan
+                nifty_3m_return = (float(weekly_nifty_close.iloc[-1]) / float(weekly_nifty_close.iloc[-63]) - 1) * 100 if len(weekly_nifty_close) >= 63 else np.nan
+                for sector, ticker in SECTOR_TICKERS.items():
+                    sector_df, sector_err = get_history(ticker, "3mo", "1d")
+                    if not sector_df.empty:
+                        sector_close = sector_df["Close"].dropna()
+                        if len(sector_close) >= 6 and len(weekly_nifty_close) >= 6:
+                            sector_week_return = (float(sector_close.iloc[-1]) / float(sector_close.iloc[-6]) - 1) * 100
+                            sector_month_return = (float(sector_close.iloc[-1]) / float(sector_close.iloc[-22]) - 1) * 100 if len(sector_close) >= 22 else np.nan
+                            sector_3m_return = (float(sector_close.iloc[-1]) / float(sector_close.iloc[-63]) - 1) * 100 if len(sector_close) >= 63 else np.nan
+                            relative_week = sector_week_return - nifty_week_return
+                            relative_month = sector_month_return - nifty_month_return if pd.notna(sector_month_return) and pd.notna(nifty_month_return) else np.nan
+                            relative_3m = sector_3m_return - nifty_3m_return if pd.notna(sector_3m_return) and pd.notna(nifty_3m_return) else np.nan
+                            # Relative-strength quadrant: 1M relative performance and short-term momentum.
+                            def _rotation_zone(rs, momentum):
+                                if pd.isna(rs) or pd.isna(momentum):
+                                    return "Insufficient data"
+                                if rs >= 0 and momentum >= 0:
+                                    return "Leading"
+                                if rs >= 0 and momentum < 0:
+                                    return "Weakening"
+                                if rs < 0 and momentum < 0:
+                                    return "Lagging"
+                                return "Improving"
+                            current_zone = _rotation_zone(relative_month, relative_week - relative_month if pd.notna(relative_month) else np.nan)
+                            if len(sector_close) >= 27 and len(weekly_nifty_close) >= 27:
+                                sec_old_week = (float(sector_close.iloc[-6]) / float(sector_close.iloc[-11]) - 1) * 100
+                                nifty_old_week = (float(weekly_nifty_close.iloc[-6]) / float(weekly_nifty_close.iloc[-11]) - 1) * 100
+                                sec_old_month = (float(sector_close.iloc[-6]) / float(sector_close.iloc[-27]) - 1) * 100
+                                nifty_old_month = (float(weekly_nifty_close.iloc[-6]) / float(weekly_nifty_close.iloc[-27]) - 1) * 100
+                                old_week_relative = sec_old_week - nifty_old_week
+                                old_month_relative = sec_old_month - nifty_old_month
+                                previous_zone = _rotation_zone(old_month_relative, old_week_relative - old_month_relative)
+                            else:
+                                previous_zone = "Insufficient data"
+                            rotation_zone_rows.append({"Sector": sector, "Previous zone": previous_zone, "Current zone": current_zone})
+                            score_parts = [(relative_week, 0.30), (relative_month, 0.40), (relative_3m, 0.30)]
+                            valid_parts = [(value, weight) for value, weight in score_parts if pd.notna(value)]
+                            leadership_score = sum(value * weight for value, weight in valid_parts) / sum(weight for _, weight in valid_parts) if valid_parts else np.nan
+                            if pd.notna(leadership_score):
+                                leading_sector_rows.append({
+                                    "Sector": sector,
+                                    "Sector 1W (%)": sector_week_return,
+                                    "NIFTY 1W (%)": nifty_week_return,
+                                    "1W outperformance (pp)": relative_week,
+                                    "1M outperformance (pp)": relative_month,
+                                    "3M outperformance (pp)": relative_3m,
+                                    "Multi-timeframe score (pp)": leadership_score,
+                                })
+        if leading_sector_rows:
+            leading_df = pd.DataFrame(leading_sector_rows)
+            ranked_sectors = leading_df.sort_values("Multi-timeframe score (pp)", ascending=False).copy()
+            # Always show the four strongest sectors, even if fewer than four have a positive composite score.
+            leaders = ranked_sectors.head(4).copy()
+            current_top_names = leaders["Sector"].tolist()
+        
+            st.markdown("### Rotation signals · zone changes this week")
+            st.caption("Zones use 1-month relative performance vs NIFTY 50 and short-term momentum (1-week relative performance minus 1-month relative performance). Weekly change compares with the close five sessions earlier.")
+            zone_colors = {"Leading": "#169b62", "Improving": "#316ac5", "Weakening": "#c58a18", "Lagging": "#cf4b55", "Insufficient data": "#64748b"}
+            zone_transition_rows = [row for row in rotation_zone_rows if row["Previous zone"] != row["Current zone"] and row["Previous zone"] != "Insufficient data" and row["Current zone"] != "Insufficient data"]
+            if zone_transition_rows:
+                for row in zone_transition_rows:
+                    color = zone_colors.get(row["Current zone"], "#64748b")
+                    label = html.escape(row["Sector"])
+                    transition = html.escape(row["Previous zone"] + " → " + row["Current zone"])
                     st.markdown(
-                        '<div style="background:rgba(234,179,8,.12);color:#fde68a;border:1px solid #eab308;'
-                        'border-left:5px solid #eab308;border-radius:10px;padding:10px 14px;'
-                        'font-weight:750;margin:8px 0 12px;">🟨 SECTOR ROTATION · ' + html.escape(" · ".join(alert_parts)) + '</div>',
+                        f'<div style="display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;border:1px solid {color}88;border-radius:40px;padding:8px 16px;margin:4px 6px 4px 0;background:rgba(100,116,139,.05);font-size:16px;"><span style="font-weight:750;color:#e5e7eb;">{label}</span><span style="font-weight:750;color:{color};">{transition}</span></div>',
                         unsafe_allow_html=True,
                     )
-                else:
-                    st.warning("🔔 Sector leadership changed · " + " · ".join(alert_parts))
-        st.session_state["previous_top_4_sectors"] = current_top_names
-        if leaders.empty:
-            st.info("Sector strength data is currently unavailable.")
-        else:
-            leader_cols = st.columns(len(leaders))
-            for leader_col, (_, leader) in zip(leader_cols, leaders.iterrows()):
-                month_confirmation = f'{leader["1M outperformance (pp)"]:+.2f} pp' if pd.notna(leader["1M outperformance (pp)"]) else "N/A"
-                three_month_confirmation = f'{leader["3M outperformance (pp)"]:+.2f} pp' if pd.notna(leader["3M outperformance (pp)"]) else "N/A"
-                is_new_sector = leader["Sector"] in newly_entered_sectors
-                card_border = "#eab308" if is_new_sector else "#166534"
-                card_accent = "#eab308" if is_new_sector else "#22c55e"
-                card_bg = "rgba(234,179,8,0.10)" if is_new_sector else "rgba(34,197,94,0.08)"
-                card_title = "#fde68a" if is_new_sector else "#86efac"
-                card_text = "#fef3c7" if is_new_sector else "#a7f3d0"
-                leader_col.markdown(
-                    f'<div style="border:1px solid {card_border};border-left:4px solid {card_accent};border-radius:10px;padding:9px 10px;min-height:100px;background:{card_bg};">'
-                    f'<div style="font-size:12px;color:{card_title};margin-bottom:4px;">{"🟨 NEW · " if is_new_sector else ""}{leader["Sector"]}</div>'
-                    f'<div style="font-size:clamp(17px,2vw,22px);font-weight:700;color:{card_accent};">{leader["Multi-timeframe score (pp)"]:+.2f} pp</div>'
-                    f'<div style="font-size:10px;color:{card_text};">1W: {leader["Sector 1W (%)"]:+.2f}% · NIFTY {leader["NIFTY 1W (%)"]:+.2f}%</div>'
-                    f'<div style="font-size:10px;color:{card_text};">vs NIFTY: 1W {leader["1W outperformance (pp)"]:+.2f} · 1M {month_confirmation} · 3M {three_month_confirmation}</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-                stock_universe = SECTOR_LEADING_STOCKS.get(leader["Sector"], [])
-                stock_leaders = []
-                with st.spinner(f'Ranking {leader["Sector"]} stocks…'):
-                    for stock_name, stock_ticker in stock_universe:
-                        stock_df, stock_err = get_history(stock_ticker, "3mo", "1d")
-                        if stock_df.empty:
-                            continue
-                        stock_close = pd.to_numeric(stock_df["Close"], errors="coerce").dropna()
-                        if len(stock_close) >= 6 and stock_close.iloc[-6] != 0:
-                            stock_return = (float(stock_close.iloc[-1]) / float(stock_close.iloc[-6]) - 1) * 100
-                            stock_leaders.append({"Stock": stock_name, "Ticker": stock_ticker, "1W return (%)": stock_return})
-                leader_col.markdown("**Top 5 stocks · latest 5 sessions**")
-                if stock_leaders:
-                    stock_leaders = sorted(stock_leaders, key=lambda row: row["1W return (%)"], reverse=True)[:5]
-                    for rank, stock in enumerate(stock_leaders, start=1):
-                        stock_color = "#22c55e" if stock["1W return (%)"] >= 0 else "#ef4444"
-                        leader_col.markdown(
-                            f'<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #343a46;">'
-                            f'<span style="font-size:13px;color:#d1d5db;">{rank}. {stock["Stock"]}</span>'
-                            f'<span style="font-size:13px;font-weight:700;color:{stock_color};">{stock["1W return (%)"]:+.2f}%</span></div>',
+            else:
+                st.info("No verified sector-zone changes detected versus five sessions ago, or insufficient historical data.")
+            with st.expander("View all current sector zones", expanded=False):
+                zone_table = pd.DataFrame(rotation_zone_rows)
+                if not zone_table.empty:
+                    st.dataframe(zone_table.rename(columns={"Previous zone": "Zone 5 sessions ago"}), use_container_width=True, hide_index=True)
+        
+            # Detect a genuine transition from relative underperformance (<= 0 pp)
+            # to outperformance (> 0 pp), using the prior successful dashboard run.
+            current_relative = {
+                str(row["Sector"]): float(row["1W outperformance (pp)"])
+                for _, row in ranked_sectors.iterrows()
+                if pd.notna(row["1W outperformance (pp)"])
+            }
+            previous_relative = st.session_state.get("previous_sector_relative_performance")
+            if previous_relative is not None:
+                # Alert only for a genuinely fresh leader: it was underperforming,
+                # has now crossed above NIFTY 50, and has entered the current top-three list.
+                newly_outperforming = [
+                    name for name, value in current_relative.items()
+                    if value > 0
+                    and name in previous_relative
+                    and previous_relative[name] <= 0
+                    and name in current_top_names
+                ]
+                if newly_outperforming:
+                    alert_text = "🟨 SECTOR ROTATION ALERT · Now outperforming NIFTY 50: " + ", ".join(newly_outperforming)
+                    st.toast(alert_text, icon="🟨")
+                    st.markdown(
+                        f'<div style="background:#fef3c7;color:#78350f;border:1px solid #f59e0b;'
+                        f'border-left:6px solid #eab308;border-radius:10px;padding:12px 16px;'
+                        f'font-weight:750;margin:8px 0 12px;">{html.escape(alert_text)}</div>',
+                        unsafe_allow_html=True,
+                    )
+            st.session_state["previous_sector_relative_performance"] = current_relative
+        
+            # Newly entered sectors are highlighted yellow for this dashboard session.
+            newly_entered_sectors = []
+            previous_top_names = st.session_state.get("previous_top_4_sectors")
+            if previous_top_names is not None:
+                newly_entered_sectors = [name for name in current_top_names if name not in previous_top_names]
+                exited = [name for name in previous_top_names if name not in current_top_names]
+                if newly_entered_sectors or exited:
+                    alert_parts = []
+                    if newly_entered_sectors:
+                        alert_parts.append("New sector(s) entering top 4: " + ", ".join(newly_entered_sectors))
+                    if exited:
+                        alert_parts.append("Sector(s) leaving top 4: " + ", ".join(exited))
+                    if newly_entered_sectors:
+                        st.markdown(
+                            '<div style="background:rgba(234,179,8,.12);color:#fde68a;border:1px solid #eab308;'
+                            'border-left:5px solid #eab308;border-radius:10px;padding:10px 14px;'
+                            'font-weight:750;margin:8px 0 12px;">🟨 SECTOR ROTATION · ' + html.escape(" · ".join(alert_parts)) + '</div>',
                             unsafe_allow_html=True,
                         )
-                else:
-                    leader_col.caption("Stock-level data unavailable; no ranking shown.")
-    else:
-        st.info("Weekly sector momentum is temporarily unavailable because usable 3-month daily history was not returned.")
-    
+                    else:
+                        st.warning("🔔 Sector leadership changed · " + " · ".join(alert_parts))
+            st.session_state["previous_top_4_sectors"] = current_top_names
+            if leaders.empty:
+                st.info("Sector strength data is currently unavailable.")
+            else:
+                leader_cols = st.columns(len(leaders))
+                for leader_col, (_, leader) in zip(leader_cols, leaders.iterrows()):
+                    month_confirmation = f'{leader["1M outperformance (pp)"]:+.2f} pp' if pd.notna(leader["1M outperformance (pp)"]) else "N/A"
+                    three_month_confirmation = f'{leader["3M outperformance (pp)"]:+.2f} pp' if pd.notna(leader["3M outperformance (pp)"]) else "N/A"
+                    is_new_sector = leader["Sector"] in newly_entered_sectors
+                    card_border = "#eab308" if is_new_sector else "#166534"
+                    card_accent = "#eab308" if is_new_sector else "#22c55e"
+                    card_bg = "rgba(234,179,8,0.10)" if is_new_sector else "rgba(34,197,94,0.08)"
+                    card_title = "#fde68a" if is_new_sector else "#86efac"
+                    card_text = "#fef3c7" if is_new_sector else "#a7f3d0"
+                    leader_col.markdown(
+                        f'<div style="border:1px solid {card_border};border-left:4px solid {card_accent};border-radius:10px;padding:9px 10px;min-height:100px;background:{card_bg};">'
+                        f'<div style="font-size:12px;color:{card_title};margin-bottom:4px;">{"🟨 NEW · " if is_new_sector else ""}{leader["Sector"]}</div>'
+                        f'<div style="font-size:clamp(17px,2vw,22px);font-weight:700;color:{card_accent};">{leader["Multi-timeframe score (pp)"]:+.2f} pp</div>'
+                        f'<div style="font-size:10px;color:{card_text};">1W: {leader["Sector 1W (%)"]:+.2f}% · NIFTY {leader["NIFTY 1W (%)"]:+.2f}%</div>'
+                        f'<div style="font-size:10px;color:{card_text};">vs NIFTY: 1W {leader["1W outperformance (pp)"]:+.2f} · 1M {month_confirmation} · 3M {three_month_confirmation}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                    stock_universe = SECTOR_LEADING_STOCKS.get(leader["Sector"], [])
+                    stock_leaders = []
+                    with st.spinner(f'Ranking {leader["Sector"]} stocks…'):
+                        for stock_name, stock_ticker in stock_universe:
+                            stock_df, stock_err = get_history(stock_ticker, "3mo", "1d")
+                            if stock_df.empty:
+                                continue
+                            stock_close = pd.to_numeric(stock_df["Close"], errors="coerce").dropna()
+                            if len(stock_close) >= 6 and stock_close.iloc[-6] != 0:
+                                stock_return = (float(stock_close.iloc[-1]) / float(stock_close.iloc[-6]) - 1) * 100
+                                stock_leaders.append({"Stock": stock_name, "Ticker": stock_ticker, "1W return (%)": stock_return})
+                    leader_col.markdown("**Top 5 stocks · latest 5 sessions**")
+                    if stock_leaders:
+                        stock_leaders = sorted(stock_leaders, key=lambda row: row["1W return (%)"], reverse=True)[:5]
+                        for rank, stock in enumerate(stock_leaders, start=1):
+                            stock_color = "#22c55e" if stock["1W return (%)"] >= 0 else "#ef4444"
+                            leader_col.markdown(
+                                f'<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #343a46;">'
+                                f'<span style="font-size:13px;color:#d1d5db;">{rank}. {stock["Stock"]}</span>'
+                                f'<span style="font-size:13px;font-weight:700;color:{stock_color};">{stock["1W return (%)"]:+.2f}%</span></div>',
+                                unsafe_allow_html=True,
+                            )
+                    else:
+                        leader_col.caption("Stock-level data unavailable; no ranking shown.")
+        else:
+            st.info("Weekly sector momentum is temporarily unavailable because usable 3-month daily history was not returned.")
+        
 st.markdown("### NIFTY 50 stock heatmap")
 st.caption("NIFTY 50 constituents only · Tile size is equal-weighted in this view · Green = positive daily change, red = negative daily change")
 NIFTY50_HEATMAP_SYMBOLS = [
