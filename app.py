@@ -1803,65 +1803,64 @@ else:
             st.caption("Only sectors that return usable source rows are plotted. Relative strength is computed against NIFTY 50 over the selected lookback; it is not institutional money-flow data.")
             sector_rows = []
             rotation_rows = []
-            with st.spinner("Checking available sector index symbols…"):
-                base_df = market_data["NIFTY 50"].copy()
-                if not base_df.empty:
-                    base_df = base_df.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last").copy()
-                    base_df["_day"] = pd.to_datetime(base_df["Date"]).dt.date
-                    base_df = base_df.set_index("_day")["Close"]
-                for sector, ticker in SECTOR_TICKERS.items():
-                    sdf, err = get_history(ticker, "6mo", "1d")
-                    if sdf.empty or len(sdf) < 12 or len(base_df) < 12:
-                        continue
-                    sdf = sdf.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last").copy()
-                    sdf["_day"] = pd.to_datetime(sdf["Date"]).dt.date
-                    s_close = sdf.set_index("_day")["Close"]
-                    aligned = pd.concat([s_close.rename("sector"), base_df.rename("nifty")], axis=1).dropna()
-                    if len(aligned) < 12:
-                        continue
-                    relative = (aligned["sector"] / aligned["nifty"]) * 100
-                    rs_mean = relative.rolling(20, min_periods=8).mean()
-                    rs_momentum = relative.pct_change(5) * 100
+            base_df = market_data["NIFTY 50"].copy()
+            if not base_df.empty:
+                base_df = base_df.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last").copy()
+                base_df["_day"] = pd.to_datetime(base_df["Date"]).dt.date
+                base_df = base_df.set_index("_day")["Close"]
+            for sector, ticker in SECTOR_TICKERS.items():
+                sdf, err = get_history(ticker, "6mo", "1d")
+                if sdf.empty or len(sdf) < 12 or len(base_df) < 12:
+                    continue
+                sdf = sdf.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last").copy()
+                sdf["_day"] = pd.to_datetime(sdf["Date"]).dt.date
+                s_close = sdf.set_index("_day")["Close"]
+                aligned = pd.concat([s_close.rename("sector"), base_df.rename("nifty")], axis=1).dropna()
+                if len(aligned) < 12:
+                    continue
+                relative = (aligned["sector"] / aligned["nifty"]) * 100
+                rs_mean = relative.rolling(20, min_periods=8).mean()
+                rs_momentum = relative.pct_change(5) * 100
 
-                    def _rotation_zone(pos):
-                        if pos < 0 or pos >= len(relative) or pd.isna(rs_mean.iloc[pos]) or pd.isna(rs_momentum.iloc[pos]):
-                            return None
-                        strong = relative.iloc[pos] >= rs_mean.iloc[pos]
-                        accelerating = rs_momentum.iloc[pos] >= 0
-                        if strong and accelerating:
-                            return "Leading"
-                        if strong and not accelerating:
-                            return "Weakening"
-                        if not strong and accelerating:
-                            return "Improving"
-                        return "Lagging"
+                def _rotation_zone(pos):
+                    if pos < 0 or pos >= len(relative) or pd.isna(rs_mean.iloc[pos]) or pd.isna(rs_momentum.iloc[pos]):
+                        return None
+                    strong = relative.iloc[pos] >= rs_mean.iloc[pos]
+                    accelerating = rs_momentum.iloc[pos] >= 0
+                    if strong and accelerating:
+                        return "Leading"
+                    if strong and not accelerating:
+                        return "Weakening"
+                    if not strong and accelerating:
+                        return "Improving"
+                    return "Lagging"
 
-                    cur_pos = len(aligned) - 1
-                    prev_pos = max(0, cur_pos - 5)
-                    current_zone = _rotation_zone(cur_pos)
-                    previous_zone = _rotation_zone(prev_pos)
-                    recent = aligned.iloc[-min(21, len(aligned)):]
-                    perf = (recent["sector"].iloc[-1] / recent["sector"].iloc[0] - 1) * 100
-                    base_perf = (recent["nifty"].iloc[-1] / recent["nifty"].iloc[0] - 1) * 100
-                    last_date = pd.to_datetime(aligned.index[-1]).strftime("%d %b %Y")
-                    relative_pp = perf - base_perf
-                    def _relative_window(window):
-                        sample = aligned.iloc[-min(window, len(aligned)):]
-                        if len(sample) < 2:
-                            return np.nan
-                        return ((sample["sector"].iloc[-1] / sample["sector"].iloc[0] - 1) -
-                                (sample["nifty"].iloc[-1] / sample["nifty"].iloc[0] - 1)) * 100
-                    sector_rows.append({
-                        "Sector": sector, "Ticker": ticker, "Period return %": perf,
-                        "NIFTY return %": base_perf, "Relative return vs NIFTY (pp)": relative_pp,
-                        "1D vs NIFTY (pp)": _relative_window(2),
-                        "1W vs NIFTY (pp)": _relative_window(6),
-                        "3W vs NIFTY (pp)": _relative_window(16),
-                        "6W vs NIFTY (pp)": _relative_window(31),
-                        "Last source bar": last_date
-                    })
-                    if current_zone:
-                        rotation_rows.append({"Sector": sector, "Previous zone": previous_zone or current_zone, "Current zone": current_zone, "Relative return vs NIFTY (pp)": relative_pp, "Last source bar": last_date})
+                cur_pos = len(aligned) - 1
+                prev_pos = max(0, cur_pos - 5)
+                current_zone = _rotation_zone(cur_pos)
+                previous_zone = _rotation_zone(prev_pos)
+                recent = aligned.iloc[-min(21, len(aligned)):]
+                perf = (recent["sector"].iloc[-1] / recent["sector"].iloc[0] - 1) * 100
+                base_perf = (recent["nifty"].iloc[-1] / recent["nifty"].iloc[0] - 1) * 100
+                last_date = pd.to_datetime(aligned.index[-1]).strftime("%d %b %Y")
+                relative_pp = perf - base_perf
+                def _relative_window(window):
+                    sample = aligned.iloc[-min(window, len(aligned)):]
+                    if len(sample) < 2:
+                        return np.nan
+                    return ((sample["sector"].iloc[-1] / sample["sector"].iloc[0] - 1) -
+                            (sample["nifty"].iloc[-1] / sample["nifty"].iloc[0] - 1)) * 100
+                sector_rows.append({
+                    "Sector": sector, "Ticker": ticker, "Period return %": perf,
+                    "NIFTY return %": base_perf, "Relative return vs NIFTY (pp)": relative_pp,
+                    "1D vs NIFTY (pp)": _relative_window(2),
+                    "1W vs NIFTY (pp)": _relative_window(6),
+                    "3W vs NIFTY (pp)": _relative_window(16),
+                    "6W vs NIFTY (pp)": _relative_window(31),
+                    "Last source bar": last_date
+                })
+                if current_zone:
+                    rotation_rows.append({"Sector": sector, "Previous zone": previous_zone or current_zone, "Current zone": current_zone, "Relative return vs NIFTY (pp)": relative_pp, "Last source bar": last_date})
 
             if sector_rows:
                 sector_board = pd.DataFrame(sector_rows)
@@ -4479,7 +4478,7 @@ def run_turnaround_scan(segments: tuple[str, ...]):
     # A modest worker pool keeps the screen practical while covering the selected index constituents.
     from concurrent.futures import ThreadPoolExecutor, as_completed
     found = []
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(get_one_turnaround_fundamentals, row["Ticker"], row["Segment"], row["Company"]) for _, row in universe.iterrows()]
         for future in as_completed(futures):
             try:
