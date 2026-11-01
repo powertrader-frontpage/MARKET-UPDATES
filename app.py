@@ -34,7 +34,7 @@ st.markdown("""
 .signal-bad [data-testid="stMetric"]{border-left-color:#ef4444}
 .signal-neutral [data-testid="stMetric"]{border-left-color:#f59e0b}
 div[data-testid="stExpander"]{border:1px solid rgba(148,163,184,.3);border-radius:12px;overflow:hidden}
-div[data-testid="stExpander"] summary{font-weight:650}
+div[data-testid="stExpander"] summary{font-weight:750;color:#25d6b1} div[data-testid="stExpander"] summary p{background:linear-gradient(90deg,#20d6a5,#38bdf8,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:800;letter-spacing:.15px}
 div[data-testid="stDataFrame"]{border-radius:10px;overflow:hidden}
 
 [data-testid="stMetric"]{background:rgba(100,120,145,.08);border:1px solid rgba(120,140,160,.25);padding:12px;border-radius:12px}
@@ -1799,7 +1799,7 @@ else:
         render_nse500_screener()
 
         with st.expander("Sector rotation", expanded=False):
-            st.subheader("Sector rotation — best-effort public index history")
+            st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Sector rotation</div>""", unsafe_allow_html=True)
             st.caption("Only sectors that return usable source rows are plotted. Relative strength is computed against NIFTY 50 over the selected lookback; it is not institutional money-flow data.")
             if st.button("Load / refresh sector rotation", key="load_sector_rotation"):
                 st.session_state["load_sector_rotation_loaded"] = True
@@ -2035,7 +2035,7 @@ else:
                     st.warning("No sector index series were returned by the public source. No values have been substituted.")
     
         with st.expander("Micro Sector Rotation", expanded=False):
-            st.subheader("Micro Sector Rotation Tracker")
+            st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#a78bfa,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Micro Sector Rotation</div>""", unsafe_allow_html=True)
             st.caption("Explore leading, improving, weakening and lagging micro industries, compare their strength against NIFTY 500, and drill down to constituent stocks.")
             st.caption("Custom equal-weight stock baskets · ranks combine 1M/3M/6M returns and 50-EMA breadth. Public prices may be delayed. This is a research tool, not investment advice.")
             if st.button("Load / refresh micro-sector rotation", key="load_micro_sector_rotation"):
@@ -2467,7 +2467,7 @@ else:
     
     
 # Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
-st.markdown("### Leading sectors")
+st.markdown("""<div style="font-size:clamp(26px,3.5vw,38px);font-weight:850;letter-spacing:-1px;line-height:1.15;margin:10px 0 8px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Leading sectors</div>""", unsafe_allow_html=True)
 # Explanatory caption removed to save vertical space.
 # Representative liquid stocks by sector; rank only when source history is available.
 SECTOR_LEADING_STOCKS = {
@@ -2671,7 +2671,7 @@ if st.session_state.get("load_leading_sector_rankings_loaded", False):
         else:
             st.info("Weekly sector momentum is temporarily unavailable because usable 3-month daily history was not returned.")
         
-st.markdown("### NIFTY 50 stock heatmap")
+st.markdown("""<div style="font-size:clamp(26px,3.5vw,38px);font-weight:850;letter-spacing:-1px;line-height:1.15;margin:10px 0 8px;background:linear-gradient(90deg,#60a5fa,#a78bfa,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">NIFTY 50 stock heatmap</div>""", unsafe_allow_html=True)
 st.caption("NIFTY 50 constituents only · Tile size is equal-weighted in this view · Green = positive daily change, red = negative daily change")
 NIFTY50_HEATMAP_SYMBOLS = [
     "ADANIENT.NS", "ADANIPORTS.NS", "APOLLOHOSP.NS", "ASIANPAINT.NS", "AXISBANK.NS",
@@ -2734,7 +2734,7 @@ st.divider()
 
 tabs = [st.expander("NIFTY historical returns", expanded=False)]
 with tabs[0]:
-    st.subheader("NIFTY 50 historical returns")
+    st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#f59e0b,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">NIFTY historical returns</div>""", unsafe_allow_html=True)
     st.caption("Calendar-year returns and monthly return heatmap, calculated from returned daily NIFTY 50 closing prices. Historical performance is not a prediction.")
     @st.cache_data(ttl=3600, show_spinner=False)
     def _nifty_long_history(ticker: str):
@@ -2802,7 +2802,7 @@ with extra_tabs[0]:
     st.caption("Market regime and trend strength are displayed in the main dashboard above.")
 
 with extra_tabs[1]:
-    st.subheader("14 · Options analytics")
+    st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#22c55e,#14b8a6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Options analytics</div>""", unsafe_allow_html=True)
     st.write("Option-chain data for NIFTY-family indices and a broad list of F&O stocks is fetched from the authenticated FYERS Market Data API. Choose an underlying and expiry; availability depends on FYERS contract coverage.")
     # FYERS accepts the underlying equity symbol for stock-option chains.
     # Keep the list explicit so unsupported/expired contracts fail transparently rather than showing guessed data.
