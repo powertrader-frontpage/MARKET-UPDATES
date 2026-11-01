@@ -1845,9 +1845,53 @@ else:
                     base_perf = (recent["nifty"].iloc[-1] / recent["nifty"].iloc[0] - 1) * 100
                     last_date = pd.to_datetime(aligned.index[-1]).strftime("%d %b %Y")
                     relative_pp = perf - base_perf
-                    sector_rows.append({"Sector": sector, "Ticker": ticker, "Period return %": perf, "NIFTY return %": base_perf, "Relative return vs NIFTY (pp)": relative_pp, "Last source bar": last_date})
+                    def _relative_window(window):
+                        sample = aligned.iloc[-min(window, len(aligned)):]
+                        if len(sample) < 2:
+                            return np.nan
+                        return ((sample["sector"].iloc[-1] / sample["sector"].iloc[0] - 1) -
+                                (sample["nifty"].iloc[-1] / sample["nifty"].iloc[0] - 1)) * 100
+                    sector_rows.append({
+                        "Sector": sector, "Ticker": ticker, "Period return %": perf,
+                        "NIFTY return %": base_perf, "Relative return vs NIFTY (pp)": relative_pp,
+                        "1D vs NIFTY (pp)": _relative_window(2),
+                        "1W vs NIFTY (pp)": _relative_window(6),
+                        "3W vs NIFTY (pp)": _relative_window(16),
+                        "6W vs NIFTY (pp)": _relative_window(31),
+                        "Last source bar": last_date
+                    })
                     if current_zone:
                         rotation_rows.append({"Sector": sector, "Previous zone": previous_zone or current_zone, "Current zone": current_zone, "Relative return vs NIFTY (pp)": relative_pp, "Last source bar": last_date})
+
+            if sector_rows:
+                sector_board = pd.DataFrame(sector_rows)
+                sector_period = st.segmented_control(
+                    "Rank sector money flow by period",
+                    ["1D", "1W", "3W", "6W"],
+                    default="1W",
+                    key="sector_rotation_period",
+                )
+                sector_metric = {"1D": "1D vs NIFTY (pp)", "1W": "1W vs NIFTY (pp)", "3W": "3W vs NIFTY (pp)", "6W": "6W vs NIFTY (pp)"}[sector_period]
+                sector_board = sector_board.dropna(subset=[sector_metric]).sort_values(sector_metric, ascending=False)
+                rising_sectors = sector_board.head(5)
+                falling_sectors = sector_board.tail(5).sort_values(sector_metric)
+                st.markdown("### What changed · Where sector money is moving")
+                st.caption(f"Relative performance versus NIFTY 50 · {sector_period} window · latest available source bar")
+                climb_col, fall_col = st.columns(2, gap="medium")
+                for board_col, board_title, board_data, board_color in [
+                    (climb_col, "CLIMBERS", rising_sectors, "#329b72"),
+                    (fall_col, "FALLERS", falling_sectors, "#c56b72"),
+                ]:
+                    with board_col:
+                        st.markdown(f'<div style="font-size:12px;font-weight:800;letter-spacing:1px;color:{board_color};margin:4px 0 8px;">{board_title}</div>', unsafe_allow_html=True)
+                        for rank_no, (_, sector_item) in enumerate(board_data.iterrows(), 1):
+                            score = float(sector_item[sector_metric])
+                            st.markdown(
+                                f'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 9px;border-bottom:1px solid rgba(130,145,135,.25);">'
+                                f'<b>{rank_no}. {html.escape(str(sector_item["Sector"]))}</b>'
+                                f'<span style="font-weight:800;color:{board_color};">{score:+.2f} pp</span></div>',
+                                unsafe_allow_html=True,
+                            )
 
             if rotation_rows:
                 zone_colors = {"Leading": "#198754", "Weakening": "#b45309", "Improving": "#2864c5", "Lagging": "#dc3545"}
@@ -2118,22 +2162,23 @@ else:
                             continue
                         close = close.sort_index()
                         last = float(close.iloc[-1])
+                        ret1d = (last / float(close.iloc[-2]) - 1) * 100 if len(close) >= 2 else np.nan
                         ret1w = (last / float(close.iloc[-min(6, len(close))]) - 1) * 100
                         ret1 = (last / float(close.iloc[-min(22, len(close))]) - 1) * 100
                         ret3 = (last / float(close.iloc[-min(64, len(close))]) - 1) * 100
                         ret6 = (last / float(close.iloc[-min(127, len(close))]) - 1) * 100
                         ret1y = (last / float(close.iloc[0]) - 1) * 100
                         ema50 = close.ewm(span=50, adjust=False, min_periods=50).mean()
-                        constituent_returns.append((ret1w, ret1, ret3, ret6, ret1y))
+                        constituent_returns.append((ret1d, ret1w, ret1, ret3, ret6, ret1y))
                         constituent_breadth.append(float(last > float(ema50.iloc[-1])))
                         constituent_series.append(close / float(close.iloc[-min(127, len(close))]) * 100)
                     if not constituent_returns:
                         continue
                     arr = np.array(constituent_returns, dtype=float)
-                    avg1w, avg1, avg3, avg6, avg1y = np.nanmean(arr, axis=0)
+                    avg1d, avg1w, avg1, avg3, avg6, avg1y = np.nanmean(arr, axis=0)
                     breadth = float(np.mean(constituent_breadth)) * 100
                     composite = 0.25 * avg1 + 0.40 * avg3 + 0.25 * avg6 + 0.10 * ((breadth - 50) / 5)
-                    micro_rows.append({"Micro sector": micro_name, "Group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1W %": avg1w, "1M %": avg1, "3M %": avg3, "6M %": avg6, "1Y %": avg1y, "50 EMA breadth %": breadth, "_raw_score": composite})
+                    micro_rows.append({"Micro sector": micro_name, "Group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1D %": avg1d, "1W %": avg1w, "1M %": avg1, "3M %": avg3, "6M %": avg6, "1Y %": avg1y, "50 EMA breadth %": breadth, "_raw_score": composite})
                     if constituent_series:
                         aligned = pd.concat(constituent_series, axis=1).sort_index()
                         micro_histories[micro_name] = aligned.mean(axis=1)
@@ -2157,7 +2202,26 @@ else:
                 latest_dates = [s.index[-1] for s in [bench] if not s.empty]
                 asof = pd.Timestamp(latest_dates[0]).strftime("%d %b %Y") if latest_dates else "date unavailable"
                 st.markdown(f"**Data date:** {asof} · **Micro sectors available:** {len(micro_df)} · **Constituent prices fetched:** {len(micro_tickers)-1}")
-                rank_metric = st.segmented_control("Rank leading micro sectors by", options=["Score", "1W %", "1M %", "3M %", "6M %", "1Y %"], default="Score", key="micro_rank_mode")
+                st.markdown("### What changed · Where money is moving")
+                micro_period = st.segmented_control("Theme movement period", ["1D", "1W", "1M", "3M", "6M"], default="1D", key="micro_movers_period")
+                micro_climbers = micro_df.sort_values(micro_period + " %", ascending=False).head(6)
+                micro_fallers = micro_df.sort_values(micro_period + " %", ascending=True).head(6)
+                mc, mf = st.columns(2, gap="medium")
+                for panel, heading, frame, panel_color in [
+                    (mc, "CLIMBERS", micro_climbers, "#329b72"),
+                    (mf, "FALLERS", micro_fallers, "#c56b72"),
+                ]:
+                    with panel:
+                        st.markdown(f'<div style="font-size:12px;font-weight:800;letter-spacing:1px;color:{panel_color};margin:4px 0 8px;">{heading}</div>', unsafe_allow_html=True)
+                        for rank_no, (_, theme_row) in enumerate(frame.iterrows(), 1):
+                            move = float(theme_row[micro_period + " %"])
+                            st.markdown(
+                                f'<div style="display:flex;justify-content:space-between;gap:8px;padding:9px 10px;border-bottom:1px solid rgba(130,145,135,.25);">'
+                                f'<b>{rank_no}. {html.escape(str(theme_row["Micro sector"]))}</b>'
+                                f'<span style="font-weight:800;color:{panel_color};">{move:+.2f}%</span></div>',
+                                unsafe_allow_html=True,
+                            )
+                rank_metric = st.segmented_control("Rank leading micro sectors by", options=["Score", "1D %", "1W %", "1M %", "3M %", "6M %", "1Y %"], default="Score", key="micro_rank_mode")
                 rank_col = rank_metric if rank_metric in micro_df.columns else "Score"
                 ranked = micro_df.sort_values(rank_col, ascending=False).head(6)
                 st.subheader("Leading micro sectors")
