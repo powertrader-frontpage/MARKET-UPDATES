@@ -122,7 +122,7 @@ def _pine_stage_series(close, high, low, ma_length=30, atr_length=14):
     return stage, sma, atr, flat_flag
 
 
-def _pine_base_progress(close, high, low, stage_series, min_advance_pct=9.0, min_base_weeks=4):
+def _pine_base_progress(close, high, low, stage_series, min_advance_pct=10.0, min_base_weeks=4):
     """Port of Pine base counting: duration, breakout, advance and explosive-base exception."""
     count = 0
     stage2_low = np.nan
@@ -240,7 +240,7 @@ def _calculate():
     for ticker in weekly.columns:
         if ticker in weekly_high.columns and ticker in weekly_low.columns:
             stage_s, _, _, _ = _pine_stage_series(weekly[ticker], weekly_high[ticker], weekly_low[ticker])
-            base_s, fresh_s = _pine_base_progress(weekly[ticker], weekly_high[ticker], weekly_low[ticker], stage_s, min_advance_pct=9.0, min_base_weeks=4)
+            base_s, fresh_s = _pine_base_progress(weekly[ticker], weekly_high[ticker], weekly_low[ticker], stage_s, min_advance_pct=10.0, min_base_weeks=4)
             stage_series_by_ticker[ticker] = stage_s
             base_series_by_ticker[ticker] = base_s
             fresh_b2_series_by_ticker[ticker] = fresh_s
