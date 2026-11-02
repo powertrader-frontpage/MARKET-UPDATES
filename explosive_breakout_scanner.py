@@ -529,9 +529,23 @@ def run_explosive_breakout_scan():
         result["Fundamental Score"] = fundamental_score.clip(0, 15).round(1)
     else:
         result["Fundamental Score"] = 0.0
-    catalyst = pd.to_numeric(result.get("News catalyst score", pd.Series(0, index=result.index)), errors="coerce").fillna(0)
-    result["Catalyst Score"] = catalyst.clip(-3, 3).map(lambda x: round(x / 3 * 10, 1))
-    # Keep technical evidence dominant; fundamentals and news add confirmation rather than vetoing early breakouts.
+    # Only dated positive/negative NSE exchange filings affect catalyst points.
+    official_points = pd.to_numeric(
+        result.get("Official catalyst score", pd.Series(0, index=result.index)), errors="coerce"
+    ).fillna(0).clip(-3, 3)
+    result["Catalyst Score"] = (official_points / 3 * 10).round(1)
+    result["Catalyst status"] = np.select(
+        [official_points > 0, official_points < 0],
+        ["CONFIRMED · positive NSE filing", "RISK · negative NSE filing"],
+        default="PENDING · no verified catalyst"
+    )
+    result["Early-entry quality"] = np.select(
+        [result["Fresh B1"] & result["4W breakout"] & (official_points > 0),
+         result["Fresh B1"] & result["4W breakout"]],
+        ["CATALYST-BACKED B1", "B1 · CATALYST PENDING"],
+        default="WATCH"
+    )
+    # Technical evidence remains dominant; only official exchange filings provide catalyst confirmation.
     result["Opportunity Score"] = (result["Technical Score"] * 0.75
                                    + result["Fundamental Score"]
                                    + result["Catalyst Score"]).clip(0, 100).round(1)
@@ -549,16 +563,16 @@ def run_explosive_breakout_scan():
 
 def render_explosive_breakout_scanner():
     st.markdown("""<div style="font-size:clamp(26px,3.5vw,38px);font-weight:850;letter-spacing:-1px;margin:10px 0 8px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">🚀 Explosive Breakout Scanner</div>""", unsafe_allow_html=True)
-    st.caption("Nifty Midcap 150 + Nifty Smallcap 250 · Weekly Weinstein stages · Fresh B1 breakouts · Volume and relative-strength ranking · Recent news enrichment")
-    st.info("Uses the weekly Weinstein stage and base-count rules: the first valid breakout after a B1 base is flagged as Fresh B1. Financial results and recent headlines add confirmation; verify material announcements on NSE/BSE.")
+    st.caption("Nifty Midcap 150 + Nifty Smallcap 250 · Early B1 breakout detection · Official NSE catalyst verification · Volume and relative-strength ranking")
+    st.info("Prioritises the first valid B1 breakout. Positive business catalysts count as confirmed only when matched to a dated NSE corporate filing; media headlines are supporting leads, not proof. No verified catalyst means catalyst pending, not a false confirmation.")
     c1, c2 = st.columns([1, 3])
     with c1:
         run = st.button("Scan / refresh breakouts", type="primary", key="run_explosive_breakout_scan")
     with c2:
-        st.caption("Price history and constituents are cached for 6 hours. News is fetched only for the top technical candidates to limit load.")
+        st.caption("Price history, fundamentals, official NSE filings and supporting news are cached for 6 hours. Catalyst checks run only for the top 30 technical candidates.")
     # Bump this whenever scanner filters or classification rules change. This
     # invalidates old session_state tables that otherwise survive code deployments.
-    scan_version = "catalyst-stage-benchmark-replay-v1"
+    scan_version = "official-nse-catalyst-early-b1-v2"
     needs_refresh = st.session_state.get("explosive_breakout_scan_version") != scan_version
     if run or needs_refresh or st.session_state.get("explosive_breakout_scan_loaded", False):
         if run or needs_refresh or "explosive_breakout_scan_data" not in st.session_state:
@@ -595,7 +609,7 @@ def render_explosive_breakout_scanner():
             st.caption("Last scan: " + st.session_state["explosive_breakout_scan_time"])
         if not fresh.empty:
             st.subheader("Fresh B1 · Stage 2 breakouts")
-            display = ["Status", "Opportunity Score", "Technical Score", "Fundamental Score", "Catalyst Score", "Symbol", "Company", "Segment", "Sector", "Price", "Breakout level", "Base Count", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %", "13W return %", "30W slope %", "EMA 10>21>55", "Daily change %"]
+            display = ["Status", "Opportunity Score", "Technical Score", "Fundamental Score", "Catalyst Score", "Early-entry quality", "Catalyst status", "Official catalyst", "Official catalyst date", "Official source", "Symbol", "Company", "Segment", "Sector", "Price", "Breakout level", "Base Count", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %", "13W return %", "30W slope %", "EMA 10>21>55", "Daily change %"]
             st.dataframe(fresh[[c for c in display if c in fresh.columns]], use_container_width=True, hide_index=True)
         else:
             st.info("No fresh B1 breakout met all current conditions. Check Upcoming Breakouts and Stage 2 follow-through below.")
@@ -603,7 +617,7 @@ def render_explosive_breakout_scanner():
         if upcoming.empty:
             st.caption("No Stage 1/2 candidates are currently within 5% of their recent breakout resistance with positive 13-week momentum.")
         else:
-            st.dataframe(upcoming[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Stage", "Gap to breakout %", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %", "Catalyst Score"] if c in upcoming.columns]], use_container_width=True, hide_index=True)
+            st.dataframe(upcoming[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Stage", "Gap to breakout %", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %", "Catalyst Score", "Catalyst status", "Official catalyst", "Official catalyst date", "Official source"] if c in upcoming.columns]], use_container_width=True, hide_index=True)
         st.subheader("Strong B2+ · Breakout follow-through")
         if follow.empty:
             st.caption("No additional Stage 2 stocks with later base breakouts currently qualify.")
@@ -622,10 +636,10 @@ def render_explosive_breakout_scanner():
         with st.expander("Recent news & catalysts · technical shortlist", expanded=False):
             if not news.empty:
                 st.dataframe(news, use_container_width=True, hide_index=True, column_config={"Source link": st.column_config.LinkColumn("Source link")})
-                st.caption("Headline classification is automated and can be imperfect. Verify every material event using the linked source and NSE/BSE filings.")
+                st.caption("Official NSE filings are distinguished from media coverage. Automated headline classification is only a screening aid; open the source and verify the filing before acting.")
             else:
                 st.caption("No recent headlines were returned for the top technical shortlist. No catalyst is assumed.")
         st.download_button("Download full mid/small-cap scan (CSV)", all_rows.to_csv(index=False).encode("utf-8"), "explosive_breakout_mid_smallcap_scan.csv", "text/csv", key="download_explosive_breakout_scan")
-        st.caption("Opportunity Score combines technical ranking, available quarterly fundamentals and recent news catalysts. Fundamentals/news are enriched for the top 30 technical candidates only; missing data is not treated as positive. Scores are research heuristics, not probabilities or buy signals. Weekly logic uses completed candles and your Pine base-count rules.")
+        st.caption("Opportunity Score combines technical strength, available quarterly fundamentals and dated official NSE catalyst evidence. Only the top 30 technical candidates receive catalyst enrichment. Media-only coverage never qualifies as confirmed. Scores are research heuristics, not probabilities or buy signals. Weekly logic uses completed candles and your Pine base-count rules.")
     else:
         st.info("Press Scan / refresh to evaluate the Midcap 150 and Smallcap 250 universe. The scan is separate from the NSE 500 Weinstein screener and Turnaround Board.")
