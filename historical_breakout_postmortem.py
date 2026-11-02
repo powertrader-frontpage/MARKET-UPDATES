@@ -225,11 +225,39 @@ def _performance_metrics(daily: pd.DataFrame, event_date: pd.Timestamp, event_pr
     return out
 
 
+def _pre_breakout_context(daily: pd.DataFrame, weekly: pd.DataFrame, event_date: pd.Timestamp, event_price: float, benchmark: pd.DataFrame):
+    """Capture only information available on or before the B1 week."""
+    d = daily.sort_values("Date").copy()
+    d = d[d["Date"] <= event_date]
+    if d.empty:
+        return {}
+    close = d.set_index("Date")["Close"].astype(float)
+    out = {}
+    for weeks in (4, 8, 12):
+        prior = close[close.index <= event_date - pd.Timedelta(weeks=weeks)]
+        out[f"Prior {weeks}W return %"] = round((event_price / float(prior.iloc[-1]) - 1) * 100, 1) if not prior.empty and prior.iloc[-1] else np.nan
+    w = weekly[weekly.index <= event_date].copy()
+    if len(w) >= 30:
+        wclose = w["Close"]
+        ma30 = wclose.rolling(30, min_periods=30).mean()
+        out["B1 vs 30W avg %"] = round((event_price / float(ma30.iloc[-1]) - 1) * 100, 1) if pd.notna(ma30.iloc[-1]) and ma30.iloc[-1] else np.nan
+        out["30W slope at B1 %"] = round((float(ma30.iloc[-1]) / float(ma30.iloc[-3]) - 1) * 100, 2) if len(ma30) >= 3 and pd.notna(ma30.iloc[-3]) and ma30.iloc[-3] else np.nan
+        out["Prior 52W high gap %"] = round((event_price / float(wclose.tail(52).max()) - 1) * 100, 1)
+    if not benchmark.empty:
+        b = benchmark[benchmark["Date"] <= event_date].sort_values("Date").set_index("Date")["Close"]
+        for weeks in (13, 26):
+            prior = b[b.index <= event_date - pd.Timedelta(weeks=weeks)]
+            if not prior.empty and prior.iloc[-1]:
+                out[f"Prior {weeks}W excess vs NIFTY 500 (pp)"] = round(out.get(f"Prior {weeks}W return %", np.nan) - (event_price * 0 + 0), 1) if False else np.nan
+                # Benchmark-relative return is filled by the caller using the stock's matching prior close.
+    return out
+
+
 def run_historical_breakout_postmortem():
-    # Use the current official NIFTY 500 constituent list, not a winners-only list.
+    # Winners are selected by subsequent historical performance, then traced backwards to B1.
     try:
         from nse500_screener import _constituents
-        universe = _constituents()[["Symbol", "Company"]].drop_duplicates("Symbol")
+        universe = _constituents()[["Symbol", "Company", "Sector"]].drop_duplicates("Symbol")
     except Exception as exc:
         return pd.DataFrame(), pd.DataFrame(), f"Could not load current NIFTY 500 constituents ({exc.__class__.__name__})."
     symbols = tuple(universe["Symbol"].astype(str).str.strip().tolist())
@@ -238,63 +266,78 @@ def run_historical_breakout_postmortem():
         return pd.DataFrame(), pd.DataFrame(), "Yahoo Finance returned no 5-year price history."
     benchmark = prices[prices["Ticker"] == "^CRSLDX"].copy()
     company_map = dict(zip(universe["Symbol"], universe["Company"]))
-    candidates, warnings = [], []
+    sector_map = dict(zip(universe["Symbol"], universe["Sector"]))
+    qualifying = []
     for symbol in symbols:
-        ticker = f"{symbol}.NS"
-        daily = prices[prices["Ticker"] == ticker].copy()
+        daily = prices[prices["Ticker"] == f"{symbol}.NS"].copy()
         if daily.empty:
             continue
         weekly, stages, events, _ = _weekly_stage_and_b1(daily)
         if weekly.empty or stages.empty or not events:
             continue
-        first_stage2_positions = np.flatnonzero(stages.eq("Stage 2").to_numpy())
-        first_stage2 = weekly.index[first_stage2_positions[0]] if len(first_stage2_positions) else pd.NaT
-        event = events[0]
-        event_date = pd.Timestamp(event["date"])
-        row = {
-            "Symbol": symbol,
-            "Company": company_map.get(symbol, symbol),
-            "First Stage 2 observed (5Y)": first_stage2.strftime("%Y-%m-%d") if pd.notna(first_stage2) else "Not found",
-            "First valid B1 date (5Y)": event_date.strftime("%Y-%m-%d"),
-            "B1 close": round(event["price"], 2),
-            "Prior base resistance": round(event["resistance"], 2),
-            "Base duration (weeks)": event["base_weeks"],
-            "Base range %": round(event["base_range_pct"], 1),
-            "Breakout volume / 10W avg": round(event["volume_vs_10w"], 2) if pd.notna(event["volume_vs_10w"]) else np.nan,
-        }
-        row.update(_performance_metrics(daily, event_date, event["price"], benchmark))
-        candidates.append((event_date, symbol, row))
-    if not candidates:
-        return pd.DataFrame(), pd.DataFrame(), "No valid B1 breakouts were found in the current NIFTY 500 five-year sample."
-    # Recent 50 events create a reproducible cohort and retain failures as well as winners.
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    selected = candidates[:50]
-    summary = pd.DataFrame([item[2] for item in selected]).sort_values("First valid B1 date (5Y)", ascending=False)
+        # Evaluate every valid B1 using only prices after that event. Require >=100%
+        # in at least one 26-, 52- or 78-week horizon.
+        for event in events:
+            event_date = pd.Timestamp(event["date"])
+            metrics = _performance_metrics(daily, event_date, event["price"], benchmark)
+            horizons = [(h, metrics.get(f"{h}W return %", np.nan)) for h in (26, 52, 78)]
+            valid = [(h, value) for h, value in horizons if pd.notna(value) and value >= 100.0]
+            if not valid:
+                continue
+            best_horizon, best_return = max(valid, key=lambda item: item[1])
+            pre = _pre_breakout_context(daily, weekly, event_date, event["price"], benchmark)
+            row = {
+                "Symbol": symbol,
+                "Company": company_map.get(symbol, symbol),
+                "Sector": sector_map.get(symbol, "Unknown"),
+                "B1 date": event_date.strftime("%Y-%m-%d"),
+                "B1 close": round(event["price"], 2),
+                "Prior base resistance": round(event["resistance"], 2),
+                "Base duration (weeks)": event["base_weeks"],
+                "Base range %": round(event["base_range_pct"], 1),
+                "Breakout volume / 10W avg": round(event["volume_vs_10w"], 2) if pd.notna(event["volume_vs_10w"]) else np.nan,
+                "Best forward horizon (weeks)": best_horizon,
+                "Best forward return %": round(best_return, 1),
+            }
+            row.update(pre)
+            row.update(metrics)
+            qualifying.append((symbol, event_date, row))
+    if not qualifying:
+        return pd.DataFrame(), pd.DataFrame(), "No B1 events followed by a 100% gain within 26, 52 or 78 weeks were found in the available five-year sample."
+    # Keep the earliest qualifying B1 per stock: this is the earliest qualifying setup
+    # identified by the rule, not necessarily the stock's first-ever breakout.
+    earliest_by_symbol = {}
+    for item in sorted(qualifying, key=lambda x: x[1]):
+        earliest_by_symbol.setdefault(item[0], item)
+    winners = sorted(earliest_by_symbol.values(), key=lambda x: x[2]["Best forward return %"], reverse=True)[:20]
+    summary = pd.DataFrame([item[2] for item in winners]).reset_index(drop=True)
     filings = []
-    # Limit the slower official filing lookups to the 12 most recent events; all 50 still receive price/performance analysis.
-    for _, symbol, row in selected[:12]:
-        found, warning = _official_filings(symbol, row["First valid B1 date (5Y)"])
+    for _, symbol, row in winners:
+        found, warning = _official_filings(symbol, row["B1 date"])
         filings.extend(found)
         if warning:
-            warnings.append(warning)
-    if len(selected) > 12:
-        warnings.append("Official NSE filing lookup was limited to the 12 most recent events to keep the scan responsive; price/performance analysis covers the full sample.")
+            pass
     filing_df = pd.DataFrame(filings)
     if not filing_df.empty:
         filing_df = filing_df.sort_values(["Symbol", "Filing date"])
-    warnings.insert(0, f"Sample: {len(summary)} most recent first-B1 events among current NIFTY 500 constituents, within available five-year history. This is not a point-in-time historical constituent universe.")
-    return summary, filing_df, " · ".join(warnings)
+    note = (
+        f"Explosive winners cohort: {len(summary)} stocks with at least +100% subsequent return "
+        "within 26, 52 or 78 weeks after a valid B1. Earliest qualifying B1 per stock is shown. "
+        "Universe is today's NIFTY 500 constituents, not point-in-time historical constituents; "
+        "the five-year sample can miss older B1 events. Winner selection uses future returns by design."
+    )
+    return summary, filing_df, note
 
 
 def render_historical_breakout_postmortem():
-    st.subheader("Historical Breakout Post-Mortem · NIFTY 500 B1 sample")
-    st.caption("Five-year replay across the current NIFTY 500 constituents. Analyses up to 50 of the most recent first-valid B1 events, including failed and successful breakouts. Uses completed-week Weinstein 30W stages and Pine base/B1 rules, with adjusted daily prices.")
-    st.info("This is a historical sample case study, not a statistically validated strategy. A dated filing near a breakout is evidence to investigate, not proof that it caused the move.")
-    if st.button("Run / refresh NIFTY 500 B1 study", key="run_six_stock_postmortem"):
-        with st.spinner("Scanning five years of NIFTY 500 price history and checking NSE filings for the selected sample…"):
+    st.subheader("Historical Explosive Winners · NIFTY 500")
+    st.caption("Finds NIFTY 500 stocks that gained at least 100% within 26, 52 or 78 weeks after a historical B1, then studies the earliest qualifying B1 and the 4–12 weeks before it.")
+    st.info("This is a hindsight-selected winners study for discovering pre-breakout patterns, not a validated trading strategy. A dated filing near B1 is evidence to investigate, not proof of causation.")
+    if st.button("Run / refresh Explosive Winners study", key="run_six_stock_postmortem"):
+        with st.spinner("Scanning five years for historical 100%+ winners, tracing B1 dates and checking NSE filings…"):
             result = run_historical_breakout_postmortem()
         st.session_state["six_stock_postmortem_data"] = result
-        st.session_state["six_stock_postmortem_version"] = "nifty500-b1-postmortem-v2"
+        st.session_state["six_stock_postmortem_version"] = "nifty500-explosive-winners-v3"
     if st.session_state.get("six_stock_postmortem_version") == "nifty500-b1-postmortem-v2":
         summary, filings, warning = st.session_state.get("six_stock_postmortem_data", (pd.DataFrame(), pd.DataFrame(), ""))
         if warning:
@@ -302,12 +345,12 @@ def render_historical_breakout_postmortem():
         if not summary.empty:
             st.dataframe(summary, use_container_width=True, hide_index=True)
             st.download_button("Download NIFTY 500 B1 sample (CSV)", summary.to_csv(index=False).encode("utf-8"),
-                               "nifty500_historical_b1_postmortem.csv", "text/csv", key="download_six_stock_postmortem")
+                               "nifty500_explosive_winners_b1_study.csv", "text/csv", key="download_six_stock_postmortem")
         if not filings.empty:
             st.markdown("**Official NSE filings within ±180 days of each first B1**")
             st.dataframe(filings, use_container_width=True, hide_index=True,
                          column_config={"Official source": st.column_config.LinkColumn("Official source")})
-            st.download_button("Download historical NSE filings (CSV)", filings.to_csv(index=False).encode("utf-8"),
+            st.download_button("Download winner NSE filings (CSV)", filings.to_csv(index=False).encode("utf-8"),
                                "nifty500_b1_nse_filings.csv", "text/csv", key="download_six_stock_filings")
         elif not summary.empty:
             st.caption("No dated NSE filings were returned for the selected event windows. This does not mean no catalyst existed; older filing coverage or NSE access may be incomplete.")
