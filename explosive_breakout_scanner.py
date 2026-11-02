@@ -433,10 +433,15 @@ def render_explosive_breakout_scanner():
         run = st.button("Scan / refresh breakouts", type="primary", key="run_explosive_breakout_scan")
     with c2:
         st.caption("Price history and constituents are cached for 6 hours. News is fetched only for the top technical candidates to limit load.")
-    if run or st.session_state.get("explosive_breakout_scan_loaded", False):
-        if run or "explosive_breakout_scan_data" not in st.session_state:
+    # Bump this whenever scanner filters or classification rules change. This
+    # invalidates old session_state tables that otherwise survive code deployments.
+    scan_version = "stage2-only-upcoming-v2"
+    needs_refresh = st.session_state.get("explosive_breakout_scan_version") != scan_version
+    if run or needs_refresh or st.session_state.get("explosive_breakout_scan_loaded", False):
+        if run or needs_refresh or "explosive_breakout_scan_data" not in st.session_state:
             with st.spinner("Scanning mid-cap and small-cap weekly price history…"):
                 output = run_explosive_breakout_scan()
+            st.session_state["explosive_breakout_scan_version"] = scan_version
             # Keep the scan result and the latest-run time in this browser session.
             if len(output) == 6:
                 fresh, follow, warning, upcoming, all_rows, news = output
