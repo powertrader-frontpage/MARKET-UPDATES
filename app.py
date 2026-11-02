@@ -2465,6 +2465,11 @@ else:
     
     
     
+from explosive_breakout_scanner import render_explosive_breakout_scanner
+
+render_explosive_breakout_scanner()
+
+
 # Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
 st.markdown("""<div style="font-size:clamp(26px,3.5vw,38px);font-weight:850;letter-spacing:-1px;line-height:1.15;margin:10px 0 8px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Leading sectors</div>""", unsafe_allow_html=True)
 # Explanatory caption removed to save vertical space.
