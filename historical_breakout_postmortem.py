@@ -339,11 +339,11 @@ def run_historical_breakout_postmortem():
         from nse500_screener import _constituents
         universe = _constituents()[["Symbol", "Company", "Sector"]].drop_duplicates("Symbol")
     except Exception as exc:
-        return pd.DataFrame(), pd.DataFrame(), f"Could not load current NIFTY 500 constituents ({exc.__class__.__name__})."
+        return pd.DataFrame(), pd.DataFrame(), f"Could not load current NIFTY 500 constituents ({exc.__class__.__name__}).", pd.DataFrame()
     symbols = tuple(universe["Symbol"].astype(str).str.strip().tolist())
     prices = _history_5y(symbols)
     if prices.empty:
-        return pd.DataFrame(), pd.DataFrame(), "Yahoo Finance returned no 5-year price history."
+        return pd.DataFrame(), pd.DataFrame(), "Yahoo Finance returned no 5-year price history.", pd.DataFrame()
     benchmark = prices[prices["Ticker"] == "^CRSLDX"].copy()
     company_map = dict(zip(universe["Symbol"], universe["Company"]))
     sector_map = dict(zip(universe["Symbol"], universe["Sector"]))
@@ -387,7 +387,7 @@ def run_historical_breakout_postmortem():
             row.update(metrics)
             qualifying.append((symbol, event_date, row))
     if not qualifying:
-        return pd.DataFrame(), pd.DataFrame(), "No B1 events followed by a 100% gain within 26, 52 or 78 weeks were found in the available five-year sample."
+        return pd.DataFrame(), pd.DataFrame(), "No B1 events followed by a 100% gain within 26, 52 or 78 weeks were found in the available five-year sample.", pd.DataFrame()
     # Keep the earliest qualifying B1 per stock: this is the earliest qualifying setup
     # identified by the rule, not necessarily the stock's first-ever breakout.
     earliest_by_symbol = {}
@@ -433,7 +433,7 @@ def render_historical_breakout_postmortem():
             result = run_historical_breakout_postmortem()
         st.session_state["six_stock_postmortem_data"] = result
         st.session_state["six_stock_postmortem_version"] = "nifty500-winner-failure-v7"
-    if st.session_state.get("six_stock_postmortem_version") == "nifty500-early-accumulation-v6":
+    if st.session_state.get("six_stock_postmortem_version") == "nifty500-winner-failure-v7":
         summary, filings, warning, failures = st.session_state.get("six_stock_postmortem_data", (pd.DataFrame(), pd.DataFrame(), "", pd.DataFrame()))
         if warning:
             st.warning(warning)
