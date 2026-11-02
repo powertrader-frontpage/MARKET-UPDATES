@@ -242,7 +242,8 @@ def _pre_breakout_context(daily: pd.DataFrame, weekly: pd.DataFrame, event_date:
         ma30 = wclose.rolling(30, min_periods=30).mean()
         out["B1 vs 30W avg %"] = round((event_price / float(ma30.iloc[-1]) - 1) * 100, 1) if pd.notna(ma30.iloc[-1]) and ma30.iloc[-1] else np.nan
         out["30W slope at B1 %"] = round((float(ma30.iloc[-1]) / float(ma30.iloc[-3]) - 1) * 100, 2) if len(ma30) >= 3 and pd.notna(ma30.iloc[-3]) and ma30.iloc[-3] else np.nan
-        prior_high_window = wclose.iloc[:-1].tail(52)\n        out["Prior 52W high gap %"] = round((event_price / float(prior_high_window.max()) - 1) * 100, 1) if not prior_high_window.empty and prior_high_window.max() else np.nan
+        prior_high_window = wclose.iloc[:-1].tail(52)
+        out["Prior 52W high gap %"] = round((event_price / float(prior_high_window.max()) - 1) * 100, 1) if not prior_high_window.empty and prior_high_window.max() else np.nan
     if not benchmark.empty:
         b = benchmark[benchmark["Date"] <= event_date].sort_values("Date").set_index("Date")["Close"]
         for weeks in (13, 26):
