@@ -681,6 +681,24 @@ def render_explosive_breakout_scanner():
             st.dataframe(fresh[[c for c in display if c in fresh.columns]], use_container_width=True, hide_index=True)
         else:
             st.info("No fresh B1 breakout met all current conditions. Check Upcoming Breakouts and Stage 2 follow-through below.")
+        # Independent daily setups from the two supplied Chartink conditions.
+        gapup_rows = all_rows[all_rows.get("Explosive gap-up", pd.Series(False, index=all_rows.index)).fillna(False)].copy() if not all_rows.empty else pd.DataFrame()
+        contraction_rows = all_rows[all_rows.get("Pre-breakout contraction", pd.Series(False, index=all_rows.index)).fillna(False)].copy() if not all_rows.empty else pd.DataFrame()
+        for frame in (gapup_rows, contraction_rows):
+            if not frame.empty:
+                frame.sort_values(["Opportunity Score", "Technical Score"], ascending=False, inplace=True)
+        st.subheader("Explosive Gap-Up Breakouts · Confirmed daily trigger")
+        if gapup_rows.empty:
+            st.caption("No stock currently meets all gap-up, prior 250-day high, 3× volume and liquidity conditions.")
+        else:
+            st.dataframe(gapup_rows[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Sector", "Stage", "Price", "Gap-up %", "Daily volume vs prior 50D avg", "Prior 60D range ratio", "Catalyst status", "Official catalyst", "Official catalyst date", "Official source"] if c in gapup_rows.columns]], use_container_width=True, hide_index=True)
+        st.subheader("Pre-breakout Contraction · Near 52-week highs")
+        if contraction_rows.empty:
+            st.caption("No stock currently meets the 5%-from-250-day-high, rising 50D/200D trend, 10-day tight-range and liquidity conditions.")
+        else:
+            st.dataframe(contraction_rows[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Sector", "Stage", "Price", "Gap to 250D high %", "10D range ratio", "Volume vs 10W Avg", "Catalyst status", "Official catalyst", "Official catalyst date", "Official source"] if c in contraction_rows.columns]], use_container_width=True, hide_index=True)
+        st.caption("These two daily Chartink-style triggers are independent overlays; they do not replace Weinstein Stage/B1 logic. Catalyst-backed labels still require a qualifying dated NSE filing.")
+
         st.subheader("Upcoming Breakouts · Early watch")
         if upcoming.empty:
             st.caption("No Stage 1/2 candidates are currently within 5% of their recent breakout resistance with positive 13-week momentum.")
