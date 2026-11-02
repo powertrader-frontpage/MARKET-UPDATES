@@ -491,10 +491,11 @@ def run_explosive_breakout_scan():
     # This is a timing comparison, not proof that the headline caused the price move.
     if not news.empty and {"Symbol", "Published", "Headline", "Catalyst type", "Catalyst points"}.issubset(news.columns):
         news_timeline = news.copy()
-        news_timeline["_catalyst_date"] = pd.to_datetime(news_timeline["Published"], errors="coerce", utc=True)
+        news_timeline["_catalyst_date"] = pd.to_datetime(news_timeline["Published"], errors="coerce", dayfirst=True, utc=True)
         news_timeline = news_timeline[
             news_timeline["_catalyst_date"].notna()
             & (pd.to_numeric(news_timeline["Catalyst points"], errors="coerce") > 0)
+            & news_timeline.get("Evidence status", pd.Series("", index=news_timeline.index)).astype(str).str.startswith("Official filing")
         ].sort_values("_catalyst_date", ascending=False)
         news_timeline = news_timeline.drop_duplicates("Symbol", keep="first")
         news_timeline = news_timeline[["Symbol", "_catalyst_date", "Catalyst type", "Headline"]].rename(
@@ -630,9 +631,9 @@ def render_explosive_breakout_scanner():
             if not timeline.empty:
                 timeline = timeline[timeline.get("Latest catalyst", pd.Series(index=timeline.index, dtype="object")).notna()]
                 st.dataframe(timeline, use_container_width=True, hide_index=True)
-                st.caption("Catalyst timing compares the latest positive headline found in the technical shortlist with the start of the current uninterrupted Weinstein stage. It is an investigative clue, not proof of causation. News coverage is limited to recent Google News results; verify dates and events against official NSE/BSE filings.")
+                st.caption("Catalyst timing uses the latest positive NSE-filed event found for each shortlisted stock and compares it with the current Weinstein stage start. Timing is an investigative clue, not proof of causation.")
             else:
-                st.caption("No dated positive catalyst was found for the current technical shortlist.")
+                st.caption("No positive, dated official NSE catalyst was found for the current technical shortlist. Media coverage alone is not treated as confirmation.")
         with st.expander("Recent news & catalysts · technical shortlist", expanded=False):
             if not news.empty:
                 st.dataframe(news, use_container_width=True, hide_index=True, column_config={"Source link": st.column_config.LinkColumn("Source link")})
