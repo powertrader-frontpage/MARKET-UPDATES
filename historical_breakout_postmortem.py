@@ -200,9 +200,12 @@ def _performance_metrics(daily: pd.DataFrame, event_date: pd.Timestamp, event_pr
         peak_price = float(one_year.loc[peak_date, "Close"])
         out["52W peak %"] = round((peak_price / event_price - 1) * 100, 1)
         out["Peak date"] = peak_date.strftime("%Y-%m-%d")
-        out["Max drawdown from B1 %"] = round((float(one_year["Close"].min()) / event_price - 1) * 100, 1)
+        running_peak = one_year["Close"].cummax()
+        drawdown = (one_year["Close"] / running_peak - 1) * 100
+        out["Max drawdown from peak %"] = round(float(drawdown.min()), 1)
+        out["Worst close vs B1 %"] = round((float(one_year["Close"].min()) / event_price - 1) * 100, 1)
     else:
-        out["52W peak %"], out["Peak date"], out["Max drawdown from B1 %"] = np.nan, "", np.nan
+        out["52W peak %"], out["Peak date"], out["Max drawdown from peak %"], out["Worst close vs B1 %"] = np.nan, "", np.nan, np.nan
     if not benchmark.empty:
         b = benchmark.set_index("Date")["Close"].sort_index()
         b0 = b[b.index >= event_date]
