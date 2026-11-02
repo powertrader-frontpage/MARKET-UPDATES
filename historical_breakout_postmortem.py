@@ -370,7 +370,7 @@ def render_historical_breakout_postmortem():
             result = run_historical_breakout_postmortem()
         st.session_state["six_stock_postmortem_data"] = result
         st.session_state["six_stock_postmortem_version"] = "nifty500-prebreakout-signature-v4"
-    if st.session_state.get("six_stock_postmortem_version") == "nifty500-explosive-winners-v3":
+    if st.session_state.get("six_stock_postmortem_version") == "nifty500-prebreakout-signature-v4":
         summary, filings, warning = st.session_state.get("six_stock_postmortem_data", (pd.DataFrame(), pd.DataFrame(), ""))
         if warning:
             st.warning(warning)
