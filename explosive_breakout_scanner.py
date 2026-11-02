@@ -68,15 +68,15 @@ def _breakout_prices(tickers: tuple[str, ...]):
                         continue
                     part = part.rename(columns={date_col: "Date"})
                     part["Date"] = pd.to_datetime(part["Date"], errors="coerce")
-                    for col in ["High", "Low", "Close", "Volume"]:
+                    for col in ["Open", "High", "Low", "Close", "Volume"]:
                         if col in part:
                             part[col] = pd.to_numeric(part[col], errors="coerce")
-                    if "High" not in part or "Low" not in part or "Volume" not in part:
+                    if not {"Open", "High", "Low", "Volume"}.issubset(part.columns):
                         continue
-                    part = part.dropna(subset=["Date", "High", "Low", "Close"])
+                    part = part.dropna(subset=["Date", "Open", "High", "Low", "Close"])
                     if not part.empty:
                         part["Ticker"] = ticker
-                        frames.append(part[["Date", "Ticker", "High", "Low", "Close", "Volume"]])
+                        frames.append(part[["Date", "Ticker", "Open", "High", "Low", "Close", "Volume"]])
                 except Exception:
                     continue
         except Exception:
@@ -452,9 +452,55 @@ def run_explosive_breakout_scan():
         ma30 = float(sma.iloc[-1]) if pd.notna(sma.iloc[-1]) else np.nan
         slope_pct = float((sma.iloc[-1] / sma.iloc[-3] - 1) * 100) if len(sma) >= 3 and pd.notna(sma.iloc[-3]) and sma.iloc[-3] else np.nan
         gap30 = (close / ma30 - 1) * 100 if pd.notna(ma30) and ma30 else np.nan
-        daily = group.sort_values("Date")
+        daily = group.sort_values("Date").dropna(subset=["Open", "High", "Low", "Close"]).copy()
         dclose = daily["Close"].dropna()
         daily_change = (float(dclose.iloc[-1]) / float(dclose.iloc[-2]) - 1) * 100 if len(dclose) >= 2 else np.nan
+        # Formula 1: confirmed explosive gap-up through the prior 250-session high.
+        # Rolling levels and averages are shifted where the scan formula specifies "1 day ago".
+        dvol = pd.to_numeric(daily["Volume"], errors="coerce")
+        dopen = pd.to_numeric(daily["Open"], errors="coerce")
+        dhigh = pd.to_numeric(daily["High"], errors="coerce")
+        dlow = pd.to_numeric(daily["Low"], errors="coerce")
+        dc = pd.to_numeric(daily["Close"], errors="coerce")
+        prior_250_high = dhigh.shift(1).rolling(250, min_periods=250).max()
+        prior_60_high = dhigh.shift(1).rolling(60, min_periods=60).max()
+        prior_60_low = dlow.shift(1).rolling(60, min_periods=60).min()
+        prior_vol50 = dvol.shift(1).rolling(50, min_periods=50).mean()
+        sma200_daily = dc.rolling(200, min_periods=200).mean()
+        avg_vol20_turnover = dvol.rolling(20, min_periods=20).mean() * dc
+        gap_up_pct = (float(dopen.iloc[-1]) / float(dc.iloc[-2]) - 1) * 100 if len(daily) >= 2 and dc.iloc[-2] else np.nan
+        volume_burst = float(dvol.iloc[-1] / prior_vol50.iloc[-1]) if pd.notna(prior_vol50.iloc[-1]) and prior_vol50.iloc[-1] > 0 else np.nan
+        prior_60_range = float(prior_60_high.iloc[-1] / prior_60_low.iloc[-1]) if pd.notna(prior_60_high.iloc[-1]) and pd.notna(prior_60_low.iloc[-1]) and prior_60_low.iloc[-1] > 0 else np.nan
+        gapup_breakout = bool(
+            pd.notna(prior_250_high.iloc[-1]) and dc.iloc[-1] > prior_250_high.iloc[-1]
+            and len(daily) >= 2 and dopen.iloc[-1] > dc.iloc[-2] * 1.02
+            and dc.iloc[-1] > dopen.iloc[-1]
+            and pd.notna(volume_burst) and volume_burst > 3
+            and pd.notna(sma200_daily.iloc[-1]) and dc.iloc[-1] > sma200_daily.iloc[-1]
+            and pd.notna(prior_60_range) and prior_60_range < 1.5
+            and pd.notna(avg_vol20_turnover.iloc[-1]) and avg_vol20_turnover.iloc[-1] > 10000000
+            and dc.iloc[-1] > 50
+        )
+        # Formula 2: liquid, tight 10-session contraction within 5% of 250-session high.
+        high_250_now = dhigh.rolling(250, min_periods=250).max()
+        sma50_daily = dc.rolling(50, min_periods=50).mean()
+        sma200_daily_now = dc.rolling(200, min_periods=200).mean()
+        sma_vol5 = dvol.rolling(5, min_periods=5).mean()
+        sma_vol50 = dvol.rolling(50, min_periods=50).mean()
+        high10 = dhigh.rolling(10, min_periods=10).max()
+        low10 = dlow.rolling(10, min_periods=10).min()
+        range10_ratio = float(high10.iloc[-1] / low10.iloc[-1]) if pd.notna(high10.iloc[-1]) and pd.notna(low10.iloc[-1]) and low10.iloc[-1] > 0 else np.nan
+        gap_to_250_high = (float(high_250_now.iloc[-1]) / float(dc.iloc[-1]) - 1) * 100 if pd.notna(high_250_now.iloc[-1]) and dc.iloc[-1] > 0 else np.nan
+        prebreakout_contraction = bool(
+            pd.notna(high_250_now.iloc[-1]) and dc.iloc[-1] >= 0.95 * high_250_now.iloc[-1]
+            and dc.iloc[-1] <= high_250_now.iloc[-1]
+            and pd.notna(sma50_daily.iloc[-1]) and pd.notna(sma200_daily_now.iloc[-1])
+            and dc.iloc[-1] > sma50_daily.iloc[-1] > sma200_daily_now.iloc[-1]
+            and pd.notna(sma_vol5.iloc[-1]) and pd.notna(sma_vol50.iloc[-1])
+            and sma_vol5.iloc[-1] < sma_vol50.iloc[-1]
+            and pd.notna(range10_ratio) and range10_ratio < 1.08
+            and pd.notna(avg_vol20_turnover.iloc[-1]) and avg_vol20_turnover.iloc[-1] > 10000000
+        )
         ema10 = dclose.ewm(span=10, adjust=False).mean().iloc[-1]
         ema21 = dclose.ewm(span=21, adjust=False).mean().iloc[-1]
         ema55 = dclose.ewm(span=55, adjust=False).mean().iloc[-1]
@@ -467,6 +513,10 @@ def run_explosive_breakout_scan():
             "Fresh B1": bool(fresh_b1), "Base Count": base_count, "4W breakout": bool(breakout), "Breakout level": breakout_level,
             "Volume vs 10W Avg": vol, "13W return %": ret13, "30W slope %": slope_pct,
             "Gap vs 30W %": gap30, "EMA 10>21>55": bool(ema_aligned), "Daily change %": daily_change,
+            "Explosive gap-up": gapup_breakout, "Gap-up %": gap_up_pct,
+            "Daily volume vs prior 50D avg": volume_burst, "Prior 60D range ratio": prior_60_range,
+            "Pre-breakout contraction": prebreakout_contraction, "Gap to 250D high %": gap_to_250_high,
+            "10D range ratio": range10_ratio,
             "Weekly date": weekly.index[-1].strftime("%Y-%m-%d"),
             "Stage start date": stage_start_date.strftime("%Y-%m-%d"),
         })
@@ -590,7 +640,7 @@ def render_explosive_breakout_scanner():
         st.caption("Price history, fundamentals, official NSE filings and supporting news are cached for 6 hours. Catalyst checks run only for the top 30 technical candidates.")
     # Bump this whenever scanner filters or classification rules change. This
     # invalidates old session_state tables that otherwise survive code deployments.
-    scan_version = "official-nse-catalyst-early-b1-v3"
+    scan_version = "official-nse-catalyst-early-b1-gapup-contraction-v4"
     needs_refresh = st.session_state.get("explosive_breakout_scan_version") != scan_version
     if run or needs_refresh or st.session_state.get("explosive_breakout_scan_loaded", False):
         if run or needs_refresh or "explosive_breakout_scan_data" not in st.session_state:
