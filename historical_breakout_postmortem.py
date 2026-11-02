@@ -419,7 +419,7 @@ def render_historical_breakout_postmortem():
             result = run_historical_breakout_postmortem()
         st.session_state["six_stock_postmortem_data"] = result
         st.session_state["six_stock_postmortem_version"] = "nifty500-early-accumulation-v6"
-    if st.session_state.get("six_stock_postmortem_version") == "nifty500-early-accumulation-v5":
+    if st.session_state.get("six_stock_postmortem_version") == "nifty500-early-accumulation-v6":
         summary, filings, warning = st.session_state.get("six_stock_postmortem_data", (pd.DataFrame(), pd.DataFrame(), ""))
         if warning:
             st.warning(warning)
@@ -462,6 +462,6 @@ def render_historical_breakout_postmortem():
             st.download_button("Download winner NSE filings (CSV)", filings.to_csv(index=False).encode("utf-8"),
                                "nifty500_b1_nse_filings.csv", "text/csv", key="download_six_stock_filings")
         elif not summary.empty:
-            st.caption("No dated NSE filings were returned for the selected event windows. This does not mean no catalyst existed; older filing coverage or NSE access may be incomplete.")
+            st.caption("Official NSE filing lookups are deferred so the price-history and pre-breakout analysis can finish quickly. The price study is complete; filings can be checked separately if needed.")
     else:
         st.caption("Run this separately from the live NSE 500 screener. It does not change any live scanner filters, scores or watchlists.")
