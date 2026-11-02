@@ -344,6 +344,46 @@ def _calculate():
     )
     result["Breakout Quality"] = (rs_points + slope_points + volume_points + sector_points + base_points + extension_points).round(1)
     # Strict list requires strong RS/trend/volume/sector confirmation and avoids extended entries.
+    # v8 historical setup resemblance, applied to ALL current Stage 2 stocks.
+    # Not a calibrated probability; no changes to Weinstein stages or existing quality rules.
+    benchmark_series = weekly["^CRSLDX"] if "^CRSLDX" in weekly else pd.Series(dtype=float)
+    benchmark_13w = ((benchmark_series.iloc[-1] / benchmark_series.iloc[-14] - 1) * 100) if len(benchmark_series) >= 14 and pd.notna(benchmark_series.iloc[-14]) and benchmark_series.iloc[-14] > 0 else np.nan
+    prior_52w_high = weekly.shift(1).tail(52).max()
+    score_map = {}
+    for ticker in weekly.columns:
+        if ticker not in stage_frame or len(weekly[ticker].dropna()) < 30:
+            continue
+        c = weekly[ticker]
+        last = c.iloc[-1]
+        if pd.isna(last) or last <= 0:
+            continue
+        prior12 = c.iloc[-13] if len(c) >= 13 else np.nan
+        prior13 = c.iloc[-14] if len(c) >= 14 else np.nan
+        mom12 = (last / prior12 - 1) * 100 if pd.notna(prior12) and prior12 > 0 else np.nan
+        excess13 = ((last / prior13 - 1) * 100 - benchmark_13w) if pd.notna(prior13) and prior13 > 0 and pd.notna(benchmark_13w) else np.nan
+        ma = ma30_now.get(ticker)
+        slope_value = slope.get(ticker)
+        prior_high = prior_52w_high.get(ticker)
+        high_gap = (last / prior_high - 1) * 100 if pd.notna(prior_high) and prior_high > 0 else np.nan
+        # Duration proxy: consecutive completed weeks in Stage 2, capped at 16.
+        stages = stage_frame[ticker]
+        duration = 0
+        for value in reversed(stages.tolist()):
+            if value != STAGE_2:
+                break
+            duration += 1
+        points = [
+            20 * np.clip(mom12 / 50, 0, 1) if pd.notna(mom12) else 0,
+            25 * np.clip(excess13 / 40, 0, 1) if pd.notna(excess13) else 0,
+            15 * np.clip(((last / ma - 1) * 100) / 40, 0, 1) if pd.notna(ma) and ma > 0 else 0,
+            15 * np.clip(slope_value / 3, 0, 1) if pd.notna(slope_value) else 0,
+            15 * np.clip((high_gap + 20) / 20, 0, 1) if pd.notna(high_gap) else 0,
+            10 * np.clip(min(duration / 4, (16 - duration) / 8), 0, 1),
+        ]
+        score_map[ticker] = (round(float(sum(points))), round(float(mom12), 1) if pd.notna(mom12) else np.nan, round(float(excess13), 1) if pd.notna(excess13) else np.nan)
+    result["v8 Setup Score"] = result["Symbol"].map(lambda x: score_map.get(f"{x}.NS", (np.nan, np.nan, np.nan))[0])
+    result["Prior 12W %"] = result["Symbol"].map(lambda x: score_map.get(f"{x}.NS", (np.nan, np.nan, np.nan))[1])
+    result["13W Excess vs NIFTY500 (pp)"] = result["Symbol"].map(lambda x: score_map.get(f"{x}.NS", (np.nan, np.nan, np.nan))[2])
     result["Strict Quality"] = (
         (result["Stage"] == STAGE_2) & (result["RS Rank"] >= 80)
         & (result["30W Slope %"] > 0) & (result["Volume vs 10W Avg"] >= 1.5)
@@ -401,6 +441,13 @@ def render_nse500_screener():
             else:
                 st.dataframe(quality_frame[quality_cols], use_container_width=True, hide_index=True, height=min(520, 45 + 38 * len(quality_frame)))
                 st.download_button("Download Stage 2 quality list (CSV)", quality_frame[quality_cols].to_csv(index=False).encode("utf-8"), "nse500_stage2_breakout_quality.csv", "text/csv", key="download_nse500_quality")
+
+            st.markdown("#### v8 · Current Stage 2 Winner-Profile Watchlist")
+            st.caption("All current Stage 2 stocks ranked by historical winner-profile resemblance. Uses 12W momentum, 13W excess vs NIFTY 500, 30W position/slope, prior 52W high and a current Stage 2 duration proxy (not historical B1 base duration). Research ranking only; not a probability or buy signal. Missing benchmark data earns no relative-strength points.")
+            v8_frame = current_stage2.sort_values(["v8 Setup Score", "RS Rank"], ascending=[False, False])
+            v8_cols = ["Symbol", "Company", "Sector", "Price", "v8 Setup Score", "Prior 12W %", "13W Excess vs NIFTY500 (pp)", "RS Rank", "30W Slope %", "Gap vs 30W %", "Base Count", "New Stage 2"]
+            st.dataframe(v8_frame[v8_cols], use_container_width=True, hide_index=True, height=400)
+            st.download_button("Download v8 Stage 2 watchlist (CSV)", v8_frame[v8_cols].to_csv(index=False).encode("utf-8"), "nse500_v8_current_stage2.csv", "text/csv", key="download_nse500_v8_stage2")
 
             # Visual market overview: compact cards first, detailed tables remain below.
             counts = results["Stage"].value_counts()
