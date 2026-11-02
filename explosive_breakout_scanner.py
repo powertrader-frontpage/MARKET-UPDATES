@@ -130,7 +130,13 @@ def _nse_announcements_for_symbol(symbol: str, company: str):
         if isinstance(payload, dict):
             payload = payload.get("data", [])
         for item in payload if isinstance(payload, list) else []:
-            headline = str(item.get("desc") or item.get("subject") or item.get("attchmntText") or "").strip()
+            # NSE "desc" is often only a filing category (e.g. "Acquisition").
+            # Preserve category plus the actual subject/attachment description for classification.
+            category = str(item.get("desc") or "").strip()
+            subject = str(item.get("subject") or "").strip()
+            attachment_text = str(item.get("attchmntText") or "").strip()
+            parts = list(dict.fromkeys(x for x in (subject, attachment_text, category) if x))
+            headline = " · ".join(parts)
             published = str(item.get("an_dt") or item.get("broadcastDateTime") or item.get("dt") or "").strip()
             link = str(item.get("attchmntFile") or item.get("fileName") or "").strip()
             if link and link.startswith("/"):
@@ -138,7 +144,8 @@ def _nse_announcements_for_symbol(symbol: str, company: str):
             if headline:
                 rows.append({
                     "Symbol": symbol, "Company": company, "Headline": headline,
-                    "Published": published, "Publisher": "NSE India · Corporate announcement",
+                    "Filing category": category, "Published": published,
+                    "Publisher": "NSE India · Corporate announcement",
                     "Source link": link or "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
                     "Evidence status": "Official exchange filing",
                 })
@@ -324,20 +331,30 @@ def _quarterly_growth(ticker: str):
 
 def _catalyst_label(headline: str):
     text = str(headline).lower()
+    # Routine exchange disclosures are not business catalysts by themselves.
+    routine = ("analysts/institutional investor meet", "investor meet", "investor presentation",
+               "credit rating", "copy of newspaper", "newspaper publication", "outcome of board meeting",
+               "board meeting", "shareholding pattern", "corporate governance", "secretarial compliance",
+               "annual secretarial compliance", "investor grievance", "trading window",
+               "loss of share certificate", "reconciliation of share capital")
+    if any(word in text for word in routine):
+        return "Routine disclosure", 0
     negative = ("fraud", "default", "insolvency", "sebi probe", "search operation", "resignation",
                 "pledge invoked", "downgrade", "plant shutdown", "ban", "regulatory action")
     if any(word in text for word in negative):
         return "Negative / risk", -3
     categories = [
-        (("order win", "orders worth", "contract worth", "purchase order", "work order",
-          "letter of award", "loa", "supply agreement", "customer contract"), "Order / contract", 3),
+        (("orders worth", "order worth", "contract worth", "purchase order worth",
+          "letter of award", "work order awarded", "supply agreement", "customer contract",
+          "receives order", "secures order", "bags order", "order win"), "Order / contract", 3),
         (("guidance raised", "raises guidance", "revised guidance", "outlook raised"), "Guidance upgrade", 3),
-        (("capacity expansion", "new plant", "new facility", "commissioned", "inaugurated",
-          "capacity addition", "commercial production"), "Capacity / commissioning", 2),
+        (("capacity expansion", "new plant", "new facility", "commissioned", "commercial production",
+          "capacity addition", "manufacturing line"), "Capacity / commissioning", 2),
         (("profit rises", "profit jumps", "pat rises", "revenue rises", "earnings growth",
-          "financial results", "audited financial results", "quarterly results"), "Results / earnings", 2),
-        (("approval", "regulatory clearance", "product launch", "new customer", "acquisition",
-          "strategic partnership", "joint venture"), "Business development", 1),
+          "year-on-year profit growth", "year on year revenue growth"), "Results / earnings growth", 2),
+        (("regulatory approval", "product approval", "drug approval", "product launch",
+          "new customer", "strategic partnership", "joint venture", "acquires ",
+          "acquisition of ", "completion of acquisition"), "Business development", 2),
     ]
     for words, label, score in categories:
         if any(word in text for word in words):
@@ -573,7 +590,7 @@ def render_explosive_breakout_scanner():
         st.caption("Price history, fundamentals, official NSE filings and supporting news are cached for 6 hours. Catalyst checks run only for the top 30 technical candidates.")
     # Bump this whenever scanner filters or classification rules change. This
     # invalidates old session_state tables that otherwise survive code deployments.
-    scan_version = "official-nse-catalyst-early-b1-v2"
+    scan_version = "official-nse-catalyst-early-b1-v3"
     needs_refresh = st.session_state.get("explosive_breakout_scan_version") != scan_version
     if run or needs_refresh or st.session_state.get("explosive_breakout_scan_loaded", False):
         if run or needs_refresh or "explosive_breakout_scan_data" not in st.session_state:
