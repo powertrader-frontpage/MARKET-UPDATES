@@ -337,7 +337,10 @@ def run_explosive_breakout_scan():
         base_counts, fresh_b1_event, pine_breakout_levels = _pine_base_progress(weekly["Close"], weekly["High"], weekly["Low"], stage)
         base_count = int(base_counts.iloc[-1])
         fresh_b1 = bool(fresh_b1_event.iloc[-1])
-        breakout_level = float(pine_breakout_levels.iloc[-1]) if pd.notna(pine_breakout_levels.iloc[-1]) else np.nan
+        # For Stage 1 candidates, Pine's Stage-2 base counter is intentionally inactive.
+        # Use the prior completed 4-week high as a watchlist resistance reference instead.
+        breakout_level = (float(pine_breakout_levels.iloc[-1]) if pd.notna(pine_breakout_levels.iloc[-1])
+                          else (float(resistance.iloc[-1]) if pd.notna(resistance.iloc[-1]) else np.nan))
         breakout = bool(base_counts.iloc[-1] > base_counts.iloc[-2])
         vol = float(volume_ratio.iloc[-1]) if pd.notna(volume_ratio.iloc[-1]) else np.nan
         ma30 = float(sma.iloc[-1]) if pd.notna(sma.iloc[-1]) else np.nan
@@ -385,7 +388,7 @@ def run_explosive_breakout_scan():
     resistance_gap = (pd.to_numeric(result["Breakout level"], errors="coerce") / pd.to_numeric(result["Price"], errors="coerce") - 1) * 100
     result["Gap to breakout %"] = resistance_gap
     upcoming = result[
-        result["Stage"].eq("Stage 2")
+        result["Stage"].isin(["Stage 1", "Stage 2"])
         & ~result["4W breakout"]
         & resistance_gap.between(0, 5)
         & (pd.to_numeric(result["13W return %"], errors="coerce") > 0)
@@ -416,7 +419,7 @@ def run_explosive_breakout_scan():
     follow = result[result["Stage"].eq("Stage 2") & result["Base Count"].ge(3) & result["4W breakout"] & ~result["Fresh B1"]].copy()
     resistance_gap = (pd.to_numeric(result["Breakout level"], errors="coerce") / pd.to_numeric(result["Price"], errors="coerce") - 1) * 100
     result["Gap to breakout %"] = resistance_gap
-    upcoming = result[result["Stage"].eq("Stage 2") & ~result["4W breakout"] & resistance_gap.between(0, 5)
+    upcoming = result[result["Stage"].isin(["Stage 1", "Stage 2"]) & ~result["4W breakout"] & resistance_gap.between(0, 5)
                       & (pd.to_numeric(result["13W return %"], errors="coerce") > 0)].copy()
     for frame in (fresh, follow, upcoming):
         frame.sort_values(["Opportunity Score", "Technical Score", "Volume vs 10W Avg"], ascending=False, inplace=True, na_position="last")
@@ -459,11 +462,11 @@ def render_explosive_breakout_scanner():
         if st.session_state.get("explosive_breakout_scan_warning"):
             st.warning(st.session_state["explosive_breakout_scan_warning"])
         fresh, follow, upcoming, all_rows, news = st.session_state.get("explosive_breakout_scan_data", (pd.DataFrame(),)*5)
-        # Final display guard: never render non-Stage-2 rows in the early-watch table,
-        # including results retained in an older Streamlit session.
+        # Final display guard: early-watch candidates may be Stage 1 or Stage 2,
+        # but never Stage 3/4 or unclassified.
         if not upcoming.empty and "Stage" in upcoming.columns:
             upcoming = upcoming.loc[
-                upcoming["Stage"].astype(str).str.strip().str.casefold().eq("stage 2")
+                upcoming["Stage"].astype(str).str.strip().str.casefold().isin(["stage 1", "stage 2"])
             ].copy()
             upcoming.reset_index(drop=True, inplace=True)
         elif not upcoming.empty:
@@ -478,7 +481,7 @@ def render_explosive_breakout_scanner():
             st.info("No fresh B1 breakout met all current conditions. Check Upcoming Breakouts and Stage 2 follow-through below.")
         st.subheader("Upcoming Breakouts · Early watch")
         if upcoming.empty:
-            st.caption("No Stage 2 candidates are currently within 5% of their recent breakout resistance with positive 13-week momentum.")
+            st.caption("No Stage 1/2 candidates are currently within 5% of their recent breakout resistance with positive 13-week momentum.")
         else:
             st.dataframe(upcoming[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Stage", "Gap to breakout %", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %", "Catalyst Score"] if c in upcoming.columns]], use_container_width=True, hide_index=True)
         st.subheader("Strong B2+ · Breakout follow-through")
