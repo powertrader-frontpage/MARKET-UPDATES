@@ -81,7 +81,16 @@ def _weekly_stage_and_b1(daily: pd.DataFrame):
     sma = close.rolling(30, min_periods=30).mean()
     prev_close = close.shift(1)
     tr = pd.concat([(high-low), (high-prev_close).abs(), (low-prev_close).abs()], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1/14, adjust=False, min_periods=14).mean()
+    # Match TradingView ta.rma(): SMA seed, then Wilder recursive smoothing.
+    atr = pd.Series(np.nan, index=tr.index, dtype="float64")
+    valid_tr = tr.dropna()
+    if len(valid_tr) >= 14:
+        seed_pos = tr.index.get_loc(valid_tr.index[13])
+        atr.iloc[seed_pos] = float(valid_tr.iloc[:14].mean())
+        for pos in range(seed_pos + 1, len(tr)):
+            current, previous = tr.iloc[pos], atr.iloc[pos - 1]
+            if pd.notna(current) and pd.notna(previous):
+                atr.iloc[pos] = previous + (float(current) - previous) / 14.0
     slope = sma - sma.shift(2)
     flat = slope.abs() < atr * 0.05
     stage = pd.Series("Stage 1", index=weekly.index, dtype="object")
@@ -217,74 +226,86 @@ def _performance_metrics(daily: pd.DataFrame, event_date: pd.Timestamp, event_pr
 
 
 def run_historical_breakout_postmortem():
-    prices = _history_5y(tuple(BENCHMARK_STOCKS))
+    # Use the current official NIFTY 500 constituent list, not a winners-only list.
+    try:
+        from nse500_screener import _constituents
+        universe = _constituents()[["Symbol", "Company"]].drop_duplicates("Symbol")
+    except Exception as exc:
+        return pd.DataFrame(), pd.DataFrame(), f"Could not load current NIFTY 500 constituents ({exc.__class__.__name__})."
+    symbols = tuple(universe["Symbol"].astype(str).str.strip().tolist())
+    prices = _history_5y(symbols)
     if prices.empty:
         return pd.DataFrame(), pd.DataFrame(), "Yahoo Finance returned no 5-year price history."
     benchmark = prices[prices["Ticker"] == "^CRSLDX"].copy()
-    summary, filings, warnings = [], [], []
-    for symbol, company in BENCHMARK_STOCKS.items():
+    company_map = dict(zip(universe["Symbol"], universe["Company"]))
+    candidates, warnings = [], []
+    for symbol in symbols:
         ticker = f"{symbol}.NS"
         daily = prices[prices["Ticker"] == ticker].copy()
         if daily.empty:
-            warnings.append(f"{symbol}: no 5-year daily history returned.")
             continue
         weekly, stages, events, _ = _weekly_stage_and_b1(daily)
-        if weekly.empty or stages.empty:
-            warnings.append(f"{symbol}: insufficient weekly history for the 30-week stage model.")
+        if weekly.empty or stages.empty or not events:
             continue
-        stage2_positions = np.flatnonzero(stages.eq("Stage 2").to_numpy())
-        first_stage2 = weekly.index[stage2_positions[0]] if len(stage2_positions) else pd.NaT
-        first_b1 = events[0] if events else None
-        row = {"Symbol": symbol, "Company": company,
-               "First Stage 2 date (5Y)": first_stage2.strftime("%Y-%m-%d") if pd.notna(first_stage2) else "Not found"}
-        if first_b1:
-            event_date = pd.Timestamp(first_b1["date"])
-            row.update({
-                "First valid B1 date": event_date.strftime("%Y-%m-%d"),
-                "B1 close": round(first_b1["price"], 2),
-                "Prior base resistance": round(first_b1["resistance"], 2),
-                "Base duration (weeks)": first_b1["base_weeks"],
-                "Base range %": round(first_b1["base_range_pct"], 1),
-                "Breakout volume / 10W avg": round(first_b1["volume_vs_10w"], 2) if pd.notna(first_b1["volume_vs_10w"]) else np.nan,
-            })
-            row.update(_performance_metrics(daily, event_date, first_b1["price"], benchmark))
-            found, warning = _official_filings(symbol, event_date.strftime("%Y-%m-%d"))
-            filings.extend(found)
-            if warning:
-                warnings.append(warning)
-        else:
-            row.update({"First valid B1 date": "Not found in 5Y sample"})
-        summary.append(row)
-    summary_df = pd.DataFrame(summary)
+        first_stage2_positions = np.flatnonzero(stages.eq("Stage 2").to_numpy())
+        first_stage2 = weekly.index[first_stage2_positions[0]] if len(first_stage2_positions) else pd.NaT
+        event = events[0]
+        event_date = pd.Timestamp(event["date"])
+        row = {
+            "Symbol": symbol,
+            "Company": company_map.get(symbol, symbol),
+            "First Stage 2 observed (5Y)": first_stage2.strftime("%Y-%m-%d") if pd.notna(first_stage2) else "Not found",
+            "First valid B1 date (5Y)": event_date.strftime("%Y-%m-%d"),
+            "B1 close": round(event["price"], 2),
+            "Prior base resistance": round(event["resistance"], 2),
+            "Base duration (weeks)": event["base_weeks"],
+            "Base range %": round(event["base_range_pct"], 1),
+            "Breakout volume / 10W avg": round(event["volume_vs_10w"], 2) if pd.notna(event["volume_vs_10w"]) else np.nan,
+        }
+        row.update(_performance_metrics(daily, event_date, event["price"], benchmark))
+        candidates.append((event_date, symbol, row))
+    if not candidates:
+        return pd.DataFrame(), pd.DataFrame(), "No valid B1 breakouts were found in the current NIFTY 500 five-year sample."
+    # Recent 50 events create a reproducible cohort and retain failures as well as winners.
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    selected = candidates[:50]
+    summary = pd.DataFrame([item[2] for item in selected]).sort_values("First valid B1 date (5Y)", ascending=False)
+    filings = []
+    for _, symbol, row in selected:
+        found, warning = _official_filings(symbol, row["First valid B1 date (5Y)"])
+        filings.extend(found)
+        if warning:
+            warnings.append(warning)
     filing_df = pd.DataFrame(filings)
     if not filing_df.empty:
         filing_df = filing_df.sort_values(["Symbol", "Filing date"])
-    return summary_df, filing_df, " · ".join(warnings)
+    warnings.insert(0, f"Sample: {len(summary)} most recent first-B1 events among current NIFTY 500 constituents, within available five-year history. This is not a point-in-time historical constituent universe.")
+    return summary, filing_df, " · ".join(warnings)
 
 
 def render_historical_breakout_postmortem():
-    st.subheader("Historical Breakout Post-Mortem · Six NSE 500 leaders")
-    st.caption("Five-year replay of CUPID, STLTECH, HFCL, LAURUSLABS, ATHERENERG and WELCORP. Uses the same completed-week Weinstein 30W stage model and Pine base/B1 rules as the NSE 500 screener. Adjusted daily prices are used for corporate-action continuity.")
-    st.info("This is a six-stock case study, not a statistically validated strategy. A dated filing near a breakout is evidence to investigate, not proof that it caused the move.")
-    if st.button("Run / refresh 5-year post-mortem", key="run_six_stock_postmortem"):
-        with st.spinner("Replaying five years of weekly price history and checking NSE filings…"):
+    st.subheader("Historical Breakout Post-Mortem · NIFTY 500 B1 sample")
+    st.caption("Five-year replay across the current NIFTY 500 constituents. Analyses up to 50 of the most recent first-valid B1 events, including failed and successful breakouts. Uses completed-week Weinstein 30W stages and Pine base/B1 rules, with adjusted daily prices.")
+    st.info("This is a historical sample case study, not a statistically validated strategy. A dated filing near a breakout is evidence to investigate, not proof that it caused the move.")
+    if st.button("Run / refresh NIFTY 500 B1 study", key="run_six_stock_postmortem"):
+        with st.spinner("Scanning five years of NIFTY 500 price history and checking NSE filings for the selected sample…"):
             result = run_historical_breakout_postmortem()
         st.session_state["six_stock_postmortem_data"] = result
-        st.session_state["six_stock_postmortem_version"] = "six-stock-b1-postmortem-v1"
-    if st.session_state.get("six_stock_postmortem_version") == "six-stock-b1-postmortem-v1":
+        st.session_state["six_stock_postmortem_version"] = "nifty500-b1-postmortem-v2"
+    if st.session_state.get("six_stock_postmortem_version") == "nifty500-b1-postmortem-v2":
         summary, filings, warning = st.session_state.get("six_stock_postmortem_data", (pd.DataFrame(), pd.DataFrame(), ""))
         if warning:
             st.warning(warning)
         if not summary.empty:
             st.dataframe(summary, use_container_width=True, hide_index=True)
             st.download_button("Download six-stock post-mortem (CSV)", summary.to_csv(index=False).encode("utf-8"),
-                               "six_stock_historical_b1_postmortem.csv", "text/csv", key="download_six_stock_postmortem")
+                               "nifty500_historical_b1_postmortem.csv", "text/csv", key="download_six_stock_postmortem")
         if not filings.empty:
             st.markdown("**Official NSE filings within ±180 days of each first B1**")
             st.dataframe(filings, use_container_width=True, hide_index=True,
                          column_config={"Official source": st.column_config.LinkColumn("Official source")})
             st.download_button("Download historical NSE filings (CSV)", filings.to_csv(index=False).encode("utf-8"),
-                               "six_stock_b1_nse_filings.csv", "text/csv", key="download_six_stock_filings")
+                               "nifty500_b1_nse_filings.csv", "text/csv", key="download_six_stock_filings")
         elif not summary.empty:
             st.caption("No dated NSE filings were returned for the selected event windows. This does not mean no catalyst existed; older filing coverage or NSE access may be incomplete.")
     else:
