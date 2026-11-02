@@ -200,6 +200,7 @@ def _pine_base_progress(close, high, low, stage_series, min_advance_pct=10.0, mi
             base_start = i
             counts.append(count)
             fresh_first_breakout.append(False)
+            breakout_levels.append(h)
             continue
         prior_base_high = base_high
         base_low = min(base_low, l)
@@ -208,8 +209,9 @@ def _pine_base_progress(close, high, low, stage_series, min_advance_pct=10.0, mi
         range_pct = ((base_high - base_low) / base_low * 100) if base_low > 0 else 0.0
         duration_ok = duration >= min_base_weeks or (duration >= 2 and range_pct >= 90.0)
         advance_ok = pd.notna(last_breakout) and last_breakout > 0 and ((c / last_breakout - 1) * 100) >= min_advance_pct
-        breakout_level = prior_base_high if c > prior_base_high and duration_ok and advance_ok else np.nan
-        if pd.notna(breakout_level):
+        breakout_level = prior_base_high
+        breakout_event = c > prior_base_high and duration_ok and advance_ok
+        if breakout_event:
             count += 1
             base_low, base_high = l, h
             last_breakout = c
@@ -336,7 +338,7 @@ def run_explosive_breakout_scan():
         base_count = int(base_counts.iloc[-1])
         fresh_b1 = bool(fresh_b1_event.iloc[-1])
         breakout_level = float(pine_breakout_levels.iloc[-1]) if pd.notna(pine_breakout_levels.iloc[-1]) else np.nan
-        breakout = bool(pd.notna(breakout_level))
+        breakout = bool(base_counts.iloc[-1] > base_counts.iloc[-2])
         vol = float(volume_ratio.iloc[-1]) if pd.notna(volume_ratio.iloc[-1]) else np.nan
         ma30 = float(sma.iloc[-1]) if pd.notna(sma.iloc[-1]) else np.nan
         slope_pct = float((sma.iloc[-1] / sma.iloc[-3] - 1) * 100) if len(sma) >= 3 and pd.notna(sma.iloc[-3]) and sma.iloc[-3] else np.nan
