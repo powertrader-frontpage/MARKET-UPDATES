@@ -333,6 +333,30 @@ def _sector_strength_at_event(prices: pd.DataFrame, sector_map: dict, sector: st
                 result[f"Sector excess vs NIFTY 500 {weeks}W (pp)"] = round(median_return - benchmark_return, 1)
     return result
 
+
+def _winner_setup_score(row: dict) -> int:
+    """Exploratory 0-100 B1 setup score; points are not calibrated probabilities."""
+    def number(key):
+        try:
+            value = float(row.get(key, np.nan))
+            return value if np.isfinite(value) else np.nan
+        except (TypeError, ValueError):
+            return np.nan
+    score = 0.0
+    value = number("Prior 12W return %")
+    if pd.notna(value): score += 20 * np.clip(value / 50.0, 0, 1)
+    value = number("Prior 13W excess vs NIFTY 500 (pp)")
+    if pd.notna(value): score += 25 * np.clip(value / 40.0, 0, 1)
+    value = number("B1 vs 30W avg %")
+    if pd.notna(value): score += 15 * np.clip(value / 40.0, 0, 1)
+    value = number("30W slope at B1 %")
+    if pd.notna(value): score += 15 * np.clip(value / 3.0, 0, 1)
+    value = number("Prior 52W high gap %")
+    if pd.notna(value): score += 15 * np.clip((value + 20.0) / 20.0, 0, 1)
+    value = number("Base duration (weeks)")
+    if pd.notna(value): score += 10 * np.clip(min(value / 4.0, (16.0 - value) / 8.0), 0, 1)
+    return int(round(score))
+
 def run_historical_breakout_postmortem():
     # Winners are selected by subsequent historical performance, then traced backwards to B1.
     try:
@@ -366,7 +390,7 @@ def run_historical_breakout_postmortem():
             if not valid:
                 observed = metrics.get("52W return %", np.nan)
                 if pd.notna(observed) and observed < 30:
-                    failed_candidates.append((symbol, event_date, event, daily.copy(), weekly.copy(), observed))
+                    failed_candidates.append((symbol, event_date, event, observed))
                 continue
             best_horizon, best_return = max(valid, key=lambda item: item[1])
             pre = _pre_breakout_context(daily, weekly, event_date, event["price"], benchmark)
@@ -385,6 +409,7 @@ def run_historical_breakout_postmortem():
             }
             row.update(pre)
             row.update(metrics)
+            row["Winner setup score / 100"] = _winner_setup_score(row)
             qualifying.append((symbol, event_date, row))
     if not qualifying:
         return pd.DataFrame(), pd.DataFrame(), "No B1 events followed by a 100% gain within 26, 52 or 78 weeks were found in the available five-year sample.", pd.DataFrame()
@@ -407,10 +432,13 @@ def run_historical_breakout_postmortem():
     for item in sorted(failed_candidates, key=lambda x: x[1], reverse=True):
         failed_by_symbol.setdefault(item[0], item)
     failed_rows = []
-    for symbol, event_date, event, daily, weekly, observed in list(failed_by_symbol.values())[:20]:
+    for symbol, event_date, event, observed in list(failed_by_symbol.values())[:20]:
+        daily = prices[prices["Ticker"] == f"{symbol}.NS"].copy()
+        weekly, _, _, _ = _weekly_stage_and_b1(daily)
         row = {"Symbol": symbol, "B1 date": pd.Timestamp(event_date).strftime("%Y-%m-%d"), "52W return %": round(float(observed), 1), "Base duration (weeks)": event["base_weeks"], "Base range %": round(event["base_range_pct"], 1), "Breakout volume / 10W avg": round(event["volume_vs_10w"], 2) if pd.notna(event["volume_vs_10w"]) else np.nan}
         row.update(_pre_breakout_context(daily, weekly, event_date, event["price"], benchmark))
         row.update(_early_accumulation_context(daily, weekly, event_date, benchmark))
+        row["Winner setup score / 100"] = _winner_setup_score(row)
         failed_rows.append(row)
     failures = pd.DataFrame(failed_rows)
     # Historical NSE filing requests are network-heavy; load them separately on demand.
@@ -432,14 +460,15 @@ def render_historical_breakout_postmortem():
         with st.spinner("Scanning five years for historical 100%+ winners, tracing B1 dates and checking NSE filings…"):
             result = run_historical_breakout_postmortem()
         st.session_state["six_stock_postmortem_data"] = result
-        st.session_state["six_stock_postmortem_version"] = "nifty500-winner-failure-v7"
-    if st.session_state.get("six_stock_postmortem_version") == "nifty500-winner-failure-v7":
+        st.session_state["six_stock_postmortem_version"] = "nifty500-winner-failure-v8"
+    if st.session_state.get("six_stock_postmortem_version") == "nifty500-winner-failure-v8":
         summary, filings, warning, failures = st.session_state.get("six_stock_postmortem_data", (pd.DataFrame(), pd.DataFrame(), "", pd.DataFrame()))
         if warning:
             st.warning(warning)
         if not summary.empty:
             winner_tab, signature_tab, accumulation_tab, comparison_tab = st.tabs(["Explosive Winners", "Pre-Breakout Signature Analysis", "Early Accumulation Detection", "Winner vs Failed B1"])
             with winner_tab:
+                st.caption("Winner setup score is an exploratory 0–100 ranking of the B1 conditions; it is not a probability or a live buy signal.")
                 st.dataframe(summary, use_container_width=True, hide_index=True)
                 st.download_button("Download explosive winners study (CSV)", summary.to_csv(index=False).encode("utf-8"),
                                    "nifty500_explosive_winners_b1_study.csv", "text/csv", key="download_six_stock_postmortem")
@@ -470,17 +499,20 @@ def render_historical_breakout_postmortem():
                 st.download_button("Download early accumulation timeline (CSV)", summary[early_available].to_csv(index=False).encode("utf-8"),
                                    "nifty500_early_accumulation_timeline.csv", "text/csv", key="download_early_accumulation")
             with comparison_tab:
-                st.markdown("**Winner vs failed B1 comparison**")
-                st.caption("Winners: +100% in 26/52/78 weeks. Failed/weak: full 52-week observation and return below +30%. Retrospective research cohorts, not a validated prediction test.")
+                st.markdown("**Winner setup score · Winner vs failed B1**")
+                st.caption("The 0–100 setup score weights pre-B1 momentum (20), relative strength (25), price vs 30W average (15), 30W slope (15), proximity to prior 52W high (15), and base duration (10). It is an exploratory ranking score, NOT a calibrated probability. Winners: +100% in 26/52/78 weeks. Failed/weak: full 52-week observation and return below +30%. Retrospective cohorts, not a validated prediction test.")
                 if not failures.empty:
                     wv = summary.copy(); wv["Cohort"] = "Explosive winners"
                     fv = failures.copy(); fv["Cohort"] = "Failed / weak B1"
-                    cols = [x for x in ["Cohort","Symbol","B1 date","Prior 4W return %","Prior 8W return %","Prior 12W return %","Prior 13W excess vs NIFTY 500 (pp)","B1 vs 30W avg %","30W slope at B1 %","Prior 52W high gap %","Base duration (weeks)","Base range %","Breakout volume / 10W avg"] if x in wv.columns and x in fv.columns]
+                    cols = [x for x in ["Cohort","Symbol","B1 date","Prior 4W return %","Prior 8W return %","Prior 12W return %","Prior 13W excess vs NIFTY 500 (pp)","B1 vs 30W avg %","30W slope at B1 %","Prior 52W high gap %","Base duration (weeks)","Base range %","Breakout volume / 10W avg","Winner setup score / 100"] if x in wv.columns and x in fv.columns]
                     combined = pd.concat([wv[cols], fv[cols]], ignore_index=True)
                     st.dataframe(combined, use_container_width=True, hide_index=True)
                     st.download_button("Download winner vs failed B1 comparison (CSV)", combined.to_csv(index=False).encode("utf-8"), "nifty500_winner_vs_failed_b1.csv", "text/csv", key="download_winner_failure_comparison")
                     metrics_cols = [x for x in cols if x not in ["Cohort","Symbol","B1 date"]]
                     st.dataframe(combined.groupby("Cohort")[metrics_cols].median().round(1), use_container_width=True)
+                    score_gap = combined.groupby("Cohort")["Winner setup score / 100"].median() if "Winner setup score / 100" in combined else pd.Series(dtype=float)
+                    if len(score_gap) == 2:
+                        st.metric("Median setup-score gap · winners minus weak B1", f"{score_gap.get('Explosive winners', 0) - score_gap.get('Failed / weak B1', 0):.1f} points")
                 else:
                     st.warning("No qualifying failed B1 cohort was available in this five-year sample.")
         if not filings.empty:
