@@ -372,6 +372,8 @@ def run_historical_breakout_postmortem():
                 "Best forward return %": round(best_return, 1),
             }
             row.update(pre)
+            row.update(_early_accumulation_context(daily, weekly, event_date, benchmark))
+            row.update(_sector_strength_at_event(prices, sector_map, sector_map.get(symbol, 'Unknown'), event_date, benchmark))
             row.update(metrics)
             qualifying.append((symbol, event_date, row))
     if not qualifying:
@@ -410,7 +412,7 @@ def render_historical_breakout_postmortem():
             result = run_historical_breakout_postmortem()
         st.session_state["six_stock_postmortem_data"] = result
         st.session_state["six_stock_postmortem_version"] = "nifty500-early-accumulation-v5"
-    if st.session_state.get("six_stock_postmortem_version") == "nifty500-prebreakout-signature-v4":
+    if st.session_state.get("six_stock_postmortem_version") == "nifty500-early-accumulation-v5":
         summary, filings, warning = st.session_state.get("six_stock_postmortem_data", (pd.DataFrame(), pd.DataFrame(), ""))
         if warning:
             st.warning(warning)
