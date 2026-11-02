@@ -48,67 +48,6 @@ def _breakout_universe():
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
-def _benchmark_history():
-    """Five-year weekly history for CUPID and Acutaas benchmark replay only."""
-    frames = []
-    for symbol in ("CUPID", "ACUTAAS"):
-        try:
-            raw = yf.download(symbol + ".NS", period="5y", interval="1d", auto_adjust=True,
-                              threads=False, progress=False, actions=False)
-            if raw is None or raw.empty:
-                continue
-            if isinstance(raw.columns, pd.MultiIndex):
-                raw.columns = raw.columns.get_level_values(0)
-            required = {"High", "Low", "Close", "Volume"}
-            if not required.issubset(raw.columns):
-                continue
-            frame = raw.reset_index()
-            date_col = "Date" if "Date" in frame.columns else "Datetime"
-            if date_col not in frame.columns:
-                continue
-            frame = frame.rename(columns={date_col: "Date"})
-            frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
-            for col in required:
-                frame[col] = pd.to_numeric(frame[col], errors="coerce")
-            frame = frame.dropna(subset=["Date", "High", "Low", "Close"])
-            if not frame.empty:
-                frame["Symbol"] = symbol
-                frames.append(frame[["Date", "Symbol", "High", "Low", "Close", "Volume"]])
-        except Exception:
-            continue
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-
-
-def _benchmark_stage_replay(prices: pd.DataFrame):
-    """Replay the same completed-week Weinstein stage and base progression on benchmarks."""
-    rows = []
-    if prices is None or prices.empty:
-        return pd.DataFrame()
-    for symbol, group in prices.groupby("Symbol"):
-        calc = _completed_weekly(group)
-        if calc is None:
-            continue
-        weekly, stage, sma, slope, volume_ratio, _ = calc
-        counts, fresh, levels = _pine_base_progress(weekly["Close"], weekly["High"], weekly["Low"], stage)
-        previous = stage.shift(1)
-        transitions = stage.ne(previous) & stage.isin(["Stage 1", "Stage 2"])
-        for dt in weekly.index[transitions]:
-            pos = weekly.index.get_loc(dt)
-            rows.append({
-                "Symbol": symbol,
-                "Stage": stage.loc[dt],
-                "Stage start": dt.strftime("%Y-%m-%d"),
-                "Weekly close": round(float(weekly["Close"].loc[dt]), 2),
-                "30W SMA": round(float(sma.loc[dt]), 2) if pd.notna(sma.loc[dt]) else np.nan,
-                "30W slope": "Positive" if pd.notna(slope.loc[dt]) and slope.loc[dt] > 0 else "Flat/negative",
-                "Volume vs 10W avg": round(float(volume_ratio.loc[dt]), 2) if pd.notna(volume_ratio.loc[dt]) else np.nan,
-                "Base count": int(counts.loc[dt]),
-                "Fresh first-base breakout": bool(fresh.loc[dt]),
-            })
-    return pd.DataFrame(rows)
-
-
-@st.cache_data(ttl=21600, show_spinner=False)
 def _breakout_prices(tickers: tuple[str, ...]):
     frames = []
     for start in range(0, len(tickers), 80):
@@ -585,17 +524,6 @@ def render_explosive_breakout_scanner():
             st.caption("No additional Stage 2 stocks with later base breakouts currently qualify.")
         else:
             st.dataframe(follow[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Breakout level", "Base Count", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %"] if c in follow.columns]], use_container_width=True, hide_index=True)
-        with st.expander("CUPID & ACUTAAS · Historical benchmark replay", expanded=False):
-            st.caption("Five-year weekly price replay using the same completed-week Stage 1/2 rules and Pine base-count helper. This is a technical chronology; business catalysts must be matched to dated official disclosures before causal conclusions.")
-            benchmark_prices = _benchmark_history()
-            benchmark_stages = _benchmark_stage_replay(benchmark_prices)
-            if benchmark_stages.empty:
-                st.warning("Benchmark price history is unavailable from Yahoo Finance at the moment.")
-            else:
-                selected_benchmark = st.selectbox("Benchmark company", ["CUPID", "ACUTAAS"], key="breakout_benchmark_company")
-                view = benchmark_stages[benchmark_stages["Symbol"] == selected_benchmark].copy()
-                st.dataframe(view.sort_values("Stage start", ascending=False), use_container_width=True, hide_index=True)
-                st.caption("This replay identifies historical Stage 1/2 starts and first-base breakout events. It does not yet establish which company announcement caused a particular move; that requires date-matched exchange filings and earnings releases.")
         with st.expander("Catalyst → Weinstein Stage timeline", expanded=False):
             timeline_cols = ["Symbol", "Company", "Stage", "Stage start date", "Latest catalyst date",
                              "Catalyst type", "Latest catalyst", "Catalyst-to-stage days", "Catalyst timing"]
