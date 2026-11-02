@@ -163,6 +163,147 @@ def _completed_weekly(group: pd.DataFrame):
     return weekly, stage, sma, slope, volume_ratio, prior_base_high
 
 
+
+def _pine_base_progress(close, high, low, stage_series, min_advance_pct=10.0, min_base_weeks=4):
+    """Port of the user's Pine Weinstein base-count rules; first valid breakout is count 2."""
+    count = 0
+    stage2_low = base_low = base_high = last_breakout = np.nan
+    base_start = None
+    counts, fresh_first_breakout = [], []
+    for i in range(len(close)):
+        c, h, l = close.iloc[i], high.iloc[i], low.iloc[i]
+        in_stage2 = stage_series.iloc[i] == "Stage 2"
+        if not in_stage2 or any(pd.isna(v) for v in (c, h, l)):
+            count = 0
+            stage2_low = base_low = base_high = last_breakout = np.nan
+            base_start = None
+            counts.append(0)
+            fresh_first_breakout.append(False)
+            continue
+        prior_count = count
+        if count == 0:
+            count = 1
+            stage2_low = l
+            base_low, base_high = l, h
+            last_breakout = h
+            base_start = i
+            counts.append(count)
+            fresh_first_breakout.append(False)
+            continue
+        if l < stage2_low:
+            count = 1
+            stage2_low = l
+            base_low, base_high = l, h
+            last_breakout = h
+            base_start = i
+            counts.append(count)
+            fresh_first_breakout.append(False)
+            continue
+        prior_base_high = base_high
+        base_low = min(base_low, l)
+        base_high = max(base_high, h)
+        duration = i - base_start
+        range_pct = ((base_high - base_low) / base_low * 100) if base_low > 0 else 0.0
+        duration_ok = duration >= min_base_weeks or (duration >= 2 and range_pct >= 90.0)
+        advance_ok = pd.notna(last_breakout) and last_breakout > 0 and ((c / last_breakout - 1) * 100) >= min_advance_pct
+        if c > prior_base_high and duration_ok and advance_ok:
+            count += 1
+            base_low, base_high = l, h
+            last_breakout = c
+            base_start = i
+        counts.append(count)
+        fresh_first_breakout.append(prior_count == 1 and count == 2)
+    return pd.Series(counts, index=close.index), pd.Series(fresh_first_breakout, index=close.index)
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def _quarterly_growth(ticker: str):
+    """Yahoo quarterly fundamentals; blank metrics are retained when source coverage is inadequate."""
+    try:
+        q = yf.Ticker(ticker).quarterly_income_stmt
+        if q is None or q.empty:
+            return {}
+        q = q.copy()
+        q.columns = pd.to_datetime(q.columns, errors="coerce")
+        q = q.loc[:, ~q.columns.isna()].sort_index(axis=1, ascending=False)
+        if q.shape[1] < 5:
+            return {}
+        def metric(names, col):
+            for name in names:
+                if name in q.index:
+                    value = pd.to_numeric(q.loc[name, col], errors="coerce")
+                    if pd.notna(value):
+                        return float(value)
+            return np.nan
+        rev_names = ["Total Revenue", "Operating Revenue", "Revenue"]
+        profit_names = ["Net Income", "Net Income Common Stockholders", "Net Income From Continuing Operation Net Minority Interest"]
+        op_names = ["Operating Income", "EBIT"]
+        rev_now, rev_yoy_base = metric(rev_names, q.columns[0]), metric(rev_names, q.columns[4])
+        profit_now, profit_yoy_base = metric(profit_names, q.columns[0]), metric(profit_names, q.columns[4])
+        op_now, op_yoy = metric(op_names, q.columns[0]), metric(op_names, q.columns[4])
+        sales_growth = (rev_now / rev_yoy_base - 1) * 100 if np.isfinite(rev_now) and np.isfinite(rev_yoy_base) and rev_yoy_base > 0 else np.nan
+        profit_growth = (profit_now / profit_yoy_base - 1) * 100 if np.isfinite(profit_now) and np.isfinite(profit_yoy_base) and profit_yoy_base > 0 else np.nan
+        margin_now = op_now / rev_now * 100 if np.isfinite(op_now) and np.isfinite(rev_now) and rev_now > 0 else np.nan
+        margin_yoy = op_yoy / rev_yoy_base * 100 if np.isfinite(op_yoy) and np.isfinite(rev_yoy_base) and rev_yoy_base > 0 else np.nan
+        loss_recovery = bool(np.isfinite(profit_now) and np.isfinite(profit_yoy_base) and profit_now > 0 and profit_yoy_base < 0)
+        return {
+            "Sales growth YoY %": sales_growth, "Profit growth YoY %": profit_growth,
+            "Operating margin %": margin_now,
+            "Margin expansion YoY (pp)": margin_now - margin_yoy if np.isfinite(margin_now) and np.isfinite(margin_yoy) else np.nan,
+            "Loss to profit": loss_recovery,
+        }
+    except Exception:
+        return {}
+
+
+def _catalyst_label(headline: str):
+    text = str(headline).lower()
+    negative = ("fraud", "default", "insolvency", "sebi probe", "search operation", "resignation", "pledge invoked", "downgrade", "plant shutdown", "ban")
+    if any(word in text for word in negative):
+        return "Negative / risk", -3
+    categories = [
+        (("order win", "orders worth", "contract worth", "purchase order", "work order", "supply agreement"), "Order / contract", 3),
+        (("guidance raised", "raises guidance", "revised guidance", "outlook raised"), "Guidance upgrade", 3),
+        (("capacity expansion", "new plant", "new facility", "commissioned", "inaugurated", "capacity addition"), "Capacity expansion", 2),
+        (("profit rises", "profit jumps", "pat rises", "revenue rises", "earnings growth", "results"), "Results / earnings", 2),
+        (("approval", "regulatory clearance", "product launch", "new customer", "acquisition"), "Business development", 1),
+    ]
+    for words, label, score in categories:
+        if any(word in text for word in words):
+            return label, score
+    return "General coverage", 0
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def _breakout_enrichment(shortlist: tuple[tuple[str, str], ...]):
+    rows = []
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = {pool.submit(_quarterly_growth, symbol + ".NS"): (symbol, company) for symbol, company in shortlist}
+        for future in as_completed(futures):
+            symbol, company = futures[future]
+            try:
+                metrics = future.result() or {}
+                rows.append({"Symbol": symbol, **metrics})
+            except Exception:
+                rows.append({"Symbol": symbol})
+    fundamentals = pd.DataFrame(rows)
+    news = _breakout_news(shortlist)
+    if not news.empty:
+        classified = news["Headline"].map(_catalyst_label)
+        news["Catalyst type"] = [x[0] for x in classified]
+        news["Catalyst points"] = [x[1] for x in classified]
+        news["_published"] = pd.to_datetime(news["Published"], errors="coerce", utc=True)
+        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=90)
+        recent = news[news["_published"] >= cutoff].copy()
+        if not recent.empty:
+            scores = recent.groupby("Symbol")["Catalyst points"].max().clip(-3, 3)
+            news_scores = scores.rename("News catalyst score").reset_index()
+            fundamentals = fundamentals.merge(news_scores, on="Symbol", how="outer")
+        news = news.drop(columns=["_published"])
+    if "News catalyst score" not in fundamentals:
+        fundamentals["News catalyst score"] = 0
+    return fundamentals, news
+
 def run_explosive_breakout_scan():
     universe, warning = _breakout_universe()
     if universe.empty:
@@ -186,7 +327,9 @@ def run_explosive_breakout_scan():
         close = float(weekly["Close"].iloc[i])
         prior_stage = stage.iloc[-2]
         current_stage = stage.iloc[-1]
-        b1_transition = prior_stage != "Stage 2" and current_stage == "Stage 2"
+        base_counts, fresh_b1_event = _pine_base_progress(weekly["Close"], weekly["High"], weekly["Low"], stage)
+        base_count = int(base_counts.iloc[-1])
+        fresh_b1 = bool(fresh_b1_event.iloc[-1])
         breakout_level = float(resistance.iloc[-1]) if pd.notna(resistance.iloc[-1]) else np.nan
         breakout = pd.notna(breakout_level) and close > breakout_level
         vol = float(volume_ratio.iloc[-1]) if pd.notna(volume_ratio.iloc[-1]) else np.nan
@@ -205,7 +348,7 @@ def run_explosive_breakout_scan():
         records.append({
             "Symbol": info["Symbol"], "Company": info["Company"], "Segment": info["Segment"], "Sector": info["Sector"],
             "Price": close, "Stage": current_stage, "Previous Stage": prior_stage,
-            "Fresh B1": bool(b1_transition), "4W breakout": bool(breakout), "Breakout level": breakout_level,
+            "Fresh B1": bool(fresh_b1), "Base Count": base_count, "4W breakout": bool(breakout), "Breakout level": breakout_level,
             "Volume vs 10W Avg": vol, "13W return %": ret13, "30W slope %": slope_pct,
             "Gap vs 30W %": gap30, "EMA 10>21>55": bool(ema_aligned), "Daily change %": daily_change,
             "Weekly date": weekly.index[-1].strftime("%Y-%m-%d"),
@@ -229,7 +372,7 @@ def run_explosive_breakout_scan():
         default="Stage 2 watch"
     )
     fresh = result[result["Fresh B1"] & result["4W breakout"]].copy()
-    follow = result[result["Stage"].eq("Stage 2") & result["4W breakout"] & ~result["Fresh B1"]].copy()
+    follow = result[result["Stage"].eq("Stage 2") & result["Base Count"].ge(3) & result["4W breakout"] & ~result["Fresh B1"]].copy()
     # Upcoming list is for Stage 2 stocks that have not yet cleared the recent 4-week resistance.
     # Keep candidates close to resistance with positive relative momentum; exclude completed breakouts.
     resistance_gap = (pd.to_numeric(result["Breakout level"], errors="coerce") / pd.to_numeric(result["Price"], errors="coerce") - 1) * 100
@@ -240,10 +383,38 @@ def run_explosive_breakout_scan():
         & resistance_gap.between(0, 5)
         & (pd.to_numeric(result["13W return %"], errors="coerce") > 0)
     ].copy()
+    # Enrich only the top 30 technical names to avoid hundreds of fundamentals/news requests.
+    shortlist_df = result.sort_values("Technical Score", ascending=False).head(30)
+    pairs = tuple((str(row["Symbol"]), str(row["Company"])) for _, row in shortlist_df.iterrows())
+    fundamentals, news = _breakout_enrichment(pairs) if pairs else (pd.DataFrame(), pd.DataFrame())
+    if not fundamentals.empty:
+        result = result.merge(fundamentals, on="Symbol", how="left")
+        sales = pd.to_numeric(result.get("Sales growth YoY %"), errors="coerce")
+        profit = pd.to_numeric(result.get("Profit growth YoY %"), errors="coerce")
+        margin = pd.to_numeric(result.get("Margin expansion YoY (pp)"), errors="coerce")
+        fundamental_score = (sales.clip(0, 50).fillna(0) / 50 * 7
+                             + profit.clip(0, 75).fillna(0) / 75 * 6
+                             + margin.clip(0, 10).fillna(0) / 10 * 2)
+        fundamental_score += result.get("Loss to profit", pd.Series(False, index=result.index)).fillna(False).astype(bool) * 2
+        result["Fundamental Score"] = fundamental_score.clip(0, 15).round(1)
+    else:
+        result["Fundamental Score"] = 0.0
+    catalyst = pd.to_numeric(result.get("News catalyst score", pd.Series(0, index=result.index)), errors="coerce").fillna(0)
+    result["Catalyst Score"] = catalyst.clip(-3, 3).map(lambda x: round((x + 3) / 6 * 10, 1))
+    # Keep technical evidence dominant; fundamentals and news add confirmation rather than vetoing early breakouts.
+    result["Opportunity Score"] = (result["Technical Score"] * 0.75
+                                   + result["Fundamental Score"]
+                                   + result["Catalyst Score"] * 0.5).clip(0, 100).round(1)
+    fresh = result[result["Fresh B1"] & result["4W breakout"]].copy()
+    follow = result[result["Stage"].eq("Stage 2") & result["Base Count"].ge(3) & result["4W breakout"] & ~result["Fresh B1"]].copy()
+    resistance_gap = (pd.to_numeric(result["Breakout level"], errors="coerce") / pd.to_numeric(result["Price"], errors="coerce") - 1) * 100
+    result["Gap to breakout %"] = resistance_gap
+    upcoming = result[result["Stage"].eq("Stage 2") & ~result["4W breakout"] & resistance_gap.between(0, 5)
+                      & (pd.to_numeric(result["13W return %"], errors="coerce") > 0)].copy()
     for frame in (fresh, follow, upcoming):
-        frame.sort_values(["Technical Score", "Volume vs 10W Avg", "13W return %"], ascending=False, inplace=True, na_position="last")
+        frame.sort_values(["Opportunity Score", "Technical Score", "Volume vs 10W Avg"], ascending=False, inplace=True, na_position="last")
         frame.reset_index(drop=True, inplace=True)
-    return fresh, follow, warning, upcoming, result
+    return fresh, follow, warning, upcoming, result, news
 
 
 def render_explosive_breakout_scanner():
