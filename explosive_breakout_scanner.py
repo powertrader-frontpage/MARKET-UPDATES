@@ -107,6 +107,65 @@ def _news_for_symbol(symbol: str, company: str):
         return []
 
 
+def _nse_announcements_for_symbol(symbol: str, company: str):
+    """Fetch recent exchange-filed announcements; official NSE source only."""
+    try:
+        session = requests.Session()
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
+        }
+        session.get("https://www.nseindia.com", headers=headers, timeout=8)
+        end = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        start = end - timedelta(days=180)
+        url = "https://www.nseindia.com/api/corporate-announcements"
+        response = session.get(url, params={
+            "index": "equities", "symbol": symbol,
+            "from": start.strftime("%d-%m-%Y"), "to": end.strftime("%d-%m-%Y"),
+        }, headers=headers, timeout=12)
+        response.raise_for_status()
+        payload = response.json()
+        rows = []
+        if isinstance(payload, dict):
+            payload = payload.get("data", [])
+        for item in payload if isinstance(payload, list) else []:
+            headline = str(item.get("desc") or item.get("subject") or item.get("attchmntText") or "").strip()
+            published = str(item.get("an_dt") or item.get("broadcastDateTime") or item.get("dt") or "").strip()
+            link = str(item.get("attchmntFile") or item.get("fileName") or "").strip()
+            if link and link.startswith("/"):
+                link = "https://www.nseindia.com" + link
+            if headline:
+                rows.append({
+                    "Symbol": symbol, "Company": company, "Headline": headline,
+                    "Published": published, "Publisher": "NSE India · Corporate announcement",
+                    "Source link": link or "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
+                    "Evidence status": "Official exchange filing",
+                })
+        return rows
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def _breakout_official_announcements(shortlist: tuple[tuple[str, str], ...]):
+    rows = []
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = {pool.submit(_nse_announcements_for_symbol, symbol, company): symbol
+                   for symbol, company in shortlist}
+        for future in as_completed(futures):
+            try:
+                rows.extend(future.result() or [])
+            except Exception:
+                continue
+    if not rows:
+        return pd.DataFrame()
+    frame = pd.DataFrame(rows)
+    frame["_date"] = pd.to_datetime(frame["Published"], errors="coerce", dayfirst=True, utc=True)
+    frame = frame.sort_values("_date", ascending=False, na_position="last")
+    return frame.drop(columns="_date").drop_duplicates(["Symbol", "Headline"]).reset_index(drop=True)
+
+
 @st.cache_data(ttl=21600, show_spinner=False)
 def _breakout_news(shortlist: tuple[tuple[str, str], ...]):
     rows = []
@@ -265,27 +324,33 @@ def _quarterly_growth(ticker: str):
 
 def _catalyst_label(headline: str):
     text = str(headline).lower()
-    negative = ("fraud", "default", "insolvency", "sebi probe", "search operation", "resignation", "pledge invoked", "downgrade", "plant shutdown", "ban")
+    negative = ("fraud", "default", "insolvency", "sebi probe", "search operation", "resignation",
+                "pledge invoked", "downgrade", "plant shutdown", "ban", "regulatory action")
     if any(word in text for word in negative):
         return "Negative / risk", -3
     categories = [
-        (("order win", "orders worth", "contract worth", "purchase order", "work order", "supply agreement"), "Order / contract", 3),
+        (("order win", "orders worth", "contract worth", "purchase order", "work order",
+          "letter of award", "loa", "supply agreement", "customer contract"), "Order / contract", 3),
         (("guidance raised", "raises guidance", "revised guidance", "outlook raised"), "Guidance upgrade", 3),
-        (("capacity expansion", "new plant", "new facility", "commissioned", "inaugurated", "capacity addition"), "Capacity expansion", 2),
-        (("profit rises", "profit jumps", "pat rises", "revenue rises", "earnings growth", "results"), "Results / earnings", 2),
-        (("approval", "regulatory clearance", "product launch", "new customer", "acquisition"), "Business development", 1),
+        (("capacity expansion", "new plant", "new facility", "commissioned", "inaugurated",
+          "capacity addition", "commercial production"), "Capacity / commissioning", 2),
+        (("profit rises", "profit jumps", "pat rises", "revenue rises", "earnings growth",
+          "financial results", "audited financial results", "quarterly results"), "Results / earnings", 2),
+        (("approval", "regulatory clearance", "product launch", "new customer", "acquisition",
+          "strategic partnership", "joint venture"), "Business development", 1),
     ]
     for words, label, score in categories:
         if any(word in text for word in words):
             return label, score
-    return "General coverage", 0
+    return "Routine / unclassified", 0
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
 def _breakout_enrichment(shortlist: tuple[tuple[str, str], ...]):
     rows = []
     with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = {pool.submit(_quarterly_growth, symbol + ".NS"): (symbol, company) for symbol, company in shortlist}
+        futures = {pool.submit(_quarterly_growth, symbol + ".NS"): (symbol, company)
+                   for symbol, company in shortlist}
         for future in as_completed(futures):
             symbol, company = futures[future]
             try:
@@ -294,22 +359,42 @@ def _breakout_enrichment(shortlist: tuple[tuple[str, str], ...]):
             except Exception:
                 rows.append({"Symbol": symbol})
     fundamentals = pd.DataFrame(rows)
+    official = _breakout_official_announcements(shortlist)
     news = _breakout_news(shortlist)
-    if not news.empty:
-        classified = news["Headline"].map(_catalyst_label)
-        news["Catalyst type"] = [x[0] for x in classified]
-        news["Catalyst points"] = [x[1] for x in classified]
-        news["_published"] = pd.to_datetime(news["Published"], errors="coerce", utc=True)
-        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=90)
-        recent = news[news["_published"] >= cutoff].copy()
+    # Official NSE filings are the only source eligible for "confirmed" catalyst status.
+    if not official.empty:
+        labels = official["Headline"].map(_catalyst_label)
+        official["Catalyst type"] = [x[0] for x in labels]
+        official["Catalyst points"] = [x[1] for x in labels]
+        official["Evidence status"] = np.where(official["Catalyst points"] > 0,
+                                                "Official filing · catalyst match",
+                                                "Official filing · review")
+        official["_published"] = pd.to_datetime(official["Published"], errors="coerce", dayfirst=True, utc=True)
+        recent = official[official["_published"] >= pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=180)]
         if not recent.empty:
-            scores = recent.groupby("Symbol")["Catalyst points"].max().clip(-3, 3)
-            news_scores = scores.rename("News catalyst score").reset_index()
-            fundamentals = fundamentals.merge(news_scores, on="Symbol", how="outer")
-        news = news.drop(columns=["_published"])
-    if "News catalyst score" not in fundamentals:
-        fundamentals["News catalyst score"] = 0
-    return fundamentals, news
+            ranked = recent.sort_values(["Catalyst points", "_published"], ascending=[False, False])
+            best = ranked.drop_duplicates("Symbol")
+            keep = best[["Symbol", "Headline", "Published", "Catalyst type", "Catalyst points",
+                         "Source link", "Evidence status"]].rename(columns={
+                "Headline": "Official catalyst", "Published": "Official catalyst date",
+                "Source link": "Official source"
+            })
+            fundamentals = fundamentals.merge(keep, on="Symbol", how="left")
+            fundamentals["Official catalyst score"] = pd.to_numeric(
+                fundamentals["Catalyst points"], errors="coerce").fillna(0)
+    if not news.empty:
+        labels = news["Headline"].map(_catalyst_label)
+        news["Catalyst type"] = [x[0] for x in labels]
+        news["Catalyst points"] = [x[1] for x in labels]
+        news["Evidence status"] = "Media coverage · not exchange-verified"
+    if not official.empty:
+        combined_news = pd.concat([official, news], ignore_index=True, sort=False) if not news.empty else official
+    else:
+        combined_news = news
+    if "Official catalyst score" not in fundamentals:
+        fundamentals["Official catalyst score"] = 0
+    return fundamentals, combined_news
+
 
 def run_explosive_breakout_scan():
     universe, warning = _breakout_universe()
