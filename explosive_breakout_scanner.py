@@ -400,11 +400,11 @@ def run_explosive_breakout_scan():
     else:
         result["Fundamental Score"] = 0.0
     catalyst = pd.to_numeric(result.get("News catalyst score", pd.Series(0, index=result.index)), errors="coerce").fillna(0)
-    result["Catalyst Score"] = catalyst.clip(-3, 3).map(lambda x: round((x + 3) / 6 * 10, 1))
+    result["Catalyst Score"] = catalyst.clip(-3, 3).map(lambda x: round(x / 3 * 10, 1))
     # Keep technical evidence dominant; fundamentals and news add confirmation rather than vetoing early breakouts.
     result["Opportunity Score"] = (result["Technical Score"] * 0.75
                                    + result["Fundamental Score"]
-                                   + result["Catalyst Score"] * 0.5).clip(0, 100).round(1)
+                                   + result["Catalyst Score"]).clip(0, 100).round(1)
     fresh = result[result["Fresh B1"] & result["4W breakout"]].copy()
     follow = result[result["Stage"].eq("Stage 2") & result["Base Count"].ge(3) & result["4W breakout"] & ~result["Fresh B1"]].copy()
     resistance_gap = (pd.to_numeric(result["Breakout level"], errors="coerce") / pd.to_numeric(result["Price"], errors="coerce") - 1) * 100
