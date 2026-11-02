@@ -459,6 +459,15 @@ def render_explosive_breakout_scanner():
         if st.session_state.get("explosive_breakout_scan_warning"):
             st.warning(st.session_state["explosive_breakout_scan_warning"])
         fresh, follow, upcoming, all_rows, news = st.session_state.get("explosive_breakout_scan_data", (pd.DataFrame(),)*5)
+        # Final display guard: never render non-Stage-2 rows in the early-watch table,
+        # including results retained in an older Streamlit session.
+        if not upcoming.empty and "Stage" in upcoming.columns:
+            upcoming = upcoming.loc[
+                upcoming["Stage"].astype(str).str.strip().str.casefold().eq("stage 2")
+            ].copy()
+            upcoming.reset_index(drop=True, inplace=True)
+        elif not upcoming.empty:
+            upcoming = pd.DataFrame()
         if st.session_state.get("explosive_breakout_scan_time"):
             st.caption("Last scan: " + st.session_state["explosive_breakout_scan_time"])
         if not fresh.empty:
