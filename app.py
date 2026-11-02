@@ -3389,8 +3389,24 @@ def run_turnaround_scan(segments: tuple[str, ...]):
                 continue
     result = pd.DataFrame(found)
     if not result.empty:
-        result["_sort"] = pd.to_numeric(result["Turnaround signals"], errors="coerce")
-        result = result.sort_values(["_sort", "Sales growth YoY %"], ascending=[False, False], na_position="last").drop(columns=["_sort"])
+        # Rank candidates using transparent, capped fundamentals signals so extreme
+        # one-quarter growth does not dominate the entire watchlist.
+        sales = pd.to_numeric(result["Sales growth YoY %"], errors="coerce").clip(lower=0, upper=50).fillna(0)
+        profit = pd.to_numeric(result["Profit growth YoY %"], errors="coerce").clip(lower=0, upper=50).fillna(0)
+        signals = pd.to_numeric(result["Turnaround signals"], errors="coerce").fillna(0).clip(0, 4)
+        margin_improved = result["Margin improved QoQ"].map(lambda value: value is True or str(value).strip().lower() == "true").astype(int)
+        loss_to_profit = result["Profit growth YoY %"].astype(str).str.contains("Loss", case=False, na=False).astype(int)
+        result["Turnaround Score"] = (
+            signals / 4 * 40
+            + sales / 50 * 25
+            + profit / 50 * 25
+            + margin_improved * 10
+            + loss_to_profit * 5
+        ).clip(upper=100).round(1)
+        result = result.sort_values(
+            ["Turnaround Score", "Turnaround signals", "Sales growth YoY %"],
+            ascending=[False, False, False], na_position="last"
+        ).reset_index(drop=True)
     return result, universe_error
 
 st.markdown("""<div style="font-size:clamp(28px,4vw,42px);font-weight:850;letter-spacing:-1.2px;line-height:1.15;margin:8px 0 6px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Turnaround Board</div>""", unsafe_allow_html=True)
@@ -3409,6 +3425,17 @@ with st.expander("Scan small-cap / mid-cap turnaround stocks", expanded=False):
     if (turnaround_scan_clicked or auto_turnaround_scan) and segment_choice:
         with st.spinner("Scanning index constituents for improving fundamentals. This can take a few minutes…"):
             scan_df, scan_warning = run_turnaround_scan(tuple(sorted(segment_choice)))
+        previous_scan = st.session_state.get("auto_turnaround_scan_results", pd.DataFrame())
+        if not scan_df.empty:
+            current_symbols = set(scan_df["Symbol"].astype(str))
+            if isinstance(previous_scan, pd.DataFrame) and not previous_scan.empty and "Symbol" in previous_scan.columns:
+                previous_symbols = set(previous_scan["Symbol"].astype(str))
+                scan_df["Status"] = scan_df["Symbol"].astype(str).map(
+                    lambda symbol: "🆕 NEW" if symbol not in previous_symbols else "Existing"
+                )
+            else:
+                # First scan is the baseline; later scans can identify newly qualifying names.
+                scan_df["Status"] = "Baseline"
         st.session_state["auto_turnaround_scan_results"] = scan_df
         st.session_state["auto_turnaround_scan_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
         st.session_state["auto_turnaround_scan_segments"] = ", ".join(segment_choice)
@@ -3419,8 +3446,10 @@ with st.expander("Scan small-cap / mid-cap turnaround stocks", expanded=False):
     if st.session_state.get("auto_turnaround_scan_warning"):
         st.warning(st.session_state["auto_turnaround_scan_warning"])
     if isinstance(scan_df, pd.DataFrame) and not scan_df.empty:
-        st.success(f"{len(scan_df)} potential turnaround candidate(s) matched the current rules.")
-        st.dataframe(scan_df, use_container_width=True, hide_index=True, height=520)
+        new_count = int(scan_df["Status"].eq("🆕 NEW").sum()) if "Status" in scan_df.columns else 0
+        st.success(f"{len(scan_df)} potential turnaround candidate(s) matched the current rules · {new_count} newly qualifying since the previous scan.")
+        display_cols = ["Status", "Turnaround Score"] + [col for col in scan_df.columns if col not in ("Status", "Turnaround Score")]
+        st.dataframe(scan_df[display_cols], use_container_width=True, hide_index=True, height=520)
         st.download_button("Download turnaround watchlist CSV", scan_df.to_csv(index=False).encode("utf-8"), file_name="small_midcap_turnaround_watchlist.csv", mime="text/csv", key="download_auto_turnaround_csv")
         st.caption("Missing metrics remain blank. Profit growth across a negative comparison base is not calculated; loss-to-profit is flagged separately. Debt, cash flow and valuation are not screened in this first version because quarterly statement coverage is inconsistent.")
     elif "auto_turnaround_scan_time" in st.session_state:
