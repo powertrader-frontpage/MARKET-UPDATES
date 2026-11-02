@@ -420,7 +420,7 @@ def run_explosive_breakout_scan():
 def render_explosive_breakout_scanner():
     st.markdown("""<div style="font-size:clamp(26px,3.5vw,38px);font-weight:850;letter-spacing:-1px;margin:10px 0 8px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">🚀 Explosive Breakout Scanner</div>""", unsafe_allow_html=True)
     st.caption("Nifty Midcap 150 + Nifty Smallcap 250 · Weekly Weinstein stages · Fresh B1 breakouts · Volume and relative-strength ranking · Recent news enrichment")
-    st.info("Scans the full selected index universe. A Fresh B1 is defined here as a completed-week transition into Stage 2 that also clears the recent 4-week high. Verify the chart and exchange filings before acting.")
+    st.info("Uses the weekly Weinstein stage and base-count rules: the first valid breakout after a B1 base is flagged as Fresh B1. Financial results and recent headlines add confirmation; verify material announcements on NSE/BSE.")
     c1, c2 = st.columns([1, 3])
     with c1:
         run = st.button("Scan / refresh breakouts", type="primary", key="run_explosive_breakout_scan")
@@ -431,9 +431,9 @@ def render_explosive_breakout_scanner():
             with st.spinner("Scanning mid-cap and small-cap weekly price history…"):
                 output = run_explosive_breakout_scan()
             # Keep the scan result and the latest-run time in this browser session.
-            if len(output) == 5:
-                fresh, follow, warning, upcoming, all_rows = output
-                st.session_state["explosive_breakout_scan_data"] = (fresh, follow, upcoming, all_rows)
+            if len(output) == 6:
+                fresh, follow, warning, upcoming, all_rows, news = output
+                st.session_state["explosive_breakout_scan_data"] = (fresh, follow, upcoming, all_rows, news)
                 st.session_state["explosive_breakout_scan_warning"] = warning
                 st.session_state["explosive_breakout_scan_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y %H:%M IST")
                 previous = st.session_state.get("explosive_breakout_previous_symbols", set())
@@ -462,7 +462,7 @@ def render_explosive_breakout_scanner():
             st.dataframe(upcoming[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Stage", "Gap to breakout %", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %", "Catalyst Score"] if c in upcoming.columns]], use_container_width=True, hide_index=True)
         st.subheader("Strong B2+ · Breakout follow-through")
         if follow.empty:
-            st.caption("No additional Stage 2 stocks currently clear the recent 4-week high.")
+            st.caption("No additional Stage 2 stocks with later base breakouts currently qualify.")
         else:
             st.dataframe(follow[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Breakout level", "Base Count", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %"] if c in follow.columns]], use_container_width=True, hide_index=True)
         with st.expander("Recent news & catalysts · technical shortlist", expanded=False):
