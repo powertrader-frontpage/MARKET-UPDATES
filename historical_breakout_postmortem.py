@@ -242,7 +242,7 @@ def _pre_breakout_context(daily: pd.DataFrame, weekly: pd.DataFrame, event_date:
         ma30 = wclose.rolling(30, min_periods=30).mean()
         out["B1 vs 30W avg %"] = round((event_price / float(ma30.iloc[-1]) - 1) * 100, 1) if pd.notna(ma30.iloc[-1]) and ma30.iloc[-1] else np.nan
         out["30W slope at B1 %"] = round((float(ma30.iloc[-1]) / float(ma30.iloc[-3]) - 1) * 100, 2) if len(ma30) >= 3 and pd.notna(ma30.iloc[-3]) and ma30.iloc[-3] else np.nan
-        out["Prior 52W high gap %"] = round((event_price / float(wclose.tail(52).max()) - 1) * 100, 1)
+        prior_high_window = wclose.iloc[:-1].tail(52)\n        out["Prior 52W high gap %"] = round((event_price / float(prior_high_window.max()) - 1) * 100, 1) if not prior_high_window.empty and prior_high_window.max() else np.nan
     if not benchmark.empty:
         b = benchmark[benchmark["Date"] <= event_date].sort_values("Date").set_index("Date")["Close"]
         for weeks in (13, 26):
@@ -255,6 +255,35 @@ def _pre_breakout_context(daily: pd.DataFrame, weekly: pd.DataFrame, event_date:
                 out[f"Prior {weeks}W excess vs NIFTY 500 (pp)"] = round(stock_return - index_return, 1)
     return out
 
+
+
+def _sector_strength_at_event(prices: pd.DataFrame, sector_map: dict, sector: str, event_date: pd.Timestamp, benchmark: pd.DataFrame):
+    """Cross-sectional sector median returns, using only closes available by the event date."""
+    sector_returns = {13: [], 26: []}
+    for symbol, member_sector in sector_map.items():
+        if member_sector != sector:
+            continue
+        frame = prices[prices["Ticker"] == f"{symbol}.NS"]
+        if frame.empty:
+            continue
+        series = frame[frame["Date"] <= event_date].sort_values("Date").set_index("Date")["Close"]
+        if series.empty:
+            continue
+        for weeks in (13, 26):
+            prior = series[series.index <= event_date - pd.Timedelta(weeks=weeks)]
+            if not prior.empty and prior.iloc[-1]:
+                sector_returns[weeks].append((float(series.iloc[-1]) / float(prior.iloc[-1]) - 1) * 100)
+    b = benchmark[benchmark["Date"] <= event_date].sort_values("Date").set_index("Date")["Close"] if not benchmark.empty else pd.Series(dtype=float)
+    result = {}
+    for weeks in (13, 26):
+        if sector_returns[weeks]:
+            median_return = float(np.median(sector_returns[weeks]))
+            result[f"Sector median prior {weeks}W return %"] = round(median_return, 1)
+            prior_b = b[b.index <= event_date - pd.Timedelta(weeks=weeks)]
+            if not b.empty and not prior_b.empty and prior_b.iloc[-1]:
+                benchmark_return = (float(b.iloc[-1]) / float(prior_b.iloc[-1]) - 1) * 100
+                result[f"Sector excess vs NIFTY 500 {weeks}W (pp)"] = round(median_return - benchmark_return, 1)
+    return result
 
 def run_historical_breakout_postmortem():
     # Winners are selected by subsequent historical performance, then traced backwards to B1.
@@ -340,15 +369,33 @@ def render_historical_breakout_postmortem():
         with st.spinner("Scanning five years for historical 100%+ winners, tracing B1 dates and checking NSE filings…"):
             result = run_historical_breakout_postmortem()
         st.session_state["six_stock_postmortem_data"] = result
-        st.session_state["six_stock_postmortem_version"] = "nifty500-explosive-winners-v3"
+        st.session_state["six_stock_postmortem_version"] = "nifty500-prebreakout-signature-v4"
     if st.session_state.get("six_stock_postmortem_version") == "nifty500-explosive-winners-v3":
         summary, filings, warning = st.session_state.get("six_stock_postmortem_data", (pd.DataFrame(), pd.DataFrame(), ""))
         if warning:
             st.warning(warning)
         if not summary.empty:
-            st.dataframe(summary, use_container_width=True, hide_index=True)
-            st.download_button("Download explosive winners study (CSV)", summary.to_csv(index=False).encode("utf-8"),
-                               "nifty500_explosive_winners_b1_study.csv", "text/csv", key="download_six_stock_postmortem")
+            winner_tab, signature_tab = st.tabs(["Explosive Winners", "Pre-Breakout Signature Analysis"])
+            with winner_tab:
+                st.dataframe(summary, use_container_width=True, hide_index=True)
+                st.download_button("Download explosive winners study (CSV)", summary.to_csv(index=False).encode("utf-8"),
+                                   "nifty500_explosive_winners_b1_study.csv", "text/csv", key="download_six_stock_postmortem")
+            with signature_tab:
+                st.markdown("**What was happening before the first qualifying B1?**")
+                st.caption("All pre-breakout measurements use price data available on or before the B1 week. Sector strength is the median return of current NIFTY 500 constituents classified in that sector; it is a research proxy, not a historical point-in-time sector index.")
+                signature_cols = [
+                    "Symbol", "Company", "Sector", "B1 date",
+                    "Prior 4W return %", "Prior 8W return %", "Prior 12W return %",
+                    "Prior 13W excess vs NIFTY 500 (pp)", "Prior 26W excess vs NIFTY 500 (pp)",
+                    "Sector median prior 13W return %", "Sector excess vs NIFTY 500 13W (pp)",
+                    "Sector median prior 26W return %", "Sector excess vs NIFTY 500 26W (pp)",
+                    "B1 vs 30W avg %", "30W slope at B1 %", "Prior 52W high gap %",
+                    "Base duration (weeks)", "Base range %", "Breakout volume / 10W avg",
+                ]
+                available_cols = [col for col in signature_cols if col in summary.columns]
+                st.dataframe(summary[available_cols], use_container_width=True, hide_index=True)
+                st.download_button("Download pre-breakout signature (CSV)", summary[available_cols].to_csv(index=False).encode("utf-8"),
+                                   "nifty500_pre_breakout_signature.csv", "text/csv", key="download_pre_breakout_signature")
         if not filings.empty:
             st.markdown("**Official NSE filings within ±180 days of each first B1**")
             st.dataframe(filings, use_container_width=True, hide_index=True,
