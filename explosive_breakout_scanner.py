@@ -334,6 +334,10 @@ def run_explosive_breakout_scan():
         close = float(weekly["Close"].iloc[i])
         prior_stage = stage.iloc[-2]
         current_stage = stage.iloc[-1]
+        # First week of the current uninterrupted Weinstein stage.
+        stage_change_positions = np.flatnonzero(stage.to_numpy() != current_stage)
+        stage_start_pos = int(stage_change_positions[-1] + 1) if len(stage_change_positions) else 0
+        stage_start_date = weekly.index[stage_start_pos]
         base_counts, fresh_b1_event, pine_breakout_levels = _pine_base_progress(weekly["Close"], weekly["High"], weekly["Low"], stage)
         base_count = int(base_counts.iloc[-1])
         fresh_b1 = bool(fresh_b1_event.iloc[-1])
@@ -362,6 +366,7 @@ def run_explosive_breakout_scan():
             "Volume vs 10W Avg": vol, "13W return %": ret13, "30W slope %": slope_pct,
             "Gap vs 30W %": gap30, "EMA 10>21>55": bool(ema_aligned), "Daily change %": daily_change,
             "Weekly date": weekly.index[-1].strftime("%Y-%m-%d"),
+            "Stage start date": stage_start_date.strftime("%Y-%m-%d"),
         })
     result = pd.DataFrame(records)
     if result.empty:
@@ -397,6 +402,36 @@ def run_explosive_breakout_scan():
     shortlist_df = result.sort_values("Technical Score", ascending=False).head(30)
     pairs = tuple((str(row["Symbol"]), str(row["Company"])) for _, row in shortlist_df.iterrows())
     fundamentals, news = _breakout_enrichment(pairs) if pairs else (pd.DataFrame(), pd.DataFrame())
+    # Attach the most recent positive catalyst headline to the technical stage timeline.
+    # This is a timing comparison, not proof that the headline caused the price move.
+    if not news.empty and {"Symbol", "Published", "Headline", "Catalyst type", "Catalyst points"}.issubset(news.columns):
+        news_timeline = news.copy()
+        news_timeline["_catalyst_date"] = pd.to_datetime(news_timeline["Published"], errors="coerce", utc=True)
+        news_timeline = news_timeline[
+            news_timeline["_catalyst_date"].notna()
+            & (pd.to_numeric(news_timeline["Catalyst points"], errors="coerce") > 0)
+        ].sort_values("_catalyst_date", ascending=False)
+        news_timeline = news_timeline.drop_duplicates("Symbol", keep="first")
+        news_timeline = news_timeline[["Symbol", "_catalyst_date", "Catalyst type", "Headline"]].rename(
+            columns={"_catalyst_date": "Latest catalyst date", "Headline": "Latest catalyst"}
+        )
+        result = result.merge(news_timeline, on="Symbol", how="left")
+        result["Latest catalyst date"] = pd.to_datetime(result["Latest catalyst date"], errors="coerce", utc=True)
+        stage_dates = pd.to_datetime(result["Stage start date"], errors="coerce", utc=True)
+        result["Catalyst-to-stage days"] = (stage_dates - result["Latest catalyst date"]).dt.days
+        result["Catalyst timing"] = np.select(
+            [result["Catalyst-to-stage days"].notna() & (result["Catalyst-to-stage days"] > 0),
+             result["Catalyst-to-stage days"].notna() & (result["Catalyst-to-stage days"] <= 0)],
+            ["Catalyst before stage", "Catalyst on/after stage start"],
+            default="No dated positive catalyst found"
+        )
+        result["Latest catalyst date"] = result["Latest catalyst date"].dt.strftime("%Y-%m-%d")
+    else:
+        result["Latest catalyst date"] = np.nan
+        result["Latest catalyst"] = np.nan
+        result["Catalyst type"] = np.nan
+        result["Catalyst-to-stage days"] = np.nan
+        result["Catalyst timing"] = "No dated positive catalyst found"
     if not fundamentals.empty:
         result = result.merge(fundamentals, on="Symbol", how="left")
         sales = pd.to_numeric(result["Sales growth YoY %"], errors="coerce") if "Sales growth YoY %" in result else pd.Series(np.nan, index=result.index)
@@ -438,7 +473,7 @@ def render_explosive_breakout_scanner():
         st.caption("Price history and constituents are cached for 6 hours. News is fetched only for the top technical candidates to limit load.")
     # Bump this whenever scanner filters or classification rules change. This
     # invalidates old session_state tables that otherwise survive code deployments.
-    scan_version = "stage2-only-upcoming-v2"
+    scan_version = "catalyst-stage-timeline-v1"
     needs_refresh = st.session_state.get("explosive_breakout_scan_version") != scan_version
     if run or needs_refresh or st.session_state.get("explosive_breakout_scan_loaded", False):
         if run or needs_refresh or "explosive_breakout_scan_data" not in st.session_state:
@@ -489,6 +524,16 @@ def render_explosive_breakout_scanner():
             st.caption("No additional Stage 2 stocks with later base breakouts currently qualify.")
         else:
             st.dataframe(follow[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Breakout level", "Base Count", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %"] if c in follow.columns]], use_container_width=True, hide_index=True)
+        with st.expander("Catalyst → Weinstein Stage timeline", expanded=False):
+            timeline_cols = ["Symbol", "Company", "Stage", "Stage start date", "Latest catalyst date",
+                             "Catalyst type", "Latest catalyst", "Catalyst-to-stage days", "Catalyst timing"]
+            timeline = all_rows[[c for c in timeline_cols if c in all_rows.columns]].copy() if not all_rows.empty else pd.DataFrame()
+            if not timeline.empty:
+                timeline = timeline[timeline.get("Latest catalyst", pd.Series(index=timeline.index, dtype="object")).notna()]
+                st.dataframe(timeline, use_container_width=True, hide_index=True)
+                st.caption("Catalyst timing compares the latest positive headline found in the technical shortlist with the start of the current uninterrupted Weinstein stage. It is an investigative clue, not proof of causation. News coverage is limited to recent Google News results; verify dates and events against official NSE/BSE filings.")
+            else:
+                st.caption("No dated positive catalyst was found for the current technical shortlist.")
         with st.expander("Recent news & catalysts · technical shortlist", expanded=False):
             if not news.empty:
                 st.dataframe(news, use_container_width=True, hide_index=True, column_config={"Source link": st.column_config.LinkColumn("Source link")})
