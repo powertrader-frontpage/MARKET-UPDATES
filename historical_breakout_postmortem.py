@@ -199,7 +199,7 @@ def _performance_metrics(daily: pd.DataFrame, event_date: pd.Timestamp, event_pr
         return {}
     data = data.set_index("Date")
     out = {}
-    for weeks in (13, 26, 52):
+    for weeks in (13, 26, 52, 78):
         target = event_date + pd.Timedelta(weeks=weeks)
         future = data[data.index >= target]
         out[f"{weeks}W return %"] = round((float(future["Close"].iloc[0]) / event_price - 1) * 100, 1) if not future.empty else np.nan
@@ -246,10 +246,13 @@ def _pre_breakout_context(daily: pd.DataFrame, weekly: pd.DataFrame, event_date:
     if not benchmark.empty:
         b = benchmark[benchmark["Date"] <= event_date].sort_values("Date").set_index("Date")["Close"]
         for weeks in (13, 26):
-            prior = b[b.index <= event_date - pd.Timedelta(weeks=weeks)]
-            if not prior.empty and prior.iloc[-1]:
-                out[f"Prior {weeks}W excess vs NIFTY 500 (pp)"] = round(out.get(f"Prior {weeks}W return %", np.nan) - (event_price * 0 + 0), 1) if False else np.nan
-                # Benchmark-relative return is filled by the caller using the stock's matching prior close.
+            stock_prior = close[close.index <= event_date - pd.Timedelta(weeks=weeks)]
+            index_now = b[b.index <= event_date]
+            index_prior = b[b.index <= event_date - pd.Timedelta(weeks=weeks)]
+            if not stock_prior.empty and not index_now.empty and not index_prior.empty and stock_prior.iloc[-1] and index_prior.iloc[-1]:
+                stock_return = (event_price / float(stock_prior.iloc[-1]) - 1) * 100
+                index_return = (float(index_now.iloc[-1]) / float(index_prior.iloc[-1]) - 1) * 100
+                out[f"Prior {weeks}W excess vs NIFTY 500 (pp)"] = round(stock_return - index_return, 1)
     return out
 
 
