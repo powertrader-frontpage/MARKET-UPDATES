@@ -348,6 +348,7 @@ def run_historical_breakout_postmortem():
     company_map = dict(zip(universe["Symbol"], universe["Company"]))
     sector_map = dict(zip(universe["Symbol"], universe["Sector"]))
     qualifying = []
+    failed_candidates = []
     for symbol in symbols:
         daily = prices[prices["Ticker"] == f"{symbol}.NS"].copy()
         if daily.empty:
@@ -363,6 +364,9 @@ def run_historical_breakout_postmortem():
             horizons = [(h, metrics.get(f"{h}W return %", np.nan)) for h in (26, 52, 78)]
             valid = [(h, value) for h, value in horizons if pd.notna(value) and value >= 100.0]
             if not valid:
+                observed = metrics.get("52W return %", np.nan)
+                if pd.notna(observed) and observed < 30:
+                    failed_candidates.append((symbol, event_date, event, daily.copy(), weekly.copy(), observed))
                 continue
             best_horizon, best_return = max(valid, key=lambda item: item[1])
             pre = _pre_breakout_context(daily, weekly, event_date, event["price"], benchmark)
@@ -399,6 +403,16 @@ def run_historical_breakout_postmortem():
         row.update(_sector_strength_at_event(prices, sector_map, sector_map.get(symbol, "Unknown"), event_date, benchmark))
         enriched_rows.append(row)
     summary = pd.DataFrame(enriched_rows).reset_index(drop=True)
+    failed_by_symbol = {}
+    for item in sorted(failed_candidates, key=lambda x: x[1], reverse=True):
+        failed_by_symbol.setdefault(item[0], item)
+    failed_rows = []
+    for symbol, event_date, event, daily, weekly, observed in list(failed_by_symbol.values())[:20]:
+        row = {"Symbol": symbol, "B1 date": pd.Timestamp(event_date).strftime("%Y-%m-%d"), "52W return %": round(float(observed), 1), "Base duration (weeks)": event["base_weeks"], "Base range %": round(event["base_range_pct"], 1), "Breakout volume / 10W avg": round(event["volume_vs_10w"], 2) if pd.notna(event["volume_vs_10w"]) else np.nan}
+        row.update(_pre_breakout_context(daily, weekly, event_date, event["price"], benchmark))
+        row.update(_early_accumulation_context(daily, weekly, event_date, benchmark))
+        failed_rows.append(row)
+    failures = pd.DataFrame(failed_rows)
     # Historical NSE filing requests are network-heavy; load them separately on demand.
     filing_df = pd.DataFrame()
     note = (
@@ -407,7 +421,7 @@ def run_historical_breakout_postmortem():
         "Universe is today's NIFTY 500 constituents, not point-in-time historical constituents; "
         "the five-year sample can miss older B1 events. Winner selection uses future returns by design."
     )
-    return summary, filing_df, note
+    return summary, filing_df, note, failures
 
 
 def render_historical_breakout_postmortem():
@@ -418,13 +432,13 @@ def render_historical_breakout_postmortem():
         with st.spinner("Scanning five years for historical 100%+ winners, tracing B1 dates and checking NSE filings…"):
             result = run_historical_breakout_postmortem()
         st.session_state["six_stock_postmortem_data"] = result
-        st.session_state["six_stock_postmortem_version"] = "nifty500-early-accumulation-v6"
+        st.session_state["six_stock_postmortem_version"] = "nifty500-winner-failure-v7"
     if st.session_state.get("six_stock_postmortem_version") == "nifty500-early-accumulation-v6":
-        summary, filings, warning = st.session_state.get("six_stock_postmortem_data", (pd.DataFrame(), pd.DataFrame(), ""))
+        summary, filings, warning, failures = st.session_state.get("six_stock_postmortem_data", (pd.DataFrame(), pd.DataFrame(), "", pd.DataFrame()))
         if warning:
             st.warning(warning)
         if not summary.empty:
-            winner_tab, signature_tab, accumulation_tab = st.tabs(["Explosive Winners", "Pre-Breakout Signature Analysis", "Early Accumulation Detection"])
+            winner_tab, signature_tab, accumulation_tab, comparison_tab = st.tabs(["Explosive Winners", "Pre-Breakout Signature Analysis", "Early Accumulation Detection", "Winner vs Failed B1"])
             with winner_tab:
                 st.dataframe(summary, use_container_width=True, hide_index=True)
                 st.download_button("Download explosive winners study (CSV)", summary.to_csv(index=False).encode("utf-8"),
@@ -455,6 +469,20 @@ def render_historical_breakout_postmortem():
                 st.dataframe(summary[early_available], use_container_width=True, hide_index=True)
                 st.download_button("Download early accumulation timeline (CSV)", summary[early_available].to_csv(index=False).encode("utf-8"),
                                    "nifty500_early_accumulation_timeline.csv", "text/csv", key="download_early_accumulation")
+            with comparison_tab:
+                st.markdown("**Winner vs failed B1 comparison**")
+                st.caption("Winners: +100% in 26/52/78 weeks. Failed/weak: full 52-week observation and return below +30%. Retrospective research cohorts, not a validated prediction test.")
+                if not failures.empty:
+                    wv = summary.copy(); wv["Cohort"] = "Explosive winners"
+                    fv = failures.copy(); fv["Cohort"] = "Failed / weak B1"
+                    cols = [x for x in ["Cohort","Symbol","B1 date","Prior 4W return %","Prior 8W return %","Prior 12W return %","Prior 13W excess vs NIFTY 500 (pp)","B1 vs 30W avg %","30W slope at B1 %","Prior 52W high gap %","Base duration (weeks)","Base range %","Breakout volume / 10W avg"] if x in wv.columns and x in fv.columns]
+                    combined = pd.concat([wv[cols], fv[cols]], ignore_index=True)
+                    st.dataframe(combined, use_container_width=True, hide_index=True)
+                    st.download_button("Download winner vs failed B1 comparison (CSV)", combined.to_csv(index=False).encode("utf-8"), "nifty500_winner_vs_failed_b1.csv", "text/csv", key="download_winner_failure_comparison")
+                    metrics_cols = [x for x in cols if x not in ["Cohort","Symbol","B1 date"]]
+                    st.dataframe(combined.groupby("Cohort")[metrics_cols].median().round(1), use_container_width=True)
+                else:
+                    st.warning("No qualifying failed B1 cohort was available in this five-year sample.")
         if not filings.empty:
             st.markdown("**Official NSE filings within ±180 days of each first B1**")
             st.dataframe(filings, use_container_width=True, hide_index=True,
