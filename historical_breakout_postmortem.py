@@ -21,44 +21,52 @@ BENCHMARK_STOCKS = {
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
-def _history_5y(symbols: tuple[str, ...]) -> pd.DataFrame:
+def _history_batch(batch: tuple[str, ...]) -> pd.DataFrame:
+    """Cache each Yahoo batch independently so completed batches survive interrupted runs."""
     frames = []
-    tickers = [f"{symbol}.NS" for symbol in symbols] + ["^CRSLDX"]
-    for start in range(0, len(tickers), 80):
-        batch = tickers[start:start + 80]
-        try:
-            raw = yf.download(
-                batch, period="5y", interval="1d", auto_adjust=True,
-                group_by="ticker", threads=False, progress=False, actions=False,
-            )
-            if raw is None or raw.empty:
-                continue
-            for ticker in batch:
-                try:
-                    part = raw[ticker].copy() if isinstance(raw.columns, pd.MultiIndex) and ticker in raw.columns.get_level_values(0) else raw.copy()
-                    if "Close" not in part.columns:
-                        continue
-                    part = part.reset_index()
-                    date_col = "Date" if "Date" in part.columns else "Datetime"
-                    if date_col not in part.columns:
-                        continue
-                    part = part.rename(columns={date_col: "Date"})
-                    part["Date"] = pd.to_datetime(part["Date"], errors="coerce")
-                    for col in ["Open", "High", "Low", "Close", "Volume"]:
-                        if col in part:
-                            part[col] = pd.to_numeric(part[col], errors="coerce")
-                    if not {"High", "Low", "Close"}.issubset(part.columns):
-                        continue
-                    part = part.dropna(subset=["Date", "High", "Low", "Close"])
-                    if not part.empty:
-                        part["Ticker"] = ticker
-                        frames.append(part[["Date", "Ticker", "High", "Low", "Close", "Volume"]])
-                except Exception:
+    try:
+        raw = yf.download(batch, period="5y", interval="1d", auto_adjust=True, group_by="ticker",
+                          threads=False, progress=False, actions=False)
+        if raw is None or raw.empty:
+            return pd.DataFrame()
+        for ticker in batch:
+            try:
+                part = raw[ticker].copy() if isinstance(raw.columns, pd.MultiIndex) and ticker in raw.columns.get_level_values(0) else raw.copy()
+                if "Close" not in part.columns:
                     continue
-        except Exception:
-            continue
+                part = part.reset_index()
+                date_col = "Date" if "Date" in part.columns else "Datetime"
+                if date_col not in part.columns:
+                    continue
+                part = part.rename(columns={date_col: "Date"})
+                part["Date"] = pd.to_datetime(part["Date"], errors="coerce")
+                for col in ["High", "Low", "Close", "Volume"]:
+                    if col in part:
+                        part[col] = pd.to_numeric(part[col], errors="coerce")
+                if not {"High", "Low", "Close"}.issubset(part.columns):
+                    continue
+                if "Volume" not in part.columns:
+                    part["Volume"] = np.nan
+                part = part.dropna(subset=["Date", "High", "Low", "Close"])
+                if not part.empty:
+                    part["Ticker"] = ticker
+                    frames.append(part[["Date", "Ticker", "High", "Low", "Close", "Volume"]])
+            except Exception:
+                continue
+    except Exception:
+        return pd.DataFrame()
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
+
+def _history_5y(symbols: tuple[str, ...]) -> pd.DataFrame:
+    tickers = [f"{symbol}.NS" for symbol in symbols] + ["^CRSLDX"]
+    frames = []
+    for start in range(0, len(tickers), 80):
+        batch = tuple(tickers[start:start + 80])
+        part = _history_batch(batch)
+        if not part.empty:
+            frames.append(part)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 def _weekly_stage_and_b1(daily: pd.DataFrame):
     data = daily.sort_values("Date").set_index("Date")
@@ -372,8 +380,6 @@ def run_historical_breakout_postmortem():
                 "Best forward return %": round(best_return, 1),
             }
             row.update(pre)
-            row.update(_early_accumulation_context(daily, weekly, event_date, benchmark))
-            row.update(_sector_strength_at_event(prices, sector_map, sector_map.get(symbol, 'Unknown'), event_date, benchmark))
             row.update(metrics)
             qualifying.append((symbol, event_date, row))
     if not qualifying:
@@ -384,16 +390,17 @@ def run_historical_breakout_postmortem():
     for item in sorted(qualifying, key=lambda x: x[1]):
         earliest_by_symbol.setdefault(item[0], item)
     winners = sorted(earliest_by_symbol.values(), key=lambda x: x[2]["Best forward return %"], reverse=True)[:20]
-    summary = pd.DataFrame([item[2] for item in winners]).reset_index(drop=True)
-    filings = []
-    for _, symbol, row in winners:
-        found, warning = _official_filings(symbol, row["B1 date"])
-        filings.extend(found)
-        if warning:
-            pass
-    filing_df = pd.DataFrame(filings)
-    if not filing_df.empty:
-        filing_df = filing_df.sort_values(["Symbol", "Filing date"])
+    # Expensive enrichment is performed only for the final 20 winners, not every qualifying B1.
+    enriched_rows = []
+    for symbol, event_date, row in winners:
+        daily = prices[prices["Ticker"] == f"{symbol}.NS"].copy()
+        weekly, _, _, _ = _weekly_stage_and_b1(daily)
+        row.update(_early_accumulation_context(daily, weekly, event_date, benchmark))
+        row.update(_sector_strength_at_event(prices, sector_map, sector_map.get(symbol, "Unknown"), event_date, benchmark))
+        enriched_rows.append(row)
+    summary = pd.DataFrame(enriched_rows).reset_index(drop=True)
+    # Historical NSE filing requests are network-heavy; load them separately on demand.
+    filing_df = pd.DataFrame()
     note = (
         f"Explosive winners cohort: {len(summary)} stocks with at least +100% subsequent return "
         "within 26, 52 or 78 weeks after a valid B1. Earliest qualifying B1 per stock is shown. "
@@ -411,7 +418,7 @@ def render_historical_breakout_postmortem():
         with st.spinner("Scanning five years for historical 100%+ winners, tracing B1 dates and checking NSE filings…"):
             result = run_historical_breakout_postmortem()
         st.session_state["six_stock_postmortem_data"] = result
-        st.session_state["six_stock_postmortem_version"] = "nifty500-early-accumulation-v5"
+        st.session_state["six_stock_postmortem_version"] = "nifty500-early-accumulation-v6"
     if st.session_state.get("six_stock_postmortem_version") == "nifty500-early-accumulation-v5":
         summary, filings, warning = st.session_state.get("six_stock_postmortem_data", (pd.DataFrame(), pd.DataFrame(), ""))
         if warning:
