@@ -271,11 +271,14 @@ def run_historical_breakout_postmortem():
     selected = candidates[:50]
     summary = pd.DataFrame([item[2] for item in selected]).sort_values("First valid B1 date (5Y)", ascending=False)
     filings = []
-    for _, symbol, row in selected:
+    # Limit the slower official filing lookups to the 12 most recent events; all 50 still receive price/performance analysis.
+    for _, symbol, row in selected[:12]:
         found, warning = _official_filings(symbol, row["First valid B1 date (5Y)"])
         filings.extend(found)
         if warning:
             warnings.append(warning)
+    if len(selected) > 12:
+        warnings.append("Official NSE filing lookup was limited to the 12 most recent events to keep the scan responsive; price/performance analysis covers the full sample.")
     filing_df = pd.DataFrame(filings)
     if not filing_df.empty:
         filing_df = filing_df.sort_values(["Symbol", "Filing date"])
@@ -298,7 +301,7 @@ def render_historical_breakout_postmortem():
             st.warning(warning)
         if not summary.empty:
             st.dataframe(summary, use_container_width=True, hide_index=True)
-            st.download_button("Download six-stock post-mortem (CSV)", summary.to_csv(index=False).encode("utf-8"),
+            st.download_button("Download NIFTY 500 B1 sample (CSV)", summary.to_csv(index=False).encode("utf-8"),
                                "nifty500_historical_b1_postmortem.csv", "text/csv", key="download_six_stock_postmortem")
         if not filings.empty:
             st.markdown("**Official NSE filings within ±180 days of each first B1**")
