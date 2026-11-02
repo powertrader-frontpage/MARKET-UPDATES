@@ -258,6 +258,45 @@ def _pre_breakout_context(daily: pd.DataFrame, weekly: pd.DataFrame, event_date:
 
 
 
+def _early_accumulation_context(daily, weekly, event_date, benchmark):
+    """Find first appearance of candidate accumulation signals in the 12 weeks before B1."""
+    w = weekly[weekly.index <= event_date].tail(13).copy()
+    if len(w) < 13:
+        return {}
+    close = w["Close"].astype(float)
+    ma30 = weekly["Close"].rolling(30, min_periods=30).mean().reindex(w.index)
+    slope = (ma30 / ma30.shift(2) - 1) * 100
+    prior_high = weekly["Close"].shift(1).rolling(52, min_periods=26).max().reindex(w.index)
+    near_high = ((close / prior_high - 1) * 100 >= -10) & prior_high.notna()
+    above_ma = (close > ma30) & ma30.notna()
+    positive_slope = (slope > 0) & slope.notna()
+    vol5 = weekly["Volume"].rolling(5, min_periods=4).mean().reindex(w.index)
+    vol10 = weekly["Volume"].rolling(10, min_periods=8).mean().reindex(w.index)
+    volume_tight = (vol5 < vol10) & vol5.notna() & vol10.notna()
+    high4 = weekly["High"].rolling(4, min_periods=4).max().reindex(w.index)
+    low4 = weekly["Low"].rolling(4, min_periods=4).min().reindex(w.index)
+    tight_range = ((high4 / low4 - 1) * 100 <= 15) & low4.gt(0)
+    daily_close = daily.sort_values("Date").set_index("Date")["Close"].astype(float)
+    index_close = benchmark.sort_values("Date").set_index("Date")["Close"].astype(float) if not benchmark.empty else pd.Series(dtype=float)
+    rs = {}
+    for date in w.index:
+        sn = daily_close[daily_close.index <= date]
+        sp = daily_close[daily_close.index <= date - pd.Timedelta(weeks=13)]
+        bn = index_close[index_close.index <= date]
+        bp = index_close[index_close.index <= date - pd.Timedelta(weeks=13)]
+        if not sn.empty and not sp.empty and not bn.empty and not bp.empty and sp.iloc[-1] and bp.iloc[-1]:
+            rs[date] = (float(sn.iloc[-1]) / float(sp.iloc[-1]) - 1) * 100 - (float(bn.iloc[-1]) / float(bp.iloc[-1]) - 1) * 100
+    rs_series = pd.Series(rs).reindex(w.index)
+    conditions = {"RS excess >20pp": rs_series >= 20, "Price above 30W SMA": above_ma, "30W SMA slope positive": positive_slope, "Within 10% of prior 52W high": near_high, "5W volume below 10W average": volume_tight, "4W range <=15%": tight_range}
+    out = {}
+    for label, condition in conditions.items():
+        dates = condition.fillna(False)
+        dates = dates[dates].index
+        first = dates[0] if len(dates) else pd.NaT
+        out[f"First {label} date"] = first.strftime("%Y-%m-%d") if pd.notna(first) else "Not observed"
+        out[f"Weeks before B1 · {label}"] = int(round((event_date - first).days / 7)) if pd.notna(first) else np.nan
+    return out
+
 def _sector_strength_at_event(prices: pd.DataFrame, sector_map: dict, sector: str, event_date: pd.Timestamp, benchmark: pd.DataFrame):
     """Cross-sectional sector median returns, using only closes available by the event date."""
     sector_returns = {13: [], 26: []}
@@ -370,13 +409,13 @@ def render_historical_breakout_postmortem():
         with st.spinner("Scanning five years for historical 100%+ winners, tracing B1 dates and checking NSE filings…"):
             result = run_historical_breakout_postmortem()
         st.session_state["six_stock_postmortem_data"] = result
-        st.session_state["six_stock_postmortem_version"] = "nifty500-prebreakout-signature-v4"
+        st.session_state["six_stock_postmortem_version"] = "nifty500-early-accumulation-v5"
     if st.session_state.get("six_stock_postmortem_version") == "nifty500-prebreakout-signature-v4":
         summary, filings, warning = st.session_state.get("six_stock_postmortem_data", (pd.DataFrame(), pd.DataFrame(), ""))
         if warning:
             st.warning(warning)
         if not summary.empty:
-            winner_tab, signature_tab = st.tabs(["Explosive Winners", "Pre-Breakout Signature Analysis"])
+            winner_tab, signature_tab, accumulation_tab = st.tabs(["Explosive Winners", "Pre-Breakout Signature Analysis", "Early Accumulation Detection"])
             with winner_tab:
                 st.dataframe(summary, use_container_width=True, hide_index=True)
                 st.download_button("Download explosive winners study (CSV)", summary.to_csv(index=False).encode("utf-8"),
@@ -397,6 +436,16 @@ def render_historical_breakout_postmortem():
                 st.dataframe(summary[available_cols], use_container_width=True, hide_index=True)
                 st.download_button("Download pre-breakout signature (CSV)", summary[available_cols].to_csv(index=False).encode("utf-8"),
                                    "nifty500_pre_breakout_signature.csv", "text/csv", key="download_pre_breakout_signature")
+            with accumulation_tab:
+                st.markdown("**When did early accumulation clues first appear?**")
+                st.caption("Signals are measured over the 12 completed weeks before B1. These are exploratory historical clues, not entry triggers.")
+                early_cols = ["Symbol", "Company", "Sector", "B1 date"]
+                for label in ["RS excess >20pp", "Price above 30W SMA", "30W SMA slope positive", "Within 10% of prior 52W high", "5W volume below 10W average", "4W range <=15%"]:
+                    early_cols.extend([f"First {label} date", f"Weeks before B1 · {label}"])
+                early_available = [col for col in early_cols if col in summary.columns]
+                st.dataframe(summary[early_available], use_container_width=True, hide_index=True)
+                st.download_button("Download early accumulation timeline (CSV)", summary[early_available].to_csv(index=False).encode("utf-8"),
+                                   "nifty500_early_accumulation_timeline.csv", "text/csv", key="download_early_accumulation")
         if not filings.empty:
             st.markdown("**Official NSE filings within ±180 days of each first B1**")
             st.dataframe(filings, use_container_width=True, hide_index=True,
