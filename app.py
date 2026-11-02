@@ -2467,7 +2467,8 @@ else:
     
 from explosive_breakout_scanner import render_explosive_breakout_scanner
 
-render_explosive_breakout_scanner()
+with st.expander("🚀 Explosive Breakout Scanner", expanded=False):
+    render_explosive_breakout_scanner()
 
 
 # Leading sectors: rank recent 1-week performance against NIFTY 50, independent of sidebar lookback.
