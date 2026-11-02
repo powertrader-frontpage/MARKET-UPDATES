@@ -230,7 +230,16 @@ def run_explosive_breakout_scan():
     )
     fresh = result[result["Fresh B1"] & result["4W breakout"]].copy()
     follow = result[result["Stage"].eq("Stage 2") & result["4W breakout"] & ~result["Fresh B1"]].copy()
-    upcoming = result[(result["Stage"].isin(["Stage 1", "Stage 3"])) & (pd.to_numeric(result["Gap vs 30W %"], errors="coerce").between(-5, 8)) & (pd.to_numeric(result["13W return %"], errors="coerce") > 0)].copy()
+    # Upcoming list is for Stage 2 stocks that have not yet cleared the recent 4-week resistance.
+    # Keep candidates close to resistance with positive relative momentum; exclude completed breakouts.
+    resistance_gap = (pd.to_numeric(result["Breakout level"], errors="coerce") / pd.to_numeric(result["Price"], errors="coerce") - 1) * 100
+    result["Gap to breakout %"] = resistance_gap
+    upcoming = result[
+        result["Stage"].eq("Stage 2")
+        & ~result["4W breakout"]
+        & resistance_gap.between(0, 5)
+        & (pd.to_numeric(result["13W return %"], errors="coerce") > 0)
+    ].copy()
     for frame in (fresh, follow, upcoming):
         frame.sort_values(["Technical Score", "Volume vs 10W Avg", "13W return %"], ascending=False, inplace=True, na_position="last")
         frame.reset_index(drop=True, inplace=True)
