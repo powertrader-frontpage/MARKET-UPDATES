@@ -2472,7 +2472,7 @@ with st.expander("🚀 Explosive Breakout Scanner", expanded=False):
 
 from historical_breakout_postmortem import render_historical_breakout_postmortem
 
-with st.expander("🔬 Historical Breakout Post-Mortem · Six NSE 500 leaders", expanded=False):
+with st.expander("🔬 Historical Explosive Winners & Pre-Breakout Signature", expanded=False):
     render_historical_breakout_postmortem()
 
 
