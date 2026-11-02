@@ -389,9 +389,9 @@ def run_explosive_breakout_scan():
     fundamentals, news = _breakout_enrichment(pairs) if pairs else (pd.DataFrame(), pd.DataFrame())
     if not fundamentals.empty:
         result = result.merge(fundamentals, on="Symbol", how="left")
-        sales = pd.to_numeric(result.get("Sales growth YoY %"), errors="coerce")
-        profit = pd.to_numeric(result.get("Profit growth YoY %"), errors="coerce")
-        margin = pd.to_numeric(result.get("Margin expansion YoY (pp)"), errors="coerce")
+        sales = pd.to_numeric(result["Sales growth YoY %"], errors="coerce") if "Sales growth YoY %" in result else pd.Series(np.nan, index=result.index)
+        profit = pd.to_numeric(result["Profit growth YoY %"], errors="coerce") if "Profit growth YoY %" in result else pd.Series(np.nan, index=result.index)
+        margin = pd.to_numeric(result["Margin expansion YoY (pp)"], errors="coerce") if "Margin expansion YoY (pp)" in result else pd.Series(np.nan, index=result.index)
         fundamental_score = (sales.clip(0, 50).fillna(0) / 50 * 7
                              + profit.clip(0, 75).fillna(0) / 75 * 6
                              + margin.clip(0, 10).fillna(0) / 10 * 2)
@@ -441,44 +441,37 @@ def render_explosive_breakout_scanner():
                 fresh["Status"] = fresh["Symbol"].astype(str).map(lambda x: "🆕 NEW" if x not in previous and previous else ("Baseline" if not previous else "Existing"))
                 st.session_state["explosive_breakout_previous_symbols"] = current
             else:
-                st.session_state["explosive_breakout_scan_data"] = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame())
+                st.session_state["explosive_breakout_scan_data"] = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame())
                 st.session_state["explosive_breakout_scan_warning"] = output[2] if len(output) > 2 else "Scan unavailable"
         st.session_state["explosive_breakout_scan_loaded"] = True
         if st.session_state.get("explosive_breakout_scan_warning"):
             st.warning(st.session_state["explosive_breakout_scan_warning"])
-        fresh, follow, upcoming, all_rows = st.session_state.get("explosive_breakout_scan_data", (pd.DataFrame(),)*4)
+        fresh, follow, upcoming, all_rows, news = st.session_state.get("explosive_breakout_scan_data", (pd.DataFrame(),)*5)
         if st.session_state.get("explosive_breakout_scan_time"):
             st.caption("Last scan: " + st.session_state["explosive_breakout_scan_time"])
         if not fresh.empty:
             st.subheader("Fresh B1 · Stage 2 breakouts")
-            display = ["Status", "Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Breakout level", "Volume vs 10W Avg", "13W return %", "30W slope %", "Gap vs 30W %", "EMA 10>21>55", "Daily change %"]
+            display = ["Status", "Opportunity Score", "Technical Score", "Fundamental Score", "Catalyst Score", "Symbol", "Company", "Segment", "Sector", "Price", "Breakout level", "Base Count", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %", "13W return %", "30W slope %", "EMA 10>21>55", "Daily change %"]
             st.dataframe(fresh[[c for c in display if c in fresh.columns]], use_container_width=True, hide_index=True)
         else:
             st.info("No fresh B1 breakout met all current conditions. Check Upcoming Breakouts and Stage 2 follow-through below.")
         st.subheader("Upcoming Breakouts · Early watch")
         if upcoming.empty:
-            st.caption("No Stage 1 / early-recovery candidates currently meet the proximity and relative-strength conditions.")
+            st.caption("No Stage 2 candidates are currently within 5% of their recent breakout resistance with positive 13-week momentum.")
         else:
-            st.dataframe(upcoming[["Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Stage", "Gap vs 30W %", "13W return %", "Volume vs 10W Avg"]], use_container_width=True, hide_index=True)
+            st.dataframe(upcoming[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Stage", "Gap to breakout %", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %", "Catalyst Score"] if c in upcoming.columns]], use_container_width=True, hide_index=True)
         st.subheader("Strong B2+ · Breakout follow-through")
         if follow.empty:
             st.caption("No additional Stage 2 stocks currently clear the recent 4-week high.")
         else:
-            st.dataframe(follow[["Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Breakout level", "Volume vs 10W Avg", "13W return %", "Gap vs 30W %"]], use_container_width=True, hide_index=True)
-        if not fresh.empty or not follow.empty:
-            news_targets = pd.concat([fresh, follow]).sort_values("Technical Score", ascending=False).head(10)
-            with st.expander("Recent news · Top technical candidates", expanded=False):
-                if st.button("Load recent news for top 10", key="load_explosive_breakout_news"):
-                    pairs = tuple((str(row["Symbol"]), str(row["Company"])) for _, row in news_targets.iterrows())
-                    with st.spinner("Checking recent public headlines…"):
-                        news = _breakout_news(pairs)
-                    st.session_state["explosive_breakout_news"] = news
-                news = st.session_state.get("explosive_breakout_news", pd.DataFrame())
-                if not news.empty:
-                    st.dataframe(news, use_container_width=True, hide_index=True, column_config={"Source link": st.column_config.LinkColumn("Source link")})
-                else:
-                    st.caption("News has not been loaded yet. Headlines are leads for verification, not proof of a catalyst.")
+            st.dataframe(follow[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Breakout level", "Base Count", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %"] if c in follow.columns]], use_container_width=True, hide_index=True)
+        with st.expander("Recent news & catalysts · technical shortlist", expanded=False):
+            if not news.empty:
+                st.dataframe(news, use_container_width=True, hide_index=True, column_config={"Source link": st.column_config.LinkColumn("Source link")})
+                st.caption("Headline classification is automated and can be imperfect. Verify every material event using the linked source and NSE/BSE filings.")
+            else:
+                st.caption("No recent headlines were returned for the top technical shortlist. No catalyst is assumed.")
         st.download_button("Download full mid/small-cap scan (CSV)", all_rows.to_csv(index=False).encode("utf-8"), "explosive_breakout_mid_smallcap_scan.csv", "text/csv", key="download_explosive_breakout_scan")
-        st.caption("Score is a technical ranking heuristic, not a probability or buy recommendation. News headlines are third-party RSS results; verify material announcements on NSE/BSE. Fresh B1 and upcoming lists use completed weekly bars; daily EMA alignment is a supporting filter.")
+        st.caption("Opportunity Score combines technical ranking, available quarterly fundamentals and recent news catalysts. Fundamentals/news are enriched for the top 30 technical candidates only; missing data is not treated as positive. Scores are research heuristics, not probabilities or buy signals. Weekly logic uses completed candles and your Pine base-count rules.")
     else:
         st.info("Press Scan / refresh to evaluate the Midcap 150 and Smallcap 250 universe. The scan is separate from the NSE 500 Weinstein screener and Turnaround Board.")
