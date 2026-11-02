@@ -341,13 +341,13 @@ def render_historical_breakout_postmortem():
             result = run_historical_breakout_postmortem()
         st.session_state["six_stock_postmortem_data"] = result
         st.session_state["six_stock_postmortem_version"] = "nifty500-explosive-winners-v3"
-    if st.session_state.get("six_stock_postmortem_version") == "nifty500-b1-postmortem-v2":
+    if st.session_state.get("six_stock_postmortem_version") == "nifty500-explosive-winners-v3":
         summary, filings, warning = st.session_state.get("six_stock_postmortem_data", (pd.DataFrame(), pd.DataFrame(), ""))
         if warning:
             st.warning(warning)
         if not summary.empty:
             st.dataframe(summary, use_container_width=True, hide_index=True)
-            st.download_button("Download NIFTY 500 B1 sample (CSV)", summary.to_csv(index=False).encode("utf-8"),
+            st.download_button("Download explosive winners study (CSV)", summary.to_csv(index=False).encode("utf-8"),
                                "nifty500_explosive_winners_b1_study.csv", "text/csv", key="download_six_stock_postmortem")
         if not filings.empty:
             st.markdown("**Official NSE filings within ±180 days of each first B1**")
