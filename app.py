@@ -1058,63 +1058,6 @@ with st.spinner("Loading best-effort public market data…"):
         market_data[name], market_errors[name] = hist, err
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_iifl_adr_quotes() -> tuple[dict[str, dict], str | None]:
-    """Fetch the latest dated Indian ADR snapshot from IIFL as an independent Yahoo fallback."""
-    try:
-        from io import StringIO
-        url = "https://www.indiainfoline.com/markets/depository-receipt/gdr-adr-idr"
-        response = requests.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36"},
-            timeout=15,
-        )
-        response.raise_for_status()
-        page_text = html.unescape(re.sub(r"<[^>]+>", " ", response.text))
-        page_text = re.sub(r"\s+", " ", page_text)
-        date_match = re.search(r"(\d{1,2}\s+[A-Za-z]+,\s*\d{4})\s*\|\s*(\d{1,2}:\d{2}\s*[AP]M)", page_text, re.IGNORECASE)
-        if not date_match:
-            date_match = re.search(r"(\d{1,2}\s+[A-Za-z]+,\s*\d{4})", page_text, re.IGNORECASE)
-        if not date_match:
-            return {}, "IIFL ADR page did not provide a dated quote snapshot."
-        asof = pd.to_datetime(date_match.group(1), errors="coerce", dayfirst=True)
-        if pd.isna(asof):
-            return {}, "IIFL ADR quote date could not be parsed."
-        tables = pd.read_html(StringIO(response.text))
-        table = next((frame.copy() for frame in tables if frame.astype(str).apply(lambda col: col.str.contains("Infosys", case=False, na=False)).any().any()), None)
-        if table is None or table.empty:
-            return {}, "IIFL ADR table was not found."
-        if isinstance(table.columns, pd.MultiIndex):
-            table.columns = [" ".join(str(part) for part in col if str(part) != "nan").strip() for col in table.columns]
-        else:
-            table.columns = [str(col).strip() for col in table.columns]
-        normalized = {str(col).strip().lower().replace(" ", "").replace(".", ""): col for col in table.columns}
-        change_col = next((col for key, col in normalized.items() if "chg%" in key or "change%" in key or "changepercent" in key), None)
-        ltp_col = next((col for key, col in normalized.items() if "ltp" in key or key in ("last", "lastprice")), None)
-        if change_col is None:
-            return {}, "IIFL ADR table did not expose a percentage-change column."
-        company_map = {
-            "INFY": ("Infosys",),
-            "WIT": ("Wipro",),
-            "HDB": ("HDFC Bank",),
-            "IBN": ("ICICI Bank",),
-        }
-        output = {}
-        for ticker, names in company_map.items():
-            mask = table.iloc[:, 0].astype(str).apply(lambda value: any(name.lower() in value.lower() for name in names))
-            matched = table.loc[mask]
-            if matched.empty:
-                continue
-            row = matched.iloc[0]
-            pct = pd.to_numeric(str(row[change_col]).replace("%", "").replace(",", "").strip(), errors="coerce")
-            price = pd.to_numeric(str(row[ltp_col]).replace(",", "").strip(), errors="coerce") if ltp_col else np.nan
-            if pd.notna(pct):
-                output[ticker] = {"pct": float(pct), "price": float(price) if pd.notna(price) else np.nan, "date": asof.strftime("%d %b %Y"), "source": "IIFL Capital"}
-        return output, None if output else "IIFL ADR table contained no usable ADR percentage changes."
-    except Exception as exc:
-        return {}, f"IIFL ADR source unavailable ({type(exc).__name__})."
-
-
-@st.cache_data(ttl=300, show_spinner=False)
 def get_nse_index_archive_latest() -> tuple[pd.DataFrame, str | None]:
     """Fetch the latest published official NSE all-indices daily archive CSV."""
     try:
@@ -1315,19 +1258,24 @@ def _sentiment_change(label, ticker, weight, inverse=False):
             return
         adr_tickers = {"INFY", "WIT", "HDB", "IBN"}
         if ticker in adr_tickers:
-            adr_quotes, adr_error = get_iifl_adr_quotes()
-            adr_quote = adr_quotes.get(ticker)
-            if adr_quote:
-                adr_date = pd.to_datetime(adr_quote["date"], errors="coerce")
+            # Do not use IIFL's page-level timestamp: its table can retain prior-session
+            # prices while the page header advances. Use the ticker's dated daily bars only.
+            frame, err = get_history(ticker, "1mo", "1d")
+            snap = quote_snapshot(frame)
+            if snap:
+                last, change, pct = snap
+                adr_date = pd.to_datetime(last["Date"], errors="coerce")
                 adr_age_days = (now_ist.date() - adr_date.date()).days if pd.notna(adr_date) else 999
-                if adr_age_days <= 3:
-                    pct = float(adr_quote["pct"])
+                if pd.notna(pct) and 0 <= adr_age_days <= 2:
+                    pct = float(pct)
                     score = 1 if pct > 0 else -1 if pct < 0 else 0
                     sentiment_parts.append((score, weight))
                     sentiment_signal = "Positive" if score > 0 else "Negative" if score < 0 else "Flat"
-                    sentiment_details.append({"Factor": label, "Weight": f"{weight * 100:g}%", "Latest change": f"{pct:+.2f}%", "Signal": sentiment_signal, "Source bar": f'{adr_quote["date"]} · IIFL Capital'})
+                    sentiment_details.append({"Factor": label, "Weight": f"{weight * 100:g}%", "Latest change": f"{pct:+.2f}%", "Signal": sentiment_signal, "Source bar": f'{adr_date:%d %b %Y} · Yahoo Finance daily bar'})
                     return
-            frame, err = get_history(ticker, "1mo", "1d")
+            sentiment_errors.append(f"{label}: excluded because the latest Yahoo ADR daily bar is older than 2 calendar days or unavailable")
+            return
+        frame, err = get_history(ticker, "1mo", "1d")
             snap = quote_snapshot(frame)
             if snap:
                 last, change, pct = snap
