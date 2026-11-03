@@ -1938,21 +1938,35 @@ else:
         # Minimal NIFTY 50 pivot strip directly below Price Trend.
         nifty_levels_df = market_data.get("NIFTY 50", pd.DataFrame()).copy()
         if not nifty_levels_df.empty and {"Date", "High", "Low", "Close"}.issubset(nifty_levels_df.columns):
-            nifty_levels_df["Date"] = pd.to_datetime(nifty_levels_df["Date"], errors="coerce")
-            nifty_levels_df = nifty_levels_df.dropna(subset=["Date", "High", "Low", "Close"]).sort_values("Date")
-            if len(nifty_levels_df) >= 2:
-                nifty_last_date = nifty_levels_df.iloc[-1]["Date"]
-                nifty_today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-                nifty_pivot_row = nifty_levels_df.iloc[-2] if nifty_last_date.date() == nifty_today else nifty_levels_df.iloc[-1]
-                nifty_ph, nifty_pl, nifty_pc = float(nifty_pivot_row["High"]), float(nifty_pivot_row["Low"]), float(nifty_pivot_row["Close"])
-                nifty_p = (nifty_ph + nifty_pl + nifty_pc) / 3
-                nifty_s1, nifty_r1 = 2 * nifty_p - nifty_ph, 2 * nifty_p - nifty_pl
-                nifty_s2, nifty_r2 = nifty_p - (nifty_ph - nifty_pl), nifty_p + (nifty_ph - nifty_pl)
-                st.markdown(
-                    f'<div style="font-size:12px;font-weight:700;color:#cbd5e1;margin:5px 0 6px;">NIFTY 50 · QUICK SUPPORT / RESISTANCE '
-                    f'<span style="font-size:10px;font-weight:400;color:#94a3b8;">Pivot estimates · ref. {nifty_pivot_row["Date"]:%d %b %Y}</span></div>',
-                    unsafe_allow_html=True,
-                )
+            # Normalize all source timestamps to IST, then select the latest completed
+            # trading session strictly before today. This avoids accidentally using a
+            # partial current-day candle or an old row caused by mixed timestamp sorting.
+            nifty_levels_df["_pivot_date_ist"] = (
+                pd.to_datetime(nifty_levels_df["Date"], errors="coerce", utc=True)
+                .dt.tz_convert("Asia/Kolkata")
+            )
+            for _col in ["High", "Low", "Close"]:
+                nifty_levels_df[_col] = pd.to_numeric(nifty_levels_df[_col], errors="coerce")
+            nifty_levels_df = nifty_levels_df.dropna(subset=["_pivot_date_ist", "High", "Low", "Close"])
+            nifty_today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+            nifty_levels_df["_pivot_session"] = nifty_levels_df["_pivot_date_ist"].dt.date
+            completed_sessions = nifty_levels_df[nifty_levels_df["_pivot_session"] < nifty_today]
+            if not completed_sessions.empty:
+                nifty_pivot_row = completed_sessions.sort_values("_pivot_date_ist").iloc[-1]
+                nifty_pivot_date = nifty_pivot_row["_pivot_session"]
+                nifty_pivot_age = (nifty_today - nifty_pivot_date).days
+                if nifty_pivot_age <= 7:
+                    nifty_ph = float(nifty_pivot_row["High"])
+                    nifty_pl = float(nifty_pivot_row["Low"])
+                    nifty_pc = float(nifty_pivot_row["Close"])
+                    nifty_p = (nifty_ph + nifty_pl + nifty_pc) / 3
+                    nifty_s1, nifty_r1 = 2 * nifty_p - nifty_ph, 2 * nifty_p - nifty_pl
+                    nifty_s2, nifty_r2 = nifty_p - (nifty_ph - nifty_pl), nifty_p + (nifty_ph - nifty_pl)
+                    st.markdown(
+                        f'<div style="font-size:12px;font-weight:700;color:#cbd5e1;margin:5px 0 6px;">NIFTY 50 · QUICK SUPPORT / RESISTANCE '
+                        f'<span style="font-size:10px;font-weight:400;color:#94a3b8;">Pivot estimates · ref. {nifty_pivot_date:%d %b %Y} · previous completed session</span></div>',
+                        unsafe_allow_html=True,
+                    )
                 nifty_level_cols = st.columns(5, gap="small")
                 for level_col, level_name, level_value, level_color in zip(
                     nifty_level_cols,
