@@ -458,8 +458,15 @@ def render_nse500_screener():
         )
         # Automatically calculate the screener when the section is first opened.
         # The calculation is cached, so reruns and repeat visits reuse recent results.
-        if "nse500_rs_stage_results" not in st.session_state:
-            with st.spinner("Loading NSE 500 screener for the first time…"):
+        cached_session_results = st.session_state.get("nse500_rs_stage_results")
+        needs_peer_rs_refresh = (
+            not isinstance(cached_session_results, pd.DataFrame)
+            or "RS vs Sector 12W (pp)" not in cached_session_results.columns
+            or "Industry" not in cached_session_results.columns
+            or "nse500_rs_stage_industries" not in st.session_state
+        )
+        if needs_peer_rs_refresh:
+            with st.spinner("Loading NSE 500 screener and calculating peer-relative strength…"):
                 try:
                     results, sectors, industries, universe_count, priced_count, current_week, previous_week = _calculate()
                     st.session_state["nse500_rs_stage_results"] = results
