@@ -1326,30 +1326,45 @@ for gift_source_name, gift_url in gift_sources:
         if gift_anchor < 0:
             gift_anchor = gift_upper.find("GIFT NIFTY")
         gift_search_text = gift_text[gift_anchor:gift_anchor + 8000] if gift_anchor >= 0 else gift_text[:8000]
-        gift_match = re.search(
-            r"([+-]?\d[\d,]*\.\d{1,2})\s*\(\s*([+-]?\d+\.\d{1,2})\s*%\s*\)",
-            gift_search_text,
-        )
-        if not gift_match:
-            # Fallback: inspect raw HTML/embedded JSON where whitespace or tags may differ.
-            gift_raw = html.unescape(gift_html).replace("\\u002d", "-").replace("\\/", "/")
-            gift_match = re.search(
-                r"([+-]?\d[\d,]*\.\d{1,2})[^0-9]{0,100}\(\s*([+-]?\d+\.\d{1,2})\s*%\s*\)",
-                gift_raw,
-                flags=re.IGNORECASE,
-            )
-        if not gift_match:
-            # Some templates render the point change and percentage in separate adjacent elements.
-            gift_match = re.search(
-                r"(?:GIFT NIFTY.{0,1200}?)([+-]\d[\d,]*\.\d{1,2}).{0,100}?([+-]\d+\.\d{1,2})\s*%",
-                gift_text,
-                flags=re.IGNORECASE,
-            )
-        if not gift_match:
-            gift_failures.append(f"{gift_source_name}: quote pattern not found")
+        # Require an actual traded GIFT Nifty level as well as its move.
+        # GiftCityNifty publishes a sentence like: "Gift Nifty is trading at
+        # 23,561.50, up 159.00 (+0.68%)". Do not mistake the point change for LTP.
+        gift_quote_patterns = [
+            re.compile(
+                r"gift\s*nifty(?:\s+nse\s+ifsc)?\s+is\s+trading\s+at\s+([\d,]+\.\d{1,2})\s*,?\s*(up|down)\s+([\d,]+\.\d{1,2})\s*\(\s*([+-]?\d+\.\d{1,2})\s*%\s*\)",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"(?:last\s*price|current\s*price|ltp)\s*[:|]?\s*([\d,]+\.\d{1,2}).{0,180}?(?:change|up|down)\s*[:|]?\s*([+-]?[\d,]+\.\d{1,2}).{0,80}?([+-]?\d+\.\d{1,2})\s*%",
+                re.IGNORECASE,
+            ),
+        ]
+        gift_quote = None
+        for pattern in gift_quote_patterns:
+            gift_quote = pattern.search(gift_text)
+            if gift_quote:
+                break
+        if not gift_quote:
+            gift_failures.append(f"{gift_source_name}: dated quote level and change not found")
             continue
-        gift_change_points = float(gift_match.group(1).replace(",", ""))
-        gift_change_pct = float(gift_match.group(2))
+        if gift_quote.lastindex == 4:
+            gift_last_price = float(gift_quote.group(1).replace(",", ""))
+            gift_direction = gift_quote.group(2).lower()
+            gift_change_points = float(gift_quote.group(3).replace(",", ""))
+            gift_change_pct = float(gift_quote.group(4))
+            if gift_direction == "down":
+                gift_change_points = -abs(gift_change_points)
+                gift_change_pct = -abs(gift_change_pct)
+            else:
+                gift_change_points = abs(gift_change_points)
+                gift_change_pct = abs(gift_change_pct)
+        else:
+            gift_last_price = float(gift_quote.group(1).replace(",", ""))
+            gift_change_points = float(gift_quote.group(2).replace(",", ""))
+            gift_change_pct = float(gift_quote.group(3))
+        if gift_last_price <= 0:
+            gift_failures.append(f"{gift_source_name}: invalid GIFT Nifty level")
+            continue
         gift_score = 1 if gift_change_pct > 0 else -1 if gift_change_pct < 0 else 0
 
         # Keep the existing 60% GIFT weight when it is positive.
@@ -1379,7 +1394,7 @@ for gift_source_name, gift_url in gift_sources:
         sentiment_details.append({
             "Factor": f"GIFT Nifty · {gift_source_name}",
             "Weight": f"{gift_weight * 100:g}%",
-            "Latest change": f"{gift_change_pct:+.2f}% ({gift_change_points:+,.2f} pts)",
+            "Latest change": f"{gift_last_price:,.2f} · {gift_change_pct:+.2f}% ({gift_change_points:+,.2f} pts)",
             "Signal": "Positive" if gift_score > 0 else "Negative" if gift_score < 0 else "Flat",
             "Source bar": gift_asof,
         })
