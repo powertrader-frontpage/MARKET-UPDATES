@@ -1127,8 +1127,18 @@ for col, name in zip(cols, headline_names):
         col.metric(name, "Unavailable")
         # Error details remain available in market_errors; avoid displaying extra helper text here.
 
-# Hidden headline explanation retained here in code; display headline metrics without extra notes.
-
+# Show the actual source-candle date so a page-refresh timestamp cannot disguise stale prices.
+headline_dates = []
+for _name in headline_names:
+    _frame = market_data.get(_name, pd.DataFrame())
+    if not _frame.empty and "Date" in _frame.columns:
+        _date = pd.to_datetime(_frame["Date"], errors="coerce").dropna()
+        if not _date.empty:
+            _source = str(_frame.iloc[-1].get("Source", "Yahoo Finance"))
+            headline_dates.append(f"{_name}: {_date.iloc[-1]:%d %b} ({_source})")
+    else:
+        headline_dates.append(f"{_name}: unavailable")
+st.caption("Actual source candle dates · " + "  |  ".join(headline_dates))
 
 # Daily global-cue sentiment panel is intentionally placed immediately above Market Regime.
 st.subheader("Today's Market Direction · Global Sentiment")
