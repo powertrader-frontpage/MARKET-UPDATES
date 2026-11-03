@@ -277,6 +277,10 @@ def _calculate():
         if pd.isna(avg10) or pd.isna(ma_slope) or pd.isna(rank):
             continue
         gap = (price / avg30 - 1) * 100
+        prior_4w = weekly[ticker].iloc[-5] if len(weekly[ticker].dropna()) >= 5 else np.nan
+        prior_12w = weekly[ticker].iloc[-13] if len(weekly[ticker].dropna()) >= 13 else np.nan
+        return_4w = (price / float(prior_4w) - 1) * 100 if pd.notna(prior_4w) and float(prior_4w) > 0 else np.nan
+        return_12w = (price / float(prior_12w) - 1) * 100 if pd.notna(prior_12w) and float(prior_12w) > 0 else np.nan
         vol_now = latest_volume.get(ticker)
         vol_avg = avg10_volume.get(ticker)
         volume_ratio = float(vol_now / vol_avg) if pd.notna(vol_now) and pd.notna(vol_avg) and float(vol_avg) > 0 else np.nan
@@ -304,7 +308,8 @@ def _calculate():
         records.append({
             "Symbol": item["Symbol"], "Company": item["Company"], "Sector": item["Sector"],
             "Price": price, "RS Rank": int(rank), "Stage": stage, "Previous Stage": previous_stage,
-            "New Stage 2": newly_stage2, "Reclaimed 10W": reclaimed_10w,
+            "New Stage 2": newly_stage2, "4W Return %": return_4w, "12W Return %": return_12w,
+            "Reclaimed 10W": reclaimed_10w,
             "Gap vs 10W %": gap_vs_10w, "Base Count": base_count,
             "Fresh B2": fresh_b2, "Volume vs 10W Avg": volume_ratio,
             "30W Avg": avg30,
@@ -493,6 +498,47 @@ def render_nse500_screener():
                 f'<b style="color:#e5c46d;">{len(current_stage2)}</b> stocks currently in Stage 2</div>',
                 unsafe_allow_html=True,
             )
+
+            # Strong-momentum subset of the exact same Pine-confirmed fresh Stage 2 transitions.
+            # Thresholds are intentionally explicit; missing values do not qualify.
+            fresh_momentum = fresh[
+                (fresh["RS Rank"] >= 85)
+                & (fresh["12W Return %"] >= 15)
+                & (fresh["4W Return %"] > 0)
+                & (fresh["30W Slope %"] > 0)
+                & (fresh["Gap vs 30W %"].between(0, 15))
+                & (fresh["Volume vs 10W Avg"] >= 1.2)
+            ].copy().sort_values(
+                ["RS Rank", "12W Return %", "Volume vs 10W Avg"],
+                ascending=[False, False, False]
+            )
+
+            st.markdown("#### 🚀 Fresh Stage 2 · Strong Momentum")
+            st.caption(
+                "Subset of confirmed Stage 1 → Stage 2 transitions, requiring RS ≥85, "
+                "12W return ≥15%, positive 4W return, rising 30W SMA, price 0–15% above "
+                "the 30W SMA and latest completed-week volume ≥1.2× the prior 10-week average. "
+                "Strict research filter; no matches means no stock currently meets every condition."
+            )
+            if fresh_momentum.empty:
+                st.info("No fresh Stage 2 entry currently meets all strong-momentum filters.")
+            else:
+                momentum_cols = [
+                    "Symbol", "Company", "Sector", "Price", "RS Rank",
+                    "4W Return %", "12W Return %", "30W Slope %",
+                    "Gap vs 30W %", "Volume vs 10W Avg", "52W High Gap %"
+                ]
+                st.dataframe(
+                    fresh_momentum[momentum_cols],
+                    use_container_width=True, hide_index=True,
+                    height=min(360, 42 + 38 * len(fresh_momentum))
+                )
+                st.download_button(
+                    "Download Fresh Stage 2 strong-momentum list (CSV)",
+                    fresh_momentum[momentum_cols].to_csv(index=False).encode("utf-8"),
+                    "nse500_fresh_stage2_strong_momentum.csv", "text/csv",
+                    key="download_nse500_fresh_stage2_momentum",
+                )
 
             st.markdown("#### 🟢 Fresh Stage 2 entries · Stage 1 → Stage 2")
             st.caption("Only stocks whose completed weekly classification changed from Stage 1 last week to Stage 2 this week appear here.")
