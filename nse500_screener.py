@@ -517,7 +517,7 @@ def render_nse500_screener():
             # Strong-momentum subset of the exact same Pine-confirmed fresh Stage 2 transitions.
             # Thresholds are intentionally explicit; missing values do not qualify.
             fresh_momentum = fresh[
-                (fresh["RS Rank"] >= 85)
+                (fresh["RS Rank"] >= 70)
                 & (fresh["12W Return %"] >= 15)
                 & (fresh["4W Return %"] > 0)
                 & (fresh["30W Slope %"] > 0)
@@ -530,7 +530,7 @@ def render_nse500_screener():
 
             st.markdown("#### 🚀 Fresh Stage 2 · Strong Momentum")
             st.caption(
-                "Subset of confirmed Stage 1 → Stage 2 transitions, requiring RS ≥85, "
+                "Subset of confirmed Stage 1 → Stage 2 transitions, requiring RS ≥70, "
                 "12W return ≥15%, positive 4W return, rising 30W SMA, price 0–15% above "
                 "the 30W SMA and latest completed-week volume ≥1.2× the prior 10-week average. "
                 "Strict research filter; no matches means no stock currently meets every condition."
@@ -559,7 +559,7 @@ def render_nse500_screener():
             # price above a gently rising 30W average, and contraction in range/volume.
             early_momentum = results[
                 (results["Stage"] == STAGE_1)
-                & (results["RS Rank"] >= 85)
+                & (results["RS Rank"] >= 70)
                 & (results["4W Return %"] > 0)
                 & (results["12W Return %"] >= 15)
                 & (results["30W Slope %"] > 0)
@@ -573,7 +573,7 @@ def render_nse500_screener():
 
             st.markdown("#### 🟡 Early Momentum · Stage 1 to Stage 2 Candidates")
             st.caption(
-                "Pre-transition watchlist: current Stage 1 stocks with RS ≥85, positive 4W return, "
+                "Pre-transition watchlist: current Stage 1 stocks with RS ≥70, positive 4W return, "
                 "12W return ≥15%, positive 30W SMA slope, price 0–10% above the 30W SMA, "
                 "5W average volume no higher than the preceding 10W average, and 4W range ≤15%. "
                 "These are potential accumulation setups, not confirmed Stage 2 entries."
