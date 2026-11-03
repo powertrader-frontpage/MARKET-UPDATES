@@ -110,8 +110,9 @@ def _extract_company_fundamentals(symbol, company, price):
                 continue
             vals = [_num(v) for v in sales_row.iloc[0, 1:].tolist()]
             vals = [v for v in vals if pd.notna(v)]
-            if len(vals) >= 2 and vals[-2] != 0:
-                annual_sales_growth = (vals[-1] / vals[-2] - 1) * 100
+            # Screener.in annual columns are displayed newest-first.
+            if len(vals) >= 2 and vals[1] != 0:
+                annual_sales_growth = (vals[0] / vals[1] - 1) * 100
                 break
 
         distance_below_high = ((high_value - float(price)) / high_value * 100
