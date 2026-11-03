@@ -555,41 +555,84 @@ def render_nse500_screener():
                     key="download_nse500_fresh_stage2_momentum",
                 )
 
-            # Early accumulation candidates: still Stage 1, with positive momentum,
-            # price above a gently rising 30W average, and contraction in range/volume.
+            # Ranked early-accumulation watchlist. Only broad trend/RS gates are hard filters;
+            # 4W momentum, proximity, volume and contraction contribute to the score.
             early_momentum = results[
                 (results["Stage"] == STAGE_1)
                 & (results["RS Rank"] >= 70)
-                & (results["4W Return %"] > 0)
-                & (results["12W Return %"] >= 15)
+                & (results["12W Return %"] > 0)
                 & (results["30W Slope %"] > 0)
-                & (results["Gap vs 30W %"].between(0, 10))
-                & (results["5W / Prior 10W Volume"] <= 1.0)
-                & (results["4W Range %"] <= 15)
-            ].copy().sort_values(
-                ["RS Rank", "12W Return %", "4W Range %"],
-                ascending=[False, False, True]
+                & (results["Gap vs 30W %"].between(-5, 15))
+            ].copy()
+
+            # 100-point exploratory score: RS 25, 12W momentum 20, 30W slope 20,
+            # price position 15, volume contraction 10, price contraction 10.
+            early_momentum["Early RS Points"] = (early_momentum["RS Rank"].clip(0, 99) / 99 * 25)
+            early_momentum["Early 12W Momentum Points"] = (
+                early_momentum["12W Return %"].clip(lower=0, upper=30) / 30 * 20
+            )
+            early_momentum["Early 30W Slope Points"] = (
+                early_momentum["30W Slope %"].clip(lower=0, upper=3) / 3 * 20
+            )
+            gap_abs = early_momentum["Gap vs 30W %"].abs()
+            early_momentum["Early Price Position Points"] = np.select(
+                [gap_abs <= 5, gap_abs <= 10, gap_abs <= 15],
+                [15, 10, 5], default=0
+            )
+            vol_ratio = pd.to_numeric(early_momentum["5W / Prior 10W Volume"], errors="coerce")
+            early_momentum["Early Volume Contraction Points"] = np.select(
+                [vol_ratio <= 0.70, vol_ratio <= 0.85, vol_ratio <= 1.0],
+                [10, 7, 4], default=0
+            )
+            range_pct = pd.to_numeric(early_momentum["4W Range %"], errors="coerce")
+            early_momentum["Early Price Contraction Points"] = np.select(
+                [range_pct <= 5, range_pct <= 10, range_pct <= 15],
+                [10, 7, 4], default=0
+            )
+            early_momentum["Early Accumulation Score"] = (
+                early_momentum["Early RS Points"]
+                + early_momentum["Early 12W Momentum Points"]
+                + early_momentum["Early 30W Slope Points"]
+                + early_momentum["Early Price Position Points"]
+                + early_momentum["Early Volume Contraction Points"]
+                + early_momentum["Early Price Contraction Points"]
+            ).round(1)
+            early_momentum["4W Momentum"] = np.where(
+                pd.to_numeric(early_momentum["4W Return %"], errors="coerce") > 0,
+                "Positive", "Not positive"
+            )
+            early_momentum["Setup Grade"] = np.select(
+                [early_momentum["Early Accumulation Score"] >= 80,
+                 early_momentum["Early Accumulation Score"] >= 65],
+                ["Strong · 80+", "Developing · 65–79"], default="Watch · below 65"
+            )
+            early_momentum = early_momentum.sort_values(
+                ["Early Accumulation Score", "RS Rank", "12W Return %"],
+                ascending=[False, False, False]
             )
 
             st.markdown("#### 🟡 Early Momentum · Stage 1 to Stage 2 Candidates")
             st.caption(
-                "Pre-transition watchlist: current Stage 1 stocks with RS ≥70, positive 4W return, "
-                "12W return ≥15%, positive 30W SMA slope, price 0–10% above the 30W SMA, "
-                "5W average volume no higher than the preceding 10W average, and 4W range ≤15%. "
-                "These are potential accumulation setups, not confirmed Stage 2 entries."
+                "Ranked Stage 1 watchlist. Hard gates: RS ≥70, positive 12W return, rising 30W SMA, "
+                "and price from 5% below to 15% above the 30W SMA. A 100-point exploratory score "
+                "ranks RS (25), 12W momentum (20), 30W slope (20), price position (15), "
+                "volume contraction (10) and price contraction (10). Positive 4W momentum is preferred, "
+                "not mandatory. Score bands: 80+ Strong, 65–79 Developing, below 65 Watch. "
+                "Not a probability or confirmed Stage 2 signal."
             )
             if early_momentum.empty:
-                st.info("No Stage 1 stock currently meets all early-momentum and contraction conditions.")
+                st.info("No Stage 1 stocks currently pass the broad RS, momentum and trend gates.")
             else:
                 early_cols = [
                     "Symbol", "Company", "Sector", "Price", "RS Rank",
-                    "4W Return %", "12W Return %", "30W Slope %",
-                    "Gap vs 30W %", "5W / Prior 10W Volume", "4W Range %", "52W High Gap %"
+                    "Early Accumulation Score", "Setup Grade", "4W Return %",
+                    "12W Return %", "30W Slope %", "Gap vs 30W %",
+                    "5W / Prior 10W Volume", "4W Range %", "52W High Gap %"
                 ]
                 st.dataframe(
-                    early_momentum[early_cols],
+                    early_momentum[early_cols].head(30),
                     use_container_width=True, hide_index=True,
-                    height=min(420, 42 + 38 * len(early_momentum))
+                    height=min(520, 42 + 38 * min(30, len(early_momentum)))
                 )
                 st.download_button(
                     "Download Early Momentum Stage 1 candidates (CSV)",
