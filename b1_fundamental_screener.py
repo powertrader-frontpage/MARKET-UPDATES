@@ -61,13 +61,25 @@ def _extract_company_fundamentals(symbol, company, price):
         response.raise_for_status()
         tables = pd.read_html(StringIO(response.text))
         metrics = {}
+        # Screener.in's headline ratios are list items, not always HTML tables.
+        # Extract their visible label/value pairs first, then supplement from tables.
+        for match in re.finditer(
+            r'<li[^>]*>.*?<span[^>]*class="[^"]*name[^"]*"[^>]*>(.*?)</span>.*?<span[^>]*class="[^"]*number[^"]*"[^>]*>(.*?)</span>',
+            response.text, flags=re.IGNORECASE | re.DOTALL
+        ):
+            label = re.sub(r"<[^>]+>", " ", match.group(1))
+            value = re.sub(r"<[^>]+>", " ", match.group(2))
+            label = " ".join(label.split()).lower()
+            value = " ".join(value.split())
+            if label:
+                metrics[label] = value
         for table in tables:
             if table.empty:
                 continue
             for _, row in table.iterrows():
                 vals = [str(v).strip() for v in row.tolist() if pd.notna(v)]
                 if len(vals) >= 2:
-                    metrics[vals[0].strip().lower()] = vals[1]
+                    metrics.setdefault(vals[0].strip().lower(), vals[1])
 
         def metric(*labels):
             for label in labels:
