@@ -1258,8 +1258,8 @@ def _sentiment_change(label, ticker, weight, inverse=False):
             return
         adr_tickers = {"INFY", "WIT", "HDB", "IBN"}
         if ticker in adr_tickers:
-            # Do not use IIFL's page-level timestamp: its table can retain prior-session
-            # prices while the page header advances. Use the ticker's dated daily bars only.
+            # Ignore page-level timestamps: some quote pages advance their header while
+            # retaining prior-session rows. Only accept a dated Yahoo daily bar.
             frame, err = get_history(ticker, "1mo", "1d")
             snap = quote_snapshot(frame)
             if snap:
@@ -1274,21 +1274,6 @@ def _sentiment_change(label, ticker, weight, inverse=False):
                     sentiment_details.append({"Factor": label, "Weight": f"{weight * 100:g}%", "Latest change": f"{pct:+.2f}%", "Signal": sentiment_signal, "Source bar": f'{adr_date:%d %b %Y} · Yahoo Finance daily bar'})
                     return
             sentiment_errors.append(f"{label}: excluded because the latest Yahoo ADR daily bar is older than 2 calendar days or unavailable")
-            return
-        frame, err = get_history(ticker, "1mo", "1d")
-            snap = quote_snapshot(frame)
-            if snap:
-                last, change, pct = snap
-                adr_date = pd.to_datetime(last["Date"], errors="coerce")
-                adr_age_days = (now_ist.date() - adr_date.date()).days if pd.notna(adr_date) else 999
-                if adr_age_days <= 3:
-                    pct = float(pct)
-                    score = 1 if pct > 0 else -1 if pct < 0 else 0
-                    sentiment_parts.append((score, weight))
-                    sentiment_signal = "Positive" if score > 0 else "Negative" if score < 0 else "Flat"
-                    sentiment_details.append({"Factor": label, "Weight": f"{weight * 100:g}%", "Latest change": f"{pct:+.2f}%", "Signal": sentiment_signal, "Source bar": f'{adr_date:%d %b %Y} · Yahoo Finance'})
-                    return
-            sentiment_errors.append(f"{label}: excluded because IIFL and Yahoo ADR quotes are stale or unavailable")
             return
         frame, err = get_history(ticker, "1mo", "1d")
         snap = quote_snapshot(frame)
