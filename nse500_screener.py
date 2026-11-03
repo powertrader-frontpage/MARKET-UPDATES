@@ -752,12 +752,6 @@ def render_nse500_screener():
                     st.markdown("**LAGGING INDUSTRIES**")
                     st.dataframe(bottom_industries, use_container_width=True, hide_index=True, height=300)
                 st.download_button("Download industry rotation (CSV)", industry_view.to_csv(index=False).encode("utf-8"), "nse500_industry_rotation.csv", "text/csv", key="download_nse500_industry_rotation")
-                with st.expander("Industry constituent leaders · drill down", expanded=False):
-                    chosen_industry = st.selectbox("Choose industry", ["All industries"] + sorted(results["Industry"].dropna().astype(str).unique()), key="nse500_industry_drilldown")
-                    industry_stocks = results if chosen_industry == "All industries" else results[results["Industry"].astype(str) == chosen_industry]
-                    industry_cols = ["Symbol", "Company", "Industry", "Price", "RS Rank", "4W Return %", "12W Return %", "RS vs Industry 4W (pp)", "RS vs Industry 12W (pp)", "Stage"]
-                    industry_stocks = industry_stocks.sort_values(["RS vs Industry 12W (pp)", "RS vs Industry 4W (pp)"], ascending=False, na_position="last")
-                    st.dataframe(industry_stocks[industry_cols], use_container_width=True, hide_index=True, height=420)
             else:
                 st.info("Industry rotation data is unavailable for this scan.")
 
