@@ -832,28 +832,74 @@ def get_eia_brent_spot() -> tuple[pd.DataFrame, str | None]:
         return pd.DataFrame(), f"EIA Brent fetch failed: {type(exc).__name__}: {str(exc)[:180]}"
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+def _yahoo_chart_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, str | None]:
+    """Direct Yahoo chart endpoint fallback; returns only source-provided candles."""
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+        response = requests.get(
+            url,
+            params={"range": period, "interval": interval, "events": "history"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=12,
+        )
+        response.raise_for_status()
+        payload = response.json().get("chart", {})
+        if payload.get("error"):
+            return pd.DataFrame(), "Yahoo chart endpoint returned a source error."
+        result = (payload.get("result") or [None])[0]
+        if not result:
+            return pd.DataFrame(), "Yahoo chart endpoint returned no result."
+        timestamps = result.get("timestamp") or []
+        quote = ((result.get("indicators") or {}).get("quote") or [{}])[0]
+        if not timestamps:
+            return pd.DataFrame(), "Yahoo chart endpoint returned no candles."
+        frame = pd.DataFrame({"Date": pd.to_datetime(timestamps, unit="s", utc=True).tz_convert("Asia/Kolkata")})
+        for source_col, target_col in (("open", "Open"), ("high", "High"), ("low", "Low"), ("close", "Close"), ("volume", "Volume")):
+            values = quote.get(source_col)
+            if values is not None:
+                frame[target_col] = values
+        frame["Source"] = "Yahoo chart API"
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            if col in frame:
+                frame[col] = pd.to_numeric(frame[col], errors="coerce")
+        frame = frame.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
+        return frame.reset_index(drop=True), None
+    except Exception as exc:
+        return pd.DataFrame(), f"Yahoo chart fallback failed: {type(exc).__name__}"
+
+
+@st.cache_data(ttl=120, show_spinner=False)
 def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, str | None]:
-    """Fetch best-effort market history from Yahoo Finance via yfinance; never synthesize rows."""
+    """Fetch Yahoo history and use the direct chart endpoint if it has a newer candle."""
+    yf_error = None
     try:
         data = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False, actions=False, raise_errors=True)
-        if data is None or data.empty:
-            return pd.DataFrame(), "Source returned no rows for this ticker/period/interval."
-        data = data.reset_index()
-        date_col = "Datetime" if "Datetime" in data.columns else "Date"
-        data = data.rename(columns={date_col: "Date"})
-        data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
-        if data["Date"].dt.tz is None:
-            data["Date"] = data["Date"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
+        if data is not None and not data.empty:
+            data = data.reset_index()
+            date_col = "Datetime" if "Datetime" in data.columns else "Date"
+            data = data.rename(columns={date_col: "Date"})
+            data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
+            if data["Date"].dt.tz is None:
+                data["Date"] = data["Date"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
+            else:
+                data["Date"] = data["Date"].dt.tz_convert("Asia/Kolkata")
+            for col in ["Open", "High", "Low", "Close", "Volume"]:
+                if col in data:
+                    data[col] = pd.to_numeric(data[col], errors="coerce")
+            data = data.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
+            data["Source"] = "yfinance"
         else:
-            data["Date"] = data["Date"].dt.tz_convert("Asia/Kolkata")
-        for c in ["Open", "High", "Low", "Close", "Volume"]:
-            if c in data.columns:
-                data[c] = pd.to_numeric(data[c], errors="coerce")
-        data = data.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
-        return data.reset_index(drop=True), None
+            data = pd.DataFrame()
+            yf_error = "yfinance returned no rows."
     except Exception as exc:
-        return pd.DataFrame(), f"Fetch failed: {type(exc).__name__}: {str(exc)[:240]}"
+        data = pd.DataFrame()
+        yf_error = f"yfinance failed: {type(exc).__name__}"
+    fallback, fallback_error = _yahoo_chart_history(ticker, period, interval)
+    if not fallback.empty and (data.empty or fallback["Date"].max() > data["Date"].max()):
+        return fallback, None
+    if not data.empty:
+        return data.reset_index(drop=True), None
+    return pd.DataFrame(), yf_error or fallback_error or "Both Yahoo history routes returned no data."
 
 # Actually invalidate only the short-lived Yahoo history cache once per new browser session.
 # Keep longer-running research/scanner caches untouched to avoid expensive reloads.
