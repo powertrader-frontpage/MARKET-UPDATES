@@ -49,13 +49,6 @@ div[data-testid="stDataFrame"]{border-radius:10px;overflow:hidden}
 st.title("📈 Market Intelligence Terminal")
 st.caption("Free hybrid edition · No broker API · Source-labelled data · Missing data stays missing")
 
-# Force a fresh source fetch once per new browser session, rather than reusing data cached by a prior visit.
-# This is session-scoped so normal reruns can still benefit from short source caches.
-if not st.session_state.get("_market_data_cache_cleared_on_open", False):
-    st.session_state["_market_data_cache_cleared_on_open"] = True
-
-
-
 INDEXES = {
     "NIFTY 50": "^NSEI",
     "BANK NIFTY": "^NSEBANK",
@@ -861,6 +854,12 @@ def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, 
         return data.reset_index(drop=True), None
     except Exception as exc:
         return pd.DataFrame(), f"Fetch failed: {type(exc).__name__}: {str(exc)[:240]}"
+
+# Actually invalidate only the short-lived Yahoo history cache once per new browser session.
+# Keep longer-running research/scanner caches untouched to avoid expensive reloads.
+if not st.session_state.get("_market_data_cache_cleared_on_open", False):
+    get_history.clear()
+    st.session_state["_market_data_cache_cleared_on_open"] = True
 
 # Public-data universe used to make stock research less manual. Industry labels are static classifications,
 # while prices are fetched live from Yahoo Finance and must be verified against source timestamps.
