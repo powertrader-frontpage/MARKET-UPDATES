@@ -37,16 +37,19 @@ def _company_page(symbol):
         response.raise_for_status()
         payload = response.json()
         rows = payload if isinstance(payload, list) else payload.get("results", []) if isinstance(payload, dict) else []
+        # The endpoint returns a ranked JSON list. Its display name often
+        # omits the NSE ticker, so requiring the symbol in the title rejects
+        # valid company matches (e.g. PPLPHARMA -> Piramal Pharma Ltd.).
+        if isinstance(payload, dict):
+            rows = payload.get("results") or payload.get("companies") or payload.get("data") or []
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            url = str(row.get("url") or row.get("href") or "")
-            title = str(row.get("title") or row.get("name") or "").upper()
-            if url and (symbol.upper() in title or not title):
-                if url.startswith("/"):
-                    url = "https://www.screener.in" + url
-                if url.startswith("https://www.screener.in/company/"):
-                    return url
+            url = str(row.get("url") or row.get("href") or row.get("link") or "")
+            if url.startswith("/"):
+                url = "https://www.screener.in" + url
+            if url.startswith("https://www.screener.in/company/"):
+                return url
     except Exception:
         return None
     return None
