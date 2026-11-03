@@ -1938,9 +1938,8 @@ else:
         # Minimal NIFTY 50 pivot strip directly below Price Trend.
         nifty_levels_df = market_data.get("NIFTY 50", pd.DataFrame()).copy()
         if not nifty_levels_df.empty and {"Date", "High", "Low", "Close"}.issubset(nifty_levels_df.columns):
-            # Normalize all source timestamps to IST, then select the latest completed
-            # trading session strictly before today. This avoids accidentally using a
-            # partial current-day candle or an old row caused by mixed timestamp sorting.
+            # Normalize source timestamps to IST and use the latest completed session
+            # strictly before today. Never use a partial current-day candle.
             nifty_levels_df["_pivot_date_ist"] = (
                 pd.to_datetime(nifty_levels_df["Date"], errors="coerce", utc=True)
                 .dt.tz_convert("Asia/Kolkata")
@@ -1962,11 +1961,11 @@ else:
                     nifty_p = (nifty_ph + nifty_pl + nifty_pc) / 3
                     nifty_s1, nifty_r1 = 2 * nifty_p - nifty_ph, 2 * nifty_p - nifty_pl
                     nifty_s2, nifty_r2 = nifty_p - (nifty_ph - nifty_pl), nifty_p + (nifty_ph - nifty_pl)
-                        st.markdown(
-                            f'<div style="font-size:12px;font-weight:700;color:#cbd5e1;margin:5px 0 6px;">NIFTY 50 · QUICK SUPPORT / RESISTANCE '
-                            f'<span style="font-size:10px;font-weight:400;color:#94a3b8;">Pivot estimates · ref. {nifty_pivot_date:%d %b %Y} · previous completed session</span></div>',
-                            unsafe_allow_html=True,
-                        )
+                    st.markdown(
+                        f'<div style="font-size:12px;font-weight:700;color:#cbd5e1;margin:5px 0 6px;">NIFTY 50 · QUICK SUPPORT / RESISTANCE '
+                        f'<span style="font-size:10px;font-weight:400;color:#94a3b8;">Pivot estimates · ref. {nifty_pivot_date:%d %b %Y} · previous completed session</span></div>',
+                        unsafe_allow_html=True,
+                    )
                     nifty_level_cols = st.columns(5, gap="small")
                     for level_col, level_name, level_value, level_color in zip(
                         nifty_level_cols,
@@ -1982,6 +1981,8 @@ else:
                             unsafe_allow_html=True,
                         )
                     st.caption("Classic pivot estimates for information only; not guaranteed price levels.")
+                else:
+                    st.caption(f"NIFTY 50 pivot levels hidden: latest completed-session data is stale ({nifty_pivot_date:%d %b %Y}).")
 
         render_nse500_screener()
 
