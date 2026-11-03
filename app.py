@@ -1962,26 +1962,26 @@ else:
                     nifty_p = (nifty_ph + nifty_pl + nifty_pc) / 3
                     nifty_s1, nifty_r1 = 2 * nifty_p - nifty_ph, 2 * nifty_p - nifty_pl
                     nifty_s2, nifty_r2 = nifty_p - (nifty_ph - nifty_pl), nifty_p + (nifty_ph - nifty_pl)
-                    st.markdown(
-                        f'<div style="font-size:12px;font-weight:700;color:#cbd5e1;margin:5px 0 6px;">NIFTY 50 · QUICK SUPPORT / RESISTANCE '
-                        f'<span style="font-size:10px;font-weight:400;color:#94a3b8;">Pivot estimates · ref. {nifty_pivot_date:%d %b %Y} · previous completed session</span></div>',
-                        unsafe_allow_html=True,
-                    )
-                nifty_level_cols = st.columns(5, gap="small")
-                for level_col, level_name, level_value, level_color in zip(
-                    nifty_level_cols,
-                    ["S2", "S1", "Pivot", "R1", "R2"],
-                    [nifty_s2, nifty_s1, nifty_p, nifty_r1, nifty_r2],
-                    ["#4ade80", "#22c55e", "#f59e0b", "#fb7185", "#ef4444"],
-                ):
-                    level_col.markdown(
-                        f'<div style="border:1px solid #343a46;border-top:2px solid {level_color};border-radius:7px;'
-                        f'padding:6px 5px;text-align:center;background:rgba(15,23,42,.42);">'
-                        f'<div style="font-size:10px;color:#aeb6c2;">{level_name}</div>'
-                        f'<div style="font-size:13px;font-weight:750;color:{level_color};">{level_value:,.2f}</div></div>',
-                        unsafe_allow_html=True,
-                    )
-                st.caption("Classic pivot estimates for information only; not guaranteed price levels.")
+                        st.markdown(
+                            f'<div style="font-size:12px;font-weight:700;color:#cbd5e1;margin:5px 0 6px;">NIFTY 50 · QUICK SUPPORT / RESISTANCE '
+                            f'<span style="font-size:10px;font-weight:400;color:#94a3b8;">Pivot estimates · ref. {nifty_pivot_date:%d %b %Y} · previous completed session</span></div>',
+                            unsafe_allow_html=True,
+                        )
+                    nifty_level_cols = st.columns(5, gap="small")
+                    for level_col, level_name, level_value, level_color in zip(
+                        nifty_level_cols,
+                        ["S2", "S1", "Pivot", "R1", "R2"],
+                        [nifty_s2, nifty_s1, nifty_p, nifty_r1, nifty_r2],
+                        ["#4ade80", "#22c55e", "#f59e0b", "#fb7185", "#ef4444"],
+                    ):
+                        level_col.markdown(
+                            f'<div style="border:1px solid #343a46;border-top:2px solid {level_color};border-radius:7px;'
+                            f'padding:6px 5px;text-align:center;background:rgba(15,23,42,.42);">'
+                            f'<div style="font-size:10px;color:#aeb6c2;">{level_name}</div>'
+                            f'<div style="font-size:13px;font-weight:750;color:{level_color};">{level_value:,.2f}</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                    st.caption("Classic pivot estimates for information only; not guaranteed price levels.")
 
         render_nse500_screener()
 
