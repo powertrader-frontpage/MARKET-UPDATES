@@ -281,6 +281,20 @@ def _calculate():
         prior_12w = weekly[ticker].iloc[-13] if len(weekly[ticker].dropna()) >= 13 else np.nan
         return_4w = (price / float(prior_4w) - 1) * 100 if pd.notna(prior_4w) and float(prior_4w) > 0 else np.nan
         return_12w = (price / float(prior_12w) - 1) * 100 if pd.notna(prior_12w) and float(prior_12w) > 0 else np.nan
+        recent5_volume = weekly_volume[ticker].tail(5).mean() if ticker in weekly_volume.columns else np.nan
+        prior10_volume = weekly_volume[ticker].iloc[-15:-5].mean() if ticker in weekly_volume.columns and len(weekly_volume) >= 15 else np.nan
+        volume_contraction = (
+            float(recent5_volume / prior10_volume)
+            if pd.notna(recent5_volume) and pd.notna(prior10_volume) and float(prior10_volume) > 0
+            else np.nan
+        )
+        recent4_high = weekly_high[ticker].tail(4).max() if ticker in weekly_high.columns else np.nan
+        recent4_low = weekly_low[ticker].tail(4).min() if ticker in weekly_low.columns else np.nan
+        range4_pct = (
+            (float(recent4_high) / float(recent4_low) - 1) * 100
+            if pd.notna(recent4_high) and pd.notna(recent4_low) and float(recent4_low) > 0
+            else np.nan
+        )
         vol_now = latest_volume.get(ticker)
         vol_avg = avg10_volume.get(ticker)
         volume_ratio = float(vol_now / vol_avg) if pd.notna(vol_now) and pd.notna(vol_avg) and float(vol_avg) > 0 else np.nan
@@ -309,6 +323,7 @@ def _calculate():
             "Symbol": item["Symbol"], "Company": item["Company"], "Sector": item["Sector"],
             "Price": price, "RS Rank": int(rank), "Stage": stage, "Previous Stage": previous_stage,
             "New Stage 2": newly_stage2, "4W Return %": return_4w, "12W Return %": return_12w,
+            "5W / Prior 10W Volume": volume_contraction, "4W Range %": range4_pct,
             "Reclaimed 10W": reclaimed_10w,
             "Gap vs 10W %": gap_vs_10w, "Base Count": base_count,
             "Fresh B2": fresh_b2, "Volume vs 10W Avg": volume_ratio,
@@ -538,6 +553,49 @@ def render_nse500_screener():
                     fresh_momentum[momentum_cols].to_csv(index=False).encode("utf-8"),
                     "nse500_fresh_stage2_strong_momentum.csv", "text/csv",
                     key="download_nse500_fresh_stage2_momentum",
+                )
+
+            # Early accumulation candidates: still Stage 1, with positive momentum,
+            # price above a gently rising 30W average, and contraction in range/volume.
+            early_momentum = results[
+                (results["Stage"] == STAGE_1)
+                & (results["RS Rank"] >= 85)
+                & (results["4W Return %"] > 0)
+                & (results["12W Return %"] >= 15)
+                & (results["30W Slope %"] > 0)
+                & (results["Gap vs 30W %"].between(0, 10))
+                & (results["5W / Prior 10W Volume"] <= 1.0)
+                & (results["4W Range %"] <= 15)
+            ].copy().sort_values(
+                ["RS Rank", "12W Return %", "4W Range %"],
+                ascending=[False, False, True]
+            )
+
+            st.markdown("#### 🟡 Early Momentum · Stage 1 to Stage 2 Candidates")
+            st.caption(
+                "Pre-transition watchlist: current Stage 1 stocks with RS ≥85, positive 4W return, "
+                "12W return ≥15%, positive 30W SMA slope, price 0–10% above the 30W SMA, "
+                "5W average volume no higher than the preceding 10W average, and 4W range ≤15%. "
+                "These are potential accumulation setups, not confirmed Stage 2 entries."
+            )
+            if early_momentum.empty:
+                st.info("No Stage 1 stock currently meets all early-momentum and contraction conditions.")
+            else:
+                early_cols = [
+                    "Symbol", "Company", "Sector", "Price", "RS Rank",
+                    "4W Return %", "12W Return %", "30W Slope %",
+                    "Gap vs 30W %", "5W / Prior 10W Volume", "4W Range %", "52W High Gap %"
+                ]
+                st.dataframe(
+                    early_momentum[early_cols],
+                    use_container_width=True, hide_index=True,
+                    height=min(420, 42 + 38 * len(early_momentum))
+                )
+                st.download_button(
+                    "Download Early Momentum Stage 1 candidates (CSV)",
+                    early_momentum[early_cols].to_csv(index=False).encode("utf-8"),
+                    "nse500_early_momentum_stage1_candidates.csv", "text/csv",
+                    key="download_nse500_early_momentum_stage1",
                 )
 
             st.markdown("#### 🟢 Fresh Stage 2 entries · Stage 1 → Stage 2")
