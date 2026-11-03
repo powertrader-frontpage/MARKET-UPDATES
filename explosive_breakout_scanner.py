@@ -629,6 +629,24 @@ def run_explosive_breakout_scan():
     return fresh, follow, warning, upcoming, result, news
 
 
+def _highlight_new_stock_rows(frame: pd.DataFrame, new_symbols: set[str]):
+    """Add a NEW label and highlight newly appearing symbols across scanner tables."""
+    if frame is None or frame.empty or "Symbol" not in frame.columns:
+        return frame
+    view = frame.copy()
+    symbols = view["Symbol"].astype(str).str.strip()
+    new_symbols = {str(x).strip() for x in new_symbols}
+    is_new = symbols.isin(new_symbols)
+    view.insert(0, "Status", np.where(is_new, "🆕 NEW", ""))
+    return view.style.apply(
+        lambda row: [
+            "background-color: #123d2b; color: #65f0a6; font-weight: 700;"
+            if str(row.get("Symbol", "")).strip() in new_symbols else ""
+            for _ in row
+        ],
+        axis=1,
+    )
+
 def render_explosive_breakout_scanner():
     st.markdown("""<div style="font-size:clamp(26px,3.5vw,38px);font-weight:850;letter-spacing:-1px;margin:10px 0 8px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">🚀 Explosive Breakout Scanner</div>""", unsafe_allow_html=True)
     st.caption("Nifty Midcap 150 + Nifty Smallcap 250 · Early B1 breakout detection · Official NSE catalyst verification · Volume and relative-strength ranking")
@@ -640,7 +658,7 @@ def render_explosive_breakout_scanner():
         st.caption("Price history, fundamentals, official NSE filings and supporting news are cached for 6 hours. Catalyst checks run only for the top 30 technical candidates.")
     # Bump this whenever scanner filters or classification rules change. This
     # invalidates old session_state tables that otherwise survive code deployments.
-    scan_version = "official-nse-catalyst-early-b1-gapup-contraction-v4"
+    scan_version = "official-nse-catalyst-early-b1-gapup-contraction-v5-new-row-highlights"
     needs_refresh = st.session_state.get("explosive_breakout_scan_version") != scan_version
     if run or needs_refresh or st.session_state.get("explosive_breakout_scan_loaded", False):
         if run or needs_refresh or "explosive_breakout_scan_data" not in st.session_state:
@@ -653,9 +671,11 @@ def render_explosive_breakout_scanner():
                 st.session_state["explosive_breakout_scan_data"] = (fresh, follow, upcoming, all_rows, news)
                 st.session_state["explosive_breakout_scan_warning"] = warning
                 st.session_state["explosive_breakout_scan_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y %H:%M IST")
-                previous = st.session_state.get("explosive_breakout_previous_symbols", set())
-                current = set(all_rows["Symbol"].astype(str)) if not all_rows.empty else set()
-                fresh["Status"] = fresh["Symbol"].astype(str).map(lambda x: "🆕 NEW" if x not in previous and previous else ("Baseline" if not previous else "Existing"))
+                previous = st.session_state.get("explosive_breakout_previous_symbols", None)
+                current = set(all_rows["Symbol"].astype(str).str.strip()) if not all_rows.empty else set()
+                # First scan establishes a baseline; later scans flag symbols absent from the previous scan.
+                new_symbols = current - previous if previous is not None else set()
+                st.session_state["explosive_breakout_new_symbols"] = new_symbols
                 st.session_state["explosive_breakout_previous_symbols"] = current
             else:
                 st.session_state["explosive_breakout_scan_data"] = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame())
@@ -678,7 +698,7 @@ def render_explosive_breakout_scanner():
         if not fresh.empty:
             st.subheader("Fresh B1 · Stage 2 breakouts")
             display = ["Status", "Opportunity Score", "Technical Score", "Fundamental Score", "Catalyst Score", "Early-entry quality", "Catalyst status", "Official catalyst", "Official catalyst date", "Official source", "Symbol", "Company", "Segment", "Sector", "Price", "Breakout level", "Base Count", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %", "13W return %", "30W slope %", "EMA 10>21>55", "Daily change %"]
-            st.dataframe(fresh[[c for c in display if c in fresh.columns]], use_container_width=True, hide_index=True)
+            st.dataframe(_highlight_new_stock_rows(fresh[[c for c in display if c in fresh.columns]], st.session_state.get("explosive_breakout_new_symbols", set())), use_container_width=True, hide_index=True)
         else:
             st.info("No fresh B1 breakout met all current conditions. Check Upcoming Breakouts and Stage 2 follow-through below.")
         # Independent daily setups from the two supplied Chartink conditions.
@@ -691,37 +711,37 @@ def render_explosive_breakout_scanner():
         if gapup_rows.empty:
             st.caption("No stock currently meets all gap-up, prior 250-day high, 3× volume and liquidity conditions.")
         else:
-            st.dataframe(gapup_rows[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Sector", "Stage", "Price", "Gap-up %", "Daily volume vs prior 50D avg", "Prior 60D range ratio", "Catalyst status", "Official catalyst", "Official catalyst date", "Official source"] if c in gapup_rows.columns]], use_container_width=True, hide_index=True)
+            st.dataframe(_highlight_new_stock_rows(gapup_rows[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Sector", "Stage", "Price", "Gap-up %", "Daily volume vs prior 50D avg", "Prior 60D range ratio", "Catalyst status", "Official catalyst", "Official catalyst date", "Official source"] if c in gapup_rows.columns]], st.session_state.get("explosive_breakout_new_symbols", set())), use_container_width=True, hide_index=True)
         st.subheader("Pre-breakout Contraction · Near 52-week highs")
         if contraction_rows.empty:
             st.caption("No stock currently meets the 5%-from-250-day-high, rising 50D/200D trend, 10-day tight-range and liquidity conditions.")
         else:
-            st.dataframe(contraction_rows[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Sector", "Stage", "Price", "Gap to 250D high %", "10D range ratio", "Volume vs 10W Avg", "Catalyst status", "Official catalyst", "Official catalyst date", "Official source"] if c in contraction_rows.columns]], use_container_width=True, hide_index=True)
+            st.dataframe(_highlight_new_stock_rows(contraction_rows[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Sector", "Stage", "Price", "Gap to 250D high %", "10D range ratio", "Volume vs 10W Avg", "Catalyst status", "Official catalyst", "Official catalyst date", "Official source"] if c in contraction_rows.columns]], st.session_state.get("explosive_breakout_new_symbols", set())), use_container_width=True, hide_index=True)
         st.caption("These two daily Chartink-style triggers are independent overlays; they do not replace Weinstein Stage/B1 logic. Catalyst-backed labels still require a qualifying dated NSE filing.")
 
         st.subheader("Upcoming Breakouts · Early watch")
         if upcoming.empty:
             st.caption("No Stage 1/2 candidates are currently within 5% of their recent breakout resistance with positive 13-week momentum.")
         else:
-            st.dataframe(upcoming[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Stage", "Gap to breakout %", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %", "Catalyst Score", "Catalyst status", "Official catalyst", "Official catalyst date", "Official source"] if c in upcoming.columns]], use_container_width=True, hide_index=True)
+            st.dataframe(_highlight_new_stock_rows(upcoming[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Stage", "Gap to breakout %", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %", "Catalyst Score", "Catalyst status", "Official catalyst", "Official catalyst date", "Official source"] if c in upcoming.columns]], st.session_state.get("explosive_breakout_new_symbols", set())), use_container_width=True, hide_index=True)
         st.subheader("Strong B2+ · Breakout follow-through")
         if follow.empty:
             st.caption("No additional Stage 2 stocks with later base breakouts currently qualify.")
         else:
-            st.dataframe(follow[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Breakout level", "Base Count", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %"] if c in follow.columns]], use_container_width=True, hide_index=True)
+            st.dataframe(_highlight_new_stock_rows(follow[[c for c in ["Opportunity Score", "Technical Score", "Symbol", "Company", "Segment", "Sector", "Price", "Breakout level", "Base Count", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %"] if c in follow.columns]], st.session_state.get("explosive_breakout_new_symbols", set())), use_container_width=True, hide_index=True)
         with st.expander("Catalyst → Weinstein Stage timeline", expanded=False):
             timeline_cols = ["Symbol", "Company", "Stage", "Stage start date", "Latest catalyst date",
                              "Catalyst type", "Latest catalyst", "Catalyst-to-stage days", "Catalyst timing"]
             timeline = all_rows[[c for c in timeline_cols if c in all_rows.columns]].copy() if not all_rows.empty else pd.DataFrame()
             if not timeline.empty:
                 timeline = timeline[timeline.get("Latest catalyst", pd.Series(index=timeline.index, dtype="object")).notna()]
-                st.dataframe(timeline, use_container_width=True, hide_index=True)
+                st.dataframe(_highlight_new_stock_rows(timeline, st.session_state.get("explosive_breakout_new_symbols", set())), use_container_width=True, hide_index=True)
                 st.caption("Catalyst timing uses the latest positive NSE-filed event found for each shortlisted stock and compares it with the current Weinstein stage start. Timing is an investigative clue, not proof of causation.")
             else:
                 st.caption("No positive, dated official NSE catalyst was found for the current technical shortlist. Media coverage alone is not treated as confirmation.")
         with st.expander("Recent news & catalysts · technical shortlist", expanded=False):
             if not news.empty:
-                st.dataframe(news, use_container_width=True, hide_index=True, column_config={"Source link": st.column_config.LinkColumn("Source link")})
+                st.dataframe(_highlight_new_stock_rows(news, st.session_state.get("explosive_breakout_new_symbols", set())), use_container_width=True, hide_index=True, column_config={"Source link": st.column_config.LinkColumn("Source link")})
                 st.caption("Official NSE filings are distinguished from media coverage. Automated headline classification is only a screening aid; open the source and verify the filing before acting.")
             else:
                 st.caption("No recent headlines were returned for the top technical shortlist. No catalyst is assumed.")
