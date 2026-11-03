@@ -27,14 +27,20 @@ def _constituents():
     cols = {str(c).strip().lower(): c for c in frame.columns}
     symbol_col = cols.get("symbol")
     company_col = cols.get("company name") or cols.get("companyname")
-    sector_col = cols.get("industry") or cols.get("sector")
+    industry_col = cols.get("industry")
+    sector_col = cols.get("sector")
     if symbol_col is None:
         raise ValueError("Official Nifty 500 file has no Symbol column.")
     symbols = frame[symbol_col].astype(str).str.strip()
+    industry_values = frame[industry_col].astype(str).str.strip() if industry_col else (
+        frame[sector_col].astype(str).str.strip() if sector_col else pd.Series("Unclassified", index=frame.index)
+    )
+    sector_values = frame[sector_col].astype(str).str.strip() if sector_col else industry_values
     out = pd.DataFrame({
         "Symbol": symbols,
         "Company": frame[company_col].astype(str).str.strip() if company_col else symbols,
-        "Sector": frame[sector_col].astype(str).str.strip() if sector_col else "Unclassified",
+        "Sector": sector_values,
+        "Industry": industry_values,
     })
     out = out[out["Symbol"].ne("") & out["Symbol"].str.lower().ne("nan")].drop_duplicates("Symbol")
     out["Ticker"] = out["Symbol"] + ".NS"
@@ -321,6 +327,7 @@ def _calculate():
         day_change = (float(d0) / float(d1) - 1) * 100 if pd.notna(d0) and pd.notna(d1) and float(d1) else np.nan
         records.append({
             "Symbol": item["Symbol"], "Company": item["Company"], "Sector": item["Sector"],
+            "Industry": item.get("Industry", item["Sector"]),
             "Price": price, "RS Rank": int(rank), "Stage": stage, "Previous Stage": previous_stage,
             "New Stage 2": newly_stage2, "4W Return %": return_4w, "12W Return %": return_12w,
             "5W / Prior 10W Volume": volume_contraction, "4W Range %": range4_pct,
@@ -337,6 +344,12 @@ def _calculate():
         raise ValueError("No NSE 500 symbols had enough usable weekly price history.")
     result = result.sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False]).reset_index(drop=True)
 
+    # Stock strength relative to the median return of its assigned sector/industry peer group.
+    result["RS vs Sector 4W (pp)"] = result["4W Return %"] - result.groupby("Sector")["4W Return %"].transform("median")
+    result["RS vs Sector 12W (pp)"] = result["12W Return %"] - result.groupby("Sector")["12W Return %"].transform("median")
+    result["RS vs Industry 4W (pp)"] = result["4W Return %"] - result.groupby("Industry")["4W Return %"].transform("median")
+    result["RS vs Industry 12W (pp)"] = result["12W Return %"] - result.groupby("Industry")["12W Return %"].transform("median")
+
     sector_rows = []
     for sector, group in result.groupby("Sector", dropna=False):
         changes = pd.to_numeric(group["Daily Change %"], errors="coerce").dropna()
@@ -350,6 +363,28 @@ def _calculate():
         ["Median RS", "Advancing Stocks %"], ascending=False
     )
     sector_rs_map = sectors.set_index("Sector")["Median RS"].to_dict()
+
+    industry_rows = []
+    universe_median_4w = pd.to_numeric(result["4W Return %"], errors="coerce").median()
+    universe_median_12w = pd.to_numeric(result["12W Return %"], errors="coerce").median()
+    for industry, group in result.groupby("Industry", dropna=False):
+        ret4 = pd.to_numeric(group["4W Return %"], errors="coerce").dropna()
+        ret12 = pd.to_numeric(group["12W Return %"], errors="coerce").dropna()
+        daily = pd.to_numeric(group["Daily Change %"], errors="coerce").dropna()
+        industry_rows.append({
+            "Industry": industry, "Stocks": int(len(group)),
+            "Median RS Rank": round(float(group["RS Rank"].median()), 1),
+            "4W Return %": round(float(ret4.median()), 2) if len(ret4) else np.nan,
+            "12W Return %": round(float(ret12.median()), 2) if len(ret12) else np.nan,
+            "4W RS vs NSE 500 (pp)": round(float(ret4.median() - universe_median_4w), 2) if len(ret4) else np.nan,
+            "12W RS vs NSE 500 (pp)": round(float(ret12.median() - universe_median_12w), 2) if len(ret12) else np.nan,
+            "Stage 2 %": round(float((group["Stage"] == STAGE_2).mean() * 100), 1),
+            "Advancing Stocks %": round(float((daily > 0).mean() * 100), 1) if len(daily) else np.nan,
+        })
+    industries = pd.DataFrame(industry_rows).sort_values(
+        ["12W RS vs NSE 500 (pp)", "4W RS vs NSE 500 (pp)", "Median RS Rank"],
+        ascending=False, na_position="last"
+    )
     result["Sector Median RS"] = result["Sector"].map(sector_rs_map).fillna(0)
     # Transparent 100-point quality score: relative strength 25, 30W slope 20,
     # breakout-week volume 20, sector strength 15, base development 10, extension discipline 10.
@@ -409,7 +444,7 @@ def _calculate():
         & (result["30W Slope %"] > 0) & (result["Volume vs 10W Avg"] >= 1.5)
         & (result["Sector Median RS"] >= 60) & result["Gap vs 30W %"].between(0, 15)
     )
-    return result, sectors, len(universe), len(prices.columns), current_week_label, previous_week_label
+    return result, sectors, industries, len(universe), len(prices.columns), current_week_label, previous_week_label
 
 
 def render_nse500_screener():
@@ -426,9 +461,10 @@ def render_nse500_screener():
         if "nse500_rs_stage_results" not in st.session_state:
             with st.spinner("Loading NSE 500 screener for the first time…"):
                 try:
-                    results, sectors, universe_count, priced_count, current_week, previous_week = _calculate()
+                    results, sectors, industries, universe_count, priced_count, current_week, previous_week = _calculate()
                     st.session_state["nse500_rs_stage_results"] = results
                     st.session_state["nse500_rs_stage_sectors"] = sectors
+                    st.session_state["nse500_rs_stage_industries"] = industries
                     st.session_state["nse500_rs_stage_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y, %I:%M %p IST")
                     st.session_state["nse500_rs_stage_counts"] = (universe_count, priced_count)
                     st.session_state["nse500_rs_stage_weeks"] = (current_week.strftime("%d %b %Y"), previous_week.strftime("%d %b %Y"))
@@ -437,6 +473,7 @@ def render_nse500_screener():
 
         results = st.session_state.get("nse500_rs_stage_results", pd.DataFrame())
         sectors = st.session_state.get("nse500_rs_stage_sectors", pd.DataFrame())
+        industries = st.session_state.get("nse500_rs_stage_industries", pd.DataFrame())
         if isinstance(results, pd.DataFrame) and not results.empty:
             universe_count, priced_count = st.session_state.get("nse500_rs_stage_counts", (len(results), len(results)))
             current_week, previous_week = st.session_state.get("nse500_rs_stage_weeks", ("—", "—"))
@@ -682,7 +719,40 @@ def render_nse500_screener():
             )
 
             st.markdown("""<div style="font-size:22px;font-weight:800;background:linear-gradient(90deg,#34d399,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Sector strength · median RS and advancing participation</div>""", unsafe_allow_html=True)
+            st.caption("Stock RS versus sector is measured as the stock's 4W/12W return minus its group's median return.")
+            sector_rs_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "4W Return %", "12W Return %", "RS vs Sector 4W (pp)", "RS vs Sector 12W (pp)", "Stage"]
+            sector_rs_view = results.sort_values(["RS vs Sector 12W (pp)", "RS vs Sector 4W (pp)"], ascending=False, na_position="last")
+            with st.expander("Stock RS versus its sector · find leaders within each group", expanded=False):
+                selected_rs_sector = st.selectbox("Choose sector group", ["All sector groups"] + sorted(results["Sector"].dropna().astype(str).unique()), key="nse500_rs_sector_group")
+                sector_stock_view = sector_rs_view if selected_rs_sector == "All sector groups" else sector_rs_view[sector_rs_view["Sector"].astype(str) == selected_rs_sector]
+                st.dataframe(sector_stock_view[sector_rs_cols], use_container_width=True, hide_index=True, height=440)
+                st.download_button("Download stock RS versus sector (CSV)", sector_stock_view[sector_rs_cols].to_csv(index=False).encode("utf-8"), "nse500_stock_rs_vs_sector.csv", "text/csv", key="download_nse500_rs_vs_sector")
             st.dataframe(sectors, use_container_width=True, hide_index=True, height=230)
+
+            st.markdown("""<div style="font-size:22px;font-weight:800;background:linear-gradient(90deg,#a78bfa,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Industry-level rotation · leaders and laggards</div>""", unsafe_allow_html=True)
+            st.caption("Industries ranked by median 4W/12W performance relative to the NSE 500 universe, with Stage 2 participation and advancing-stock breadth. Uses completed weekly bars.")
+            if isinstance(industries, pd.DataFrame) and not industries.empty:
+                industry_period = st.segmented_control("Industry rotation ranking", ["4W", "12W"], default="12W", key="nse500_industry_rotation_period")
+                industry_metric = "4W RS vs NSE 500 (pp)" if industry_period == "4W" else "12W RS vs NSE 500 (pp)"
+                industry_view = industries.sort_values([industry_metric, "Median RS Rank"], ascending=False, na_position="last")
+                top_industries = industry_view.head(6)
+                bottom_industries = industry_view.tail(6).sort_values(industry_metric)
+                ic1, ic2 = st.columns(2)
+                with ic1:
+                    st.markdown("**LEADING INDUSTRIES**")
+                    st.dataframe(top_industries, use_container_width=True, hide_index=True, height=300)
+                with ic2:
+                    st.markdown("**LAGGING INDUSTRIES**")
+                    st.dataframe(bottom_industries, use_container_width=True, hide_index=True, height=300)
+                st.download_button("Download industry rotation (CSV)", industry_view.to_csv(index=False).encode("utf-8"), "nse500_industry_rotation.csv", "text/csv", key="download_nse500_industry_rotation")
+                with st.expander("Industry constituent leaders · drill down", expanded=False):
+                    chosen_industry = st.selectbox("Choose industry", ["All industries"] + sorted(results["Industry"].dropna().astype(str).unique()), key="nse500_industry_drilldown")
+                    industry_stocks = results if chosen_industry == "All industries" else results[results["Industry"].astype(str) == chosen_industry]
+                    industry_cols = ["Symbol", "Company", "Industry", "Price", "RS Rank", "4W Return %", "12W Return %", "RS vs Industry 4W (pp)", "RS vs Industry 12W (pp)", "Stage"]
+                    industry_stocks = industry_stocks.sort_values(["RS vs Industry 12W (pp)", "RS vs Industry 4W (pp)"], ascending=False, na_position="last")
+                    st.dataframe(industry_stocks[industry_cols], use_container_width=True, hide_index=True, height=420)
+            else:
+                st.info("Industry rotation data is unavailable for this scan.")
 
             # Sector-wise Stage 2 participation: fresh Stage 2 entries and B2 base stocks.
             fresh_sector_stocks = results[
