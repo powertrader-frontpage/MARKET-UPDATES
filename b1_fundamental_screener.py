@@ -140,9 +140,12 @@ def _extract_company_fundamentals(symbol, company, price):
         }
         passed = [name for name, ok in checks.items() if ok]
         failed = [name for name, ok in checks.items() if not ok]
+        missing = [label for label, value in values.items() if pd.isna(value)]
         return {
             "Symbol": symbol, "Company": company, **values,
             "Filters passed": len(passed), "Filters failed": ", ".join(failed) if failed else "—",
+            "Missing fields": ", ".join(missing) if missing else "—",
+            "Missing field count": len(missing),
             "Qualified": len(passed) == len(checks), "Fundamental source": "Screener.in",
             "Source link": url,
         }
@@ -192,10 +195,11 @@ def render_b1_fundamentals_tab():
         return
     merged = fresh.merge(fundamentals, on=["Symbol", "Company"], how="left")
     qualified = merged[merged.get("Qualified", pd.Series(False, index=merged.index)).fillna(False)].copy()
-    q1, q2, q3 = st.columns(3)
+    q1, q2, q3, q4 = st.columns(4)
     q1.metric("Fresh B1 candidates", len(merged))
     q2.metric("Passed all 7 filters", len(qualified))
-    q3.metric("Fundamental data unavailable", int(merged.get("Fundamental source", pd.Series("", index=merged.index)).astype(str).str.contains("unavailable|error", case=False).sum()))
+    q3.metric("Company lookup unavailable", int(merged.get("Fundamental source", pd.Series("", index=merged.index)).astype(str).str.contains("unavailable|error", case=False).sum()))
+    q4.metric("Candidates with missing values", int(merged.get("Missing field count", pd.Series(7, index=merged.index)).fillna(7).gt(0).sum()))
     st.markdown("#### Qualified stocks · all seven conditions met")
     if qualified.empty:
         st.info("No fresh B1 stock currently passes all seven filters with available data.")
@@ -212,7 +216,7 @@ def render_b1_fundamentals_tab():
         audit_cols = ["Symbol", "Company", "Segment", "Price", "Latest annual sales growth %",
                       "10Y sales growth %", "ROE %", "10Y average ROCE %", "Market cap ₹ Cr",
                       "Distance below 52W high %", "PEG ratio", "Filters passed", "Filters failed",
-                      "Fundamental source", "Source link"]
+                      "Missing field count", "Missing fields", "Fundamental source", "Source link"]
         st.dataframe(merged[[c for c in audit_cols if c in merged.columns]], use_container_width=True,
                      hide_index=True, column_config={"Source link": st.column_config.LinkColumn("Screener.in source")})
-    st.caption("Latest annual sales growth is calculated from the latest two annual Sales figures. 10-year sales growth and 10-year average ROCE are read from Screener.in ratios. Market cap is ₹ crore. Missing values fail closed. Distance below the 52-week high uses the scanner price and reported high. Verify source values; this is a research filter, not a buy signal.")
+    st.caption("The audit displays all seven extracted values. A missing value is shown as blank and listed separately; it is not treated as a confirmed fundamental failure. Latest annual sales growth is calculated from the latest two annual Sales figures. 10-year sales growth and 10-year average ROCE are read from Screener.in ratios. Market cap is ₹ crore. Distance below the 52-week high uses the scanner price and reported high. Verify source values; this is a research filter, not a buy signal.")
