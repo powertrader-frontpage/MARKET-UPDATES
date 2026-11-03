@@ -1070,10 +1070,10 @@ def get_iifl_adr_quotes() -> tuple[dict[str, dict], str | None]:
         )
         response.raise_for_status()
         page_text = html.unescape(re.sub(r"<[^>]+>", " ", response.text))
-        page_text = re.sub(r"\\s+", " ", page_text)
-        date_match = re.search(r"(\\d{1,2}\\s+[A-Za-z]+,\\s*\\d{4})\\s*\\|\\s*(\\d{1,2}:\\d{2}\\s*[AP]M)", page_text, re.IGNORECASE)
+        page_text = re.sub(r"\s+", " ", page_text)
+        date_match = re.search(r"(\d{1,2}\s+[A-Za-z]+,\s*\d{4})\s*\|\s*(\d{1,2}:\d{2}\s*[AP]M)", page_text, re.IGNORECASE)
         if not date_match:
-            date_match = re.search(r"(\\d{1,2}\\s+[A-Za-z]+,\\s*\\d{4})", page_text, re.IGNORECASE)
+            date_match = re.search(r"(\d{1,2}\s+[A-Za-z]+,\s*\d{4})", page_text, re.IGNORECASE)
         if not date_match:
             return {}, "IIFL ADR page did not provide a dated quote snapshot."
         asof = pd.to_datetime(date_match.group(1), errors="coerce", dayfirst=True)
