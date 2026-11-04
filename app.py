@@ -1057,41 +1057,61 @@ with st.spinner("Loading best-effort public market data…"):
             hist, err = get_history(ticker, period, "1d")
         market_data[name], market_errors[name] = hist, err
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=180, show_spinner=False)
 def get_nse_index_archive_latest() -> tuple[pd.DataFrame, str | None]:
-    """Fetch the latest published official NSE all-indices daily archive CSV."""
+    """Fetch several recent official NSE daily archives and select the newest actual trading date."""
     try:
         today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36"}
-        last_error = None
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36",
+            "Cache-Control": "no-cache, no-store, max-age=0",
+            "Pragma": "no-cache",
+        }
+        candidates = []
+        errors = []
+        # Do not stop at the first valid file: an archive named for today can contain
+        # an older session. Compare the actual Index Date inside every recent file.
         for offset in range(0, 8):
             day = today - pd.Timedelta(days=offset)
             url = f"https://archives.nseindia.com/content/indices/ind_close_all_{day:%d%m%Y}.csv"
             try:
-                response = requests.get(url, headers=headers, timeout=12)
+                response = requests.get(
+                    url, params={"_": int(time.time())}, headers=headers, timeout=12
+                )
                 if response.status_code == 404:
                     continue
                 response.raise_for_status()
                 if len(response.content) < 5000:
-                    last_error = "NSE archive returned a short/non-data response."
+                    errors.append(f"{day:%d-%b}: short archive response")
                     continue
                 frame = pd.read_csv(pd.io.common.BytesIO(response.content))
                 required = {"Index Name", "Index Date", "Open", "High", "Low", "Closing"}
                 if not required.issubset(frame.columns):
-                    last_error = "NSE archive columns did not match the expected format."
+                    errors.append(f"{day:%d-%b}: unexpected archive columns")
                     continue
                 frame["Index Date"] = pd.to_datetime(frame["Index Date"], format="%d-%m-%Y", errors="coerce")
                 frame = frame.dropna(subset=["Index Date"])
+                if frame.empty:
+                    continue
                 for col in ["Open", "High", "Low", "Closing", "Volume", "Points Change", "Change(%)"]:
                     if col in frame:
                         frame[col] = pd.to_numeric(frame[col].astype(str).str.replace(",", "", regex=False), errors="coerce")
-                return frame, None
+                candidates.append(frame)
             except Exception as exc:
-                last_error = f"NSE archive fetch failed: {type(exc).__name__}"
-        return pd.DataFrame(), last_error or "No recent NSE index archive was published."
+                errors.append(f"{day:%d-%b}: {type(exc).__name__}")
+        if not candidates:
+            detail = "; ".join(errors[-3:])
+            return pd.DataFrame(), "No usable recent NSE index archive was returned." + (f" Details: {detail}" if detail else "")
+        combined = pd.concat(candidates, ignore_index=True)
+        combined = combined.sort_values("Index Date").drop_duplicates(
+            subset=["Index Name", "Index Date"], keep="last"
+        )
+        latest_date = combined["Index Date"].max()
+        latest = combined[combined["Index Date"] == latest_date].copy()
+        latest.attrs["archive_latest_date"] = latest_date.strftime("%d %b %Y")
+        return latest, None
     except Exception as exc:
         return pd.DataFrame(), f"NSE archive unavailable: {type(exc).__name__}"
-
 
 def apply_nse_index_archive(market_data: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
     """Append newer official NSE EOD bars to Yahoo history for Indian benchmark indices."""
