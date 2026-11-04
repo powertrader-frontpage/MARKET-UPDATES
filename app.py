@@ -1073,17 +1073,32 @@ def get_nse_index_archive_latest() -> tuple[pd.DataFrame, str | None]:
         # an older session. Compare the actual Index Date inside every recent file.
         for offset in range(0, 8):
             day = today - pd.Timedelta(days=offset)
-            url = f"https://archives.nseindia.com/content/indices/ind_close_all_{day:%d%m%Y}.csv"
+            response = None
+            last_host_error = None
+            # NSE serves the same official archive through two hostnames. Cloud
+            # deployments can be blocked/rate-limited on one hostname while the
+            # alternate archive host remains reachable.
+            for archive_host in ("archives.nseindia.com", "nsearchives.nseindia.com"):
+                url = f"https://{archive_host}/content/indices/ind_close_all_{day:%d%m%Y}.csv"
+                try:
+                    candidate_response = requests.get(
+                        url, params={"_": int(time.time())}, headers=headers, timeout=12
+                    )
+                    if candidate_response.status_code == 404:
+                        continue
+                    candidate_response.raise_for_status()
+                    if len(candidate_response.content) < 5000:
+                        last_host_error = f"{archive_host}: short archive response"
+                        continue
+                    response = candidate_response
+                    break
+                except Exception as host_exc:
+                    last_host_error = f"{archive_host}: {type(host_exc).__name__}"
+            if response is None:
+                if last_host_error:
+                    errors.append(f"{day:%d-%b}: {last_host_error}")
+                continue
             try:
-                response = requests.get(
-                    url, params={"_": int(time.time())}, headers=headers, timeout=12
-                )
-                if response.status_code == 404:
-                    continue
-                response.raise_for_status()
-                if len(response.content) < 5000:
-                    errors.append(f"{day:%d-%b}: short archive response")
-                    continue
                 frame = pd.read_csv(pd.io.common.BytesIO(response.content))
                 required = {"Index Name", "Index Date", "Open", "High", "Low", "Closing"}
                 if not required.issubset(frame.columns):
