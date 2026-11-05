@@ -2025,6 +2025,7 @@ else:
             st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Sector rotation</div>""", unsafe_allow_html=True)
             st.caption("Only sectors that return usable source rows are plotted. Relative strength is computed against NIFTY 50 over the selected lookback; it is not institutional money-flow data.")
             if st.button("Load / refresh sector rotation", key="load_sector_rotation"):
+                get_history.clear()
                 st.session_state["load_sector_rotation_loaded"] = True
             if st.session_state.get("load_sector_rotation_loaded", False):
                 sector_rows = []
@@ -2726,6 +2727,7 @@ SECTOR_LEADING_STOCKS = {
 }
 
 if st.button("Load / refresh leading-sector rankings", key="load_leading_sector_rankings"):
+    get_history.clear()
     st.session_state["load_leading_sector_rankings_loaded"] = True
 if st.session_state.get("load_leading_sector_rankings_loaded", False):
         leading_sector_rows = []
@@ -2941,6 +2943,7 @@ def _nifty50_heatmap_data(symbols: tuple[str, ...]):
             continue
     return pd.DataFrame(rows)
 if st.button("Load / refresh NIFTY 50 heatmap", key="load_nifty50_heatmap"):
+    _nifty50_heatmap_data.clear()
     st.session_state["nifty50_heatmap_loaded"] = True
 if st.session_state.get("nifty50_heatmap_loaded", False):
     with st.spinner("Loading NIFTY 50 constituent performance…"):
@@ -2980,6 +2983,8 @@ with tabs[0]:
     def _nifty_long_history(ticker: str):
         return get_history(ticker, "10y", "1d")
     if st.button("Load / refresh NIFTY historical returns", key="load_nifty_historical_returns"):
+        _nifty_long_history.clear()
+        get_history.clear()
         st.session_state["nifty_historical_returns_loaded"] = True
     if st.session_state.get("nifty_historical_returns_loaded", False):
         with st.spinner("Loading up to 10 years of NIFTY 50 daily history…"):
@@ -3386,6 +3391,7 @@ with st.expander("Scan bullish/bearish setups and liquidity sweeps", expanded=Fa
     ob_volume_filter = ob_volume_mode.startswith("On")
     ob_scan = st.button("Scan NIFTY 50 liquid stocks", key="ob_scan_button", type="primary")
     if ob_scan:
+        get_history.clear()
         ob_days = int(ob_lookback.split()[0])
         ob_symbols = [
             "SBIN.NS", "AXISBANK.NS", "TITAN.NS", "INFY.NS", "WIPRO.NS",
@@ -3663,6 +3669,9 @@ with st.expander("Scan small-cap / mid-cap turnaround stocks", expanded=False):
         help="Opt-in because a first scan can take several minutes. Fundamental source data is cached for up to 6 hours."
     )
     turnaround_scan_clicked = st.button("Scan / refresh turnaround stocks", type="primary", key="run_auto_turnaround_scan", disabled=not segment_choice)
+    if turnaround_scan_clicked:
+        get_turnaround_constituents.clear()
+        get_one_turnaround_fundamentals.clear()
     if (turnaround_scan_clicked or auto_turnaround_scan) and segment_choice:
         with st.spinner("Scanning index constituents for improving fundamentals. This can take a few minutes…"):
             scan_df, scan_warning = run_turnaround_scan(tuple(sorted(segment_choice)))
