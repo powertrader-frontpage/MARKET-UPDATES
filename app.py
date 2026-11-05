@@ -28,12 +28,12 @@ from urllib.parse import urlencode
 st.set_page_config(page_title="Market Intelligence Terminal", page_icon="📈", layout="wide")
 st.markdown("""
 <style>
-.block-container{max-width:1600px;padding-top:.8rem;padding-bottom:1.25rem;padding-left:clamp(.8rem,2vw,1.6rem);padding-right:clamp(.8rem,2vw,1.6rem)}
+.block-container{max-width:1600px;padding-top:2rem;padding-bottom:1.25rem;padding-left:clamp(.8rem,2vw,1.6rem);padding-right:clamp(.8rem,2vw,1.6rem)}
 /* Consistent dashboard rhythm: tighter vertical flow without crowding content. */
 div[data-testid="stVerticalBlock"]{gap:.62rem}
 div[data-testid="stHorizontalBlock"]{gap:.8rem;align-items:stretch}
 div[data-testid="stElementContainer"]{margin-bottom:0}
-h1{letter-spacing:-.6px;margin:.15rem 0 .2rem}
+h1{letter-spacing:-.6px;margin:.35rem 0 .35rem;line-height:1.25}
 h2{letter-spacing:-.35px;margin:.65rem 0 .3rem}
 h3{letter-spacing:-.2px;margin:.45rem 0 .2rem}
 [data-testid="stMetric"]{border-left:4px solid #64748b;background:rgba(100,120,145,.08);border:1px solid rgba(120,140,160,.25);padding:10px 12px;border-radius:11px;min-height:88px}
@@ -51,12 +51,12 @@ div[data-testid="stDataFrame"]{border-radius:10px;overflow:hidden;max-width:100%
 button[kind="secondary"]{border-radius:8px}
 .small-note{font-size:.85rem;opacity:.8}
 @media(max-width:700px){
- .block-container{padding-left:.65rem;padding-right:.65rem;padding-top:.55rem;padding-bottom:1rem}
+ .block-container{padding-left:.65rem;padding-right:.65rem;padding-top:1.6rem;padding-bottom:1rem}
  div[data-testid="stVerticalBlock"]{gap:.48rem}
  div[data-testid="stHorizontalBlock"]{gap:.45rem}
  [data-testid='stMetricValue']{font-size:1.25rem}
  [data-testid="stMetric"]{padding:8px 9px;min-height:78px}
- h1{font-size:1.65rem}h2{font-size:1.3rem}h3{font-size:1.08rem}
+ h1{font-size:1.65rem;line-height:1.3;margin:.4rem 0 .35rem}h2{font-size:1.3rem}h3{font-size:1.08rem}
  div[data-testid="stExpander"] summary{padding:.25rem .4rem}
 }
 </style>
