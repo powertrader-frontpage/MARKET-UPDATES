@@ -1,0 +1,21 @@
+name: Python syntax check
+
+on:
+  push:
+    branches:
+      - mobile-navigation-refactor
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile dashboard and scanner modules
+        run: |
+          python -m py_compile app.py nse500_screener.py explosive_breakout_scanner.py historical_breakout_postmortem.py b1_fundamental_screener.py
