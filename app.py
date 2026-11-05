@@ -402,6 +402,29 @@ def fyers_live_quotes(app_id: str, access_token: str, symbols: list[str]):
     except Exception as exc:
         return [], f"FYERS quote request failed: {exc.__class__.__name__}"
 
+@st.cache_data(ttl=20, show_spinner=False)
+def fyers_live_quotes_cached(app_id: str, access_token: str, symbols: tuple[str, ...]):
+    """Short-lived shared quote snapshot; never cache beyond 20 seconds."""
+    return fyers_live_quotes(app_id, access_token, list(symbols))
+
+def fyers_quote_frame(item: dict, fetched_at: datetime) -> pd.DataFrame:
+    """Normalize one FYERS quote to the dashboard's existing OHLC snapshot interface."""
+    values = item.get("v") or {}
+    price = pd.to_numeric(values.get("lp"), errors="coerce")
+    if pd.isna(price) or float(price) <= 0:
+        return pd.DataFrame()
+    stamp = pd.Timestamp(fetched_at)
+    row = {
+        "Date": stamp, "Open": pd.to_numeric(values.get("open_price"), errors="coerce"),
+        "High": pd.to_numeric(values.get("high_price"), errors="coerce"),
+        "Low": pd.to_numeric(values.get("low_price"), errors="coerce"),
+        "Close": float(price), "Volume": pd.to_numeric(values.get("volume"), errors="coerce"),
+        "DailyChange": pd.to_numeric(values.get("ch"), errors="coerce"),
+        "DailyChangePct": pd.to_numeric(values.get("chp"), errors="coerce"),
+        "Source": "FYERS live quote", "FetchedAt": stamp,
+    }
+    return pd.DataFrame([row])
+
 
 def fyers_fundamental_probe(app_id: str, access_token: str, selected_symbol: str):
     """Inspect FYERS screener fields and test whether the selected stock appears in a fundamentals screen."""
@@ -1058,18 +1081,42 @@ def quote_snapshot(df: pd.DataFrame):
         pct = change / float(prev_close) * 100 if pd.notna(change) and pd.notna(prev_close) and float(prev_close) != 0 else np.nan
     return last, change, pct
 
-# Pull key instruments. The sidebar interval controls intraday bars; daily history is used for indicators.
+# Pull key instruments. FYERS is the preferred source for authenticated live Indian quotes;
+# historical candles remain available for indicator calculations and fallback.
 market_data: dict[str, pd.DataFrame] = {}
 market_errors: dict[str, str | None] = {}
-with st.spinner("Loading best-effort public market data…"):
+fyers_snapshot_at = datetime.now(ZoneInfo("Asia/Kolkata"))
+fyers_snapshot_symbols = {
+    "NIFTY 50": "NSE:NIFTY50-INDEX",
+    "BANK NIFTY": "NSE:NIFTYBANK-INDEX",
+    "India VIX": "NSE:INDIAVIX-INDEX",
+    "INFY": "NSE:INFY-EQ",
+    "WIPRO": "NSE:WIPRO-EQ",
+    "RELIANCE": "NSE:RELIANCE-EQ",
+    "HDFCBANK": "NSE:HDFCBANK-EQ",
+}
+fyers_quote_lookup = {}
+fyers_quote_error = "FYERS is not connected; using the configured historical source."
+_active_fyers_token = st.session_state.get("fyers_access_token")
+_fyers_cfg = fyers_credentials()
+if _active_fyers_token and _fyers_cfg:
+    _quote_symbols = tuple(fyers_snapshot_symbols.values())
+    _quote_rows, fyers_quote_error = fyers_live_quotes_cached(_fyers_cfg[0], _active_fyers_token, _quote_symbols)
+    if not fyers_quote_error:
+        fyers_quote_lookup = {str(item.get("n", "")).upper(): item for item in _quote_rows if isinstance(item, dict)}
+with st.spinner("Loading market data…"):
     for name, ticker in INDEXES.items():
-        # Brent Crude must always come exclusively from OilPrice.com.
-        # If OilPrice.com is unavailable or its quote cannot be parsed, show unavailable;
-        # do not silently substitute Upstox, Trading Economics, EIA, or Yahoo data.
+        # Brent Crude remains exclusively sourced from OilPrice.com.
         if name == "Brent Crude":
             hist, err = get_oilprice_brent_quote()
         else:
             hist, err = get_history(ticker, period, "1d")
+        fyers_symbol = fyers_snapshot_symbols.get(name)
+        fyers_item = fyers_quote_lookup.get(str(fyers_symbol or "").upper())
+        if fyers_item:
+            live_frame = fyers_quote_frame(fyers_item, fyers_snapshot_at)
+            if not live_frame.empty:
+                hist, err = live_frame, None
         market_data[name], market_errors[name] = hist, err
 
 @st.cache_data(ttl=180, show_spinner=False)
