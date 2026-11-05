@@ -47,7 +47,7 @@ def _breakout_universe():
     return pd.DataFrame(rows).drop_duplicates("Ticker").reset_index(drop=True), "; ".join(errors) if errors else None
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def _breakout_prices(tickers: tuple[str, ...]):
     frames = []
     for start in range(0, len(tickers), 80):
@@ -154,7 +154,7 @@ def _nse_announcements_for_symbol(symbol: str, company: str):
         return []
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def _breakout_official_announcements(shortlist: tuple[tuple[str, str], ...]):
     rows = []
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -173,7 +173,7 @@ def _breakout_official_announcements(shortlist: tuple[tuple[str, str], ...]):
     return frame.drop(columns="_date").drop_duplicates(["Symbol", "Headline"]).reset_index(drop=True)
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def _breakout_news(shortlist: tuple[tuple[str, str], ...]):
     rows = []
     # News enrichment is deliberately limited to the highest-ranked technical candidates.
@@ -362,7 +362,7 @@ def _catalyst_label(headline: str):
     return "Routine / unclassified", 0
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def _breakout_enrichment(shortlist: tuple[tuple[str, str], ...]):
     rows = []
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -655,13 +655,24 @@ def render_explosive_breakout_scanner():
     with c1:
         run = st.button("Scan / refresh breakouts", type="primary", key="run_explosive_breakout_scan")
     with c2:
-        st.caption("Price history, fundamentals, official NSE filings and supporting news are cached for 6 hours. Catalyst checks run only for the top 30 technical candidates.")
+        st.caption("Daily price history refreshes every 5 minutes; NSE filings/news refresh every 15 minutes. Quarterly fundamentals remain cached for 6 hours.")
     # Bump this whenever scanner filters or classification rules change. This
     # invalidates old session_state tables that otherwise survive code deployments.
-    scan_version = "official-nse-catalyst-early-b1-gapup-contraction-v5-new-row-highlights"
+    scan_version = "official-nse-catalyst-early-b1-gapup-contraction-v6-daily-refresh"
+    last_scan_epoch = st.session_state.get("explosive_breakout_scan_epoch", 0)
+    scan_expired = (datetime.now(ZoneInfo("Asia/Kolkata")).timestamp() - last_scan_epoch) >= 900
     needs_refresh = st.session_state.get("explosive_breakout_scan_version") != scan_version
-    if run or needs_refresh or st.session_state.get("explosive_breakout_scan_loaded", False):
-        if run or needs_refresh or "explosive_breakout_scan_data" not in st.session_state:
+    if run:
+        # A manual refresh must invalidate every dependent cache, not merely rerun
+        # the function and receive its previously cached six-hour result.
+        _breakout_prices.clear()
+        _breakout_universe.clear()
+        _breakout_official_announcements.clear()
+        _breakout_news.clear()
+        _quarterly_growth.clear()
+        _breakout_enrichment.clear()
+    if run or needs_refresh or scan_expired or st.session_state.get("explosive_breakout_scan_loaded", False):
+        if run or needs_refresh or scan_expired or "explosive_breakout_scan_data" not in st.session_state:
             with st.spinner("Scanning mid-cap and small-cap weekly price history…"):
                 output = run_explosive_breakout_scan()
             st.session_state["explosive_breakout_scan_version"] = scan_version
@@ -671,6 +682,7 @@ def render_explosive_breakout_scanner():
                 st.session_state["explosive_breakout_scan_data"] = (fresh, follow, upcoming, all_rows, news)
                 st.session_state["explosive_breakout_scan_warning"] = warning
                 st.session_state["explosive_breakout_scan_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y %H:%M IST")
+                st.session_state["explosive_breakout_scan_epoch"] = datetime.now(ZoneInfo("Asia/Kolkata")).timestamp()
                 previous = st.session_state.get("explosive_breakout_previous_symbols", None)
                 current = set(all_rows["Symbol"].astype(str).str.strip()) if not all_rows.empty else set()
                 # First scan establishes a baseline; later scans flag symbols absent from the previous scan.
