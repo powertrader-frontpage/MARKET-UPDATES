@@ -402,29 +402,6 @@ def fyers_live_quotes(app_id: str, access_token: str, symbols: list[str]):
     except Exception as exc:
         return [], f"FYERS quote request failed: {exc.__class__.__name__}"
 
-@st.cache_data(ttl=20, show_spinner=False)
-def fyers_live_quotes_cached(app_id: str, access_token: str, symbols: tuple[str, ...]):
-    """Short-lived shared quote snapshot; never cache beyond 20 seconds."""
-    return fyers_live_quotes(app_id, access_token, list(symbols))
-
-def fyers_quote_frame(item: dict, fetched_at: datetime) -> pd.DataFrame:
-    """Normalize one FYERS quote to the dashboard's existing OHLC snapshot interface."""
-    values = item.get("v") or {}
-    price = pd.to_numeric(values.get("lp"), errors="coerce")
-    if pd.isna(price) or float(price) <= 0:
-        return pd.DataFrame()
-    stamp = pd.Timestamp(fetched_at)
-    row = {
-        "Date": stamp, "Open": pd.to_numeric(values.get("open_price"), errors="coerce"),
-        "High": pd.to_numeric(values.get("high_price"), errors="coerce"),
-        "Low": pd.to_numeric(values.get("low_price"), errors="coerce"),
-        "Close": float(price), "Volume": pd.to_numeric(values.get("volume"), errors="coerce"),
-        "DailyChange": pd.to_numeric(values.get("ch"), errors="coerce"),
-        "DailyChangePct": pd.to_numeric(values.get("chp"), errors="coerce"),
-        "Source": "FYERS live quote", "FetchedAt": stamp,
-    }
-    return pd.DataFrame([row])
-
 
 def fyers_fundamental_probe(app_id: str, access_token: str, selected_symbol: str):
     """Inspect FYERS screener fields and test whether the selected stock appears in a fundamentals screen."""
@@ -1081,42 +1058,18 @@ def quote_snapshot(df: pd.DataFrame):
         pct = change / float(prev_close) * 100 if pd.notna(change) and pd.notna(prev_close) and float(prev_close) != 0 else np.nan
     return last, change, pct
 
-# Pull key instruments. FYERS is the preferred source for authenticated live Indian quotes;
-# historical candles remain available for indicator calculations and fallback.
+# Pull key instruments. The sidebar interval controls intraday bars; daily history is used for indicators.
 market_data: dict[str, pd.DataFrame] = {}
 market_errors: dict[str, str | None] = {}
-fyers_snapshot_at = datetime.now(ZoneInfo("Asia/Kolkata"))
-fyers_snapshot_symbols = {
-    "NIFTY 50": "NSE:NIFTY50-INDEX",
-    "BANK NIFTY": "NSE:NIFTYBANK-INDEX",
-    "India VIX": "NSE:INDIAVIX-INDEX",
-    "INFY": "NSE:INFY-EQ",
-    "WIPRO": "NSE:WIPRO-EQ",
-    "RELIANCE": "NSE:RELIANCE-EQ",
-    "HDFCBANK": "NSE:HDFCBANK-EQ",
-}
-fyers_quote_lookup = {}
-fyers_quote_error = "FYERS is not connected; using the configured historical source."
-_active_fyers_token = st.session_state.get("fyers_access_token")
-_fyers_cfg = fyers_credentials()
-if _active_fyers_token and _fyers_cfg:
-    _quote_symbols = tuple(fyers_snapshot_symbols.values())
-    _quote_rows, fyers_quote_error = fyers_live_quotes_cached(_fyers_cfg[0], _active_fyers_token, _quote_symbols)
-    if not fyers_quote_error:
-        fyers_quote_lookup = {str(item.get("n", "")).upper(): item for item in _quote_rows if isinstance(item, dict)}
-with st.spinner("Loading market data…"):
+with st.spinner("Loading best-effort public market data…"):
     for name, ticker in INDEXES.items():
-        # Brent Crude remains exclusively sourced from OilPrice.com.
+        # Brent Crude must always come exclusively from OilPrice.com.
+        # If OilPrice.com is unavailable or its quote cannot be parsed, show unavailable;
+        # do not silently substitute Upstox, Trading Economics, EIA, or Yahoo data.
         if name == "Brent Crude":
             hist, err = get_oilprice_brent_quote()
         else:
             hist, err = get_history(ticker, period, "1d")
-        fyers_symbol = fyers_snapshot_symbols.get(name)
-        fyers_item = fyers_quote_lookup.get(str(fyers_symbol or "").upper())
-        if fyers_item:
-            live_frame = fyers_quote_frame(fyers_item, fyers_snapshot_at)
-            if not live_frame.empty:
-                hist, err = live_frame, None
         market_data[name], market_errors[name] = hist, err
 
 @st.cache_data(ttl=180, show_spinner=False)
@@ -1320,11 +1273,6 @@ for _name in headline_names:
             headline_dates.append(f"{_name}: {_date.iloc[-1]:%d %b} ({_source}){_freshness}")
     else:
         headline_dates.append(f"{_name}: unavailable")
-_fyers_live_count = sum(1 for _name in ("NIFTY 50", "BANK NIFTY", "India VIX") if not market_data.get(_name, pd.DataFrame()).empty and str(market_data[_name].iloc[-1].get("Source", "")) == "FYERS live quote")
-if _fyers_live_count:
-    st.caption(f"FYERS live quotes active for {_fyers_live_count}/3 benchmark indices · snapshot fetched {fyers_snapshot_at:%d %b %Y %H:%M:%S IST} · quote cache 20 seconds")
-elif _active_fyers_token and fyers_quote_error:
-    st.warning("FYERS live quotes could not be loaded: " + str(fyers_quote_error) + " · displayed benchmark values use their labelled historical source.")
 st.caption("Actual source candle dates · " + "  |  ".join(headline_dates))
 
 # Daily global-cue sentiment panel is intentionally placed immediately above Market Regime.
@@ -2088,678 +2036,675 @@ else:
 
         render_nse500_screener()
 
-        with fear_col:
-            fear_score = np.nan
-            fear_components = []
-            recent_rc = overview_rc.dropna(subset=["Close"]).copy()
-            if len(recent_rc) >= 20:
-                # RSI contribution: RSI 50 maps to neutral; 0..100 maps to the same scale.
-                rsi_series = recent_rc["RSI 14"] if "RSI 14" in recent_rc.columns else pd.Series(dtype=float)
-                rsi_series = pd.to_numeric(rsi_series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
-                if rsi_series.empty:
-                    # Calculate RSI directly from the returned close series if the indicator frame lacks RSI.
-                    close_delta = pd.to_numeric(recent_rc["Close"], errors="coerce").diff()
-                    close_gain = close_delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                    close_loss = (-close_delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                    close_rs = close_gain / close_loss.replace(0, np.nan)
-                    fallback_rsi = (100 - 100 / (1 + close_rs)).replace([np.inf, -np.inf], np.nan).dropna()
-                    if not fallback_rsi.empty:
-                        rsi_series = fallback_rsi
-                if not rsi_series.empty:
-                    fear_components.append((float(np.clip(rsi_series.iloc[-1], 0, 100)), 0.35))
-                # Trend contribution: close vs EMA 20 and EMA 50, mapped around neutral.
-                trend_parts = []
-                for ema_col in ["EMA 20", "EMA 50"]:
-                    if ema_col in recent_rc.columns and pd.notna(recent_rc[ema_col].iloc[-1]) and recent_rc[ema_col].iloc[-1] != 0:
-                        gap_pct = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc[ema_col].iloc[-1]) - 1) * 100
-                        trend_parts.append(float(np.clip(50 + gap_pct * 12, 0, 100)))
-                if trend_parts:
-                    # Price vs EMA 20/50 contributes 25% to the proxy score.
-                    fear_components.append((float(np.mean(trend_parts)), 0.25))
-                # Medium-term momentum: 20-session return mapped around neutral.
-                if len(recent_rc) >= 21 and recent_rc["Close"].iloc[-21] != 0:
-                    ret20 = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc["Close"].iloc[-21]) - 1) * 100
-                    fear_components.append((float(np.clip(50 + ret20 * 8, 0, 100)), 0.15))
-                # India VIX: higher volatility tilts the proxy toward fear.
-                vix_frame = market_data.get("India VIX", pd.DataFrame())
-                vix_snap = quote_snapshot(vix_frame) if not vix_frame.empty else None
-                if vix_snap:
-                    vix_value = float(vix_snap[0]["Close"])
-                    # India VIX contributes 25% to the proxy score.
-                    fear_components.append((float(np.clip(100 - vix_value * 3, 0, 100)), 0.25))
-                # Keep only finite, valid components. Missing/invalid inputs must not turn into a fake 0/100 reading.
-                fear_components = [
-                    (float(value), float(weight))
-                    for value, weight in fear_components
-                    if pd.notna(value) and np.isfinite(float(value)) and 0 <= float(value) <= 100 and weight > 0
-                ]
-                if fear_components:
-                    fear_weight = sum(weight for _, weight in fear_components)
-                    if fear_weight > 0:
-                        fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
-                        if not np.isfinite(fear_score):
-                            fear_score = np.nan
-            if pd.notna(fear_score):
-                fear_score = int(round(float(np.clip(fear_score, 0, 100))))
-                fear_label = "Extreme Fear" if fear_score < 20 else "Fear" if fear_score < 40 else "Neutral" if fear_score < 60 else "Greed" if fear_score < 80 else "Extreme Greed"
-                fear_color = "#ef4444" if fear_score < 20 else "#f97316" if fear_score < 40 else "#f59e0b" if fear_score < 60 else "#84cc16" if fear_score < 80 else "#16a34a"
-                gauge_fig = go.Figure(go.Indicator(
-                    mode="gauge+number",
-                    value=fear_score,
-                    number={"font": {"size": 30, "color": fear_color}, "suffix": "/100"},
-                    title={"text": "Fear & Greed<br><span style='font-size:11px;color:#aeb6c2'>Market proxy</span>", "font": {"size": 15}},
-                    gauge={
-                        "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 20, 40, 60, 80, 100], "ticktext": ["0", "20", "40", "60", "80", "100"], "tickfont": {"size": 9}},
-                        "bar": {"color": fear_color, "thickness": 0.22},
-                        "bgcolor": "#11151d",
-                        "borderwidth": 0,
-                        "steps": [
-                            {"range": [0, 20], "color": "#7f1d1d"},
-                            {"range": [20, 40], "color": "#c2410c"},
-                            {"range": [40, 60], "color": "#b45309"},
-                            {"range": [60, 80], "color": "#4d7c0f"},
-                            {"range": [80, 100], "color": "#047857"},
-                        ],
-                        "threshold": {"line": {"color": "#e5e7eb", "width": 2}, "thickness": 0.8, "value": fear_score},
-                    },
-                ))
-                gauge_fig.update_layout(template="plotly_dark", height=250, margin=dict(l=8,r=8,t=48,b=8), paper_bgcolor="rgba(0,0,0,0)")
-                fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
-                fear_col.markdown(f'<div style="text-align:center;font-weight:700;color:{fear_color};font-size:16px;margin-top:-8px;">{fear_label}</div>', unsafe_allow_html=True)
-                # Explanatory caption removed to save vertical space.
-            else:
-                fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
-    
-    
-    
-# Sector rotation panels are independent of the selected instrument's regime-history check.
-# They remain available even when the regime panel has insufficient OHLC history.
-with st.expander("Sector rotation", expanded=False):
-    st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Sector rotation</div>""", unsafe_allow_html=True)
-    st.caption("Only sectors that return usable source rows are plotted. Relative strength is computed against NIFTY 50 over the selected lookback; it is not institutional money-flow data.")
-    if st.button("Load / refresh sector rotation", key="load_sector_rotation"):
-        get_history.clear()
-        st.session_state["load_sector_rotation_loaded"] = True
-    if st.session_state.get("load_sector_rotation_loaded", False):
-        sector_rows = []
-        rotation_rows = []
-        base_df = market_data["NIFTY 50"].copy()
-        if not base_df.empty:
-            base_df = base_df.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last").copy()
-            base_df["_day"] = pd.to_datetime(base_df["Date"]).dt.date
-            base_df = base_df.set_index("_day")["Close"]
-        for sector, ticker in SECTOR_TICKERS.items():
-            sdf, err = get_history(ticker, "6mo", "1d")
-            if sdf.empty or len(sdf) < 12 or len(base_df) < 12:
-                continue
-            sdf = sdf.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last").copy()
-            sdf["_day"] = pd.to_datetime(sdf["Date"]).dt.date
-            s_close = sdf.set_index("_day")["Close"]
-            aligned = pd.concat([s_close.rename("sector"), base_df.rename("nifty")], axis=1).dropna()
-            if len(aligned) < 12:
-                continue
-            relative = (aligned["sector"] / aligned["nifty"]) * 100
-            rs_mean = relative.rolling(20, min_periods=8).mean()
-            rs_momentum = relative.pct_change(5) * 100
-
-            def _rotation_zone(pos):
-                if pos < 0 or pos >= len(relative) or pd.isna(rs_mean.iloc[pos]) or pd.isna(rs_momentum.iloc[pos]):
-                    return None
-                strong = relative.iloc[pos] >= rs_mean.iloc[pos]
-                accelerating = rs_momentum.iloc[pos] >= 0
-                if strong and accelerating:
-                    return "Leading"
-                if strong and not accelerating:
-                    return "Weakening"
-                if not strong and accelerating:
-                    return "Improving"
-                return "Lagging"
-
-            cur_pos = len(aligned) - 1
-            prev_pos = max(0, cur_pos - 5)
-            current_zone = _rotation_zone(cur_pos)
-            previous_zone = _rotation_zone(prev_pos)
-            recent = aligned.iloc[-min(21, len(aligned)):]
-            perf = (recent["sector"].iloc[-1] / recent["sector"].iloc[0] - 1) * 100
-            base_perf = (recent["nifty"].iloc[-1] / recent["nifty"].iloc[0] - 1) * 100
-            last_date = pd.to_datetime(aligned.index[-1]).strftime("%d %b %Y")
-            relative_pp = perf - base_perf
-            def _relative_window(window):
-                sample = aligned.iloc[-min(window, len(aligned)):]
-                if len(sample) < 2:
-                    return np.nan
-                return ((sample["sector"].iloc[-1] / sample["sector"].iloc[0] - 1) -
-                        (sample["nifty"].iloc[-1] / sample["nifty"].iloc[0] - 1)) * 100
-            sector_rows.append({
-                "Sector": sector, "Ticker": ticker, "Period return %": perf,
-                "NIFTY return %": base_perf, "Relative return vs NIFTY (pp)": relative_pp,
-                "1D vs NIFTY (pp)": _relative_window(2),
-                "1W vs NIFTY (pp)": _relative_window(6),
-                "3W vs NIFTY (pp)": _relative_window(16),
-                "6W vs NIFTY (pp)": _relative_window(31),
-                "Last source bar": last_date
-            })
-            if current_zone:
-                rotation_rows.append({"Sector": sector, "Previous zone": previous_zone or current_zone, "Current zone": current_zone, "Relative return vs NIFTY (pp)": relative_pp, "Last source bar": last_date})
-
-        if sector_rows:
-            sector_board = pd.DataFrame(sector_rows)
-            sector_period = st.segmented_control(
-                "Rank sector money flow by period",
-                ["1D", "1W", "3W", "6W"],
-                default="1W",
-                key="sector_rotation_period",
-            )
-            sector_metric = {"1D": "1D vs NIFTY (pp)", "1W": "1W vs NIFTY (pp)", "3W": "3W vs NIFTY (pp)", "6W": "6W vs NIFTY (pp)"}[sector_period]
-            sector_board = sector_board.dropna(subset=[sector_metric]).sort_values(sector_metric, ascending=False)
-            rising_sectors = sector_board.head(5)
-            falling_sectors = sector_board.tail(5).sort_values(sector_metric)
-            st.markdown("### What changed · Where sector money is moving")
-            st.caption(f"Relative performance versus NIFTY 50 · {sector_period} window · latest available source bar")
-            climb_col, fall_col = st.columns(2, gap="medium")
-            for board_col, board_title, board_data, board_color in [
-                (climb_col, "CLIMBERS", rising_sectors, "#329b72"),
-                (fall_col, "FALLERS", falling_sectors, "#c56b72"),
-            ]:
-                with board_col:
-                    st.markdown(f'<div style="font-size:12px;font-weight:800;letter-spacing:1px;color:{board_color};margin:4px 0 8px;">{board_title}</div>', unsafe_allow_html=True)
-                    for rank_no, (_, sector_item) in enumerate(board_data.iterrows(), 1):
-                        score = float(sector_item[sector_metric])
-                        st.markdown(
-                            f'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 9px;border-bottom:1px solid rgba(130,145,135,.25);">'
-                            f'<b>{rank_no}. {html.escape(str(sector_item["Sector"]))}</b>'
-                            f'<span style="font-weight:800;color:{board_color};">{score:+.2f} pp</span></div>',
-                            unsafe_allow_html=True,
-                        )
-
-        if rotation_rows:
-            zone_colors = {"Leading": "#198754", "Weakening": "#b45309", "Improving": "#2864c5", "Lagging": "#dc3545"}
-            zone_order = {"Leading": 0, "Improving": 1, "Weakening": 2, "Lagging": 3}
-            for item in rotation_rows:
-                item["Changed this week"] = item["Previous zone"] != item["Current zone"]
-                item["Signal"] = f'{item["Previous zone"]} → {item["Current zone"]}' if item["Changed this week"] else f'{item["Current zone"]} · holding'
-            # Always show six useful sector signals where six sectors have valid data.
-            # Actual zone changes rank first; remaining slots show the strongest current setups by zone and relative strength.
-            top_rotation_signals = sorted(
-                rotation_rows,
-                key=lambda x: (
-                    not x["Changed this week"],
-                    zone_order.get(x["Current zone"], 4),
-                    -float(x.get("Relative return vs NIFTY (pp)", -999))
-                )
-            )[:6]
-            st.markdown("### Top 6 sector rotation signals")
-            st.caption("Actual zone transitions are prioritised. If fewer than six sectors changed zones this week, the remaining cards show the strongest current zone/relative-strength setups and are marked 'holding' rather than presented as new transitions.")
-            pills = []
-            for item in top_rotation_signals:
-                sector_name = item["Sector"]
-                transition = item["Signal"]
-                color = zone_colors.get(item["Current zone"], "#64748b")
-                stamp = item["Last source bar"]
-                pills.append(
-                    f'<div style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:10px;'
-                    f'border:2px solid {color}55;border-radius:999px;background:rgba(255,255,255,.025);'
-                    f'padding:10px 18px;margin:0 8px 8px 0;font-size:clamp(14px,1.5vw,19px);font-weight:650;">'
-                    f'<span style="color:var(--text-color);">{html.escape(sector_name)}</span>'
-                    f'<span style="color:{color};">{html.escape(transition)}</span>'
-                    f'<span style="font-size:11px;font-weight:400;opacity:.7;">{html.escape(stamp)}</span></div>'
-                )
-            st.markdown('<div style="background:rgba(80,120,200,.07);border-radius:24px;padding:18px;">' + "".join(pills) + '</div>', unsafe_allow_html=True)
-            with st.expander("View all current rotation zones", expanded=False):
-                current_zones = sorted(rotation_rows, key=lambda x: (zone_order.get(x["Current zone"], 4), -float(x.get("Relative return vs NIFTY (pp)", -999))))
-                st.dataframe(pd.DataFrame(current_zones), use_container_width=True, hide_index=True)
-        else:
-            st.warning("Not enough overlapping daily sector and NIFTY data to calculate rotation zones. No values have been substituted.")
-
-        # Constituent stock-level rotation for each conventional NSE sector.
-        SECTOR_STOCKS = {
-            "IT": ["TCS.NS","INFY.NS","HCLTECH.NS","WIPRO.NS","TECHM.NS","LTIM.NS","PERSISTENT.NS","COFORGE.NS","MPHASIS.NS","OFSS.NS"],
-            "Pharma": ["SUNPHARMA.NS","DRREDDY.NS","CIPLA.NS","DIVISLAB.NS","TORNTPHARM.NS","LUPIN.NS","AUROPHARMA.NS","ALKEM.NS","ZYDUSLIFE.NS","MANKIND.NS"],
-            "Auto": ["MARUTI.NS","M&M.NS","TATAMOTORS.NS","BAJAJ-AUTO.NS","EICHERMOT.NS","HEROMOTOCO.NS","TVSMOTOR.NS","ASHOKLEY.NS","BOSCHLTD.NS","MOTHERSON.NS"],
-            "Metal": ["TATASTEEL.NS","JSWSTEEL.NS","HINDALCO.NS","VEDL.NS","COALINDIA.NS","JINDALSTEL.NS","NMDC.NS","SAIL.NS","NATIONALUM.NS","HINDZINC.NS"],
-            "Energy": ["RELIANCE.NS","ONGC.NS","NTPC.NS","POWERGRID.NS","BPCL.NS","IOC.NS","GAIL.NS","TATAPOWER.NS","ADANIGREEN.NS","JSWENERGY.NS"],
-            "FMCG": ["HINDUNILVR.NS","ITC.NS","NESTLEIND.NS","BRITANNIA.NS","TATACONSUM.NS","GODREJCP.NS","DABUR.NS","MARICO.NS","COLPAL.NS","UNITDSPR.NS"],
-            "Realty": ["DLF.NS","GODREJPROP.NS","OBEROIRLTY.NS","PRESTIGE.NS","PHOENIXLTD.NS","LODHA.NS","BRIGADE.NS","SOBHA.NS","MAHLIFE.NS","ANANTRAJ.NS"],
-            "Financial Services": ["HDFCBANK.NS","ICICIBANK.NS","SBIN.NS","AXISBANK.NS","KOTAKBANK.NS","BAJFINANCE.NS","BAJAJFINSV.NS","SHRIRAMFIN.NS","CHOLAFIN.NS","PFC.NS"],
-            "PSU Bank": ["SBIN.NS","BANKBARODA.NS","CANBK.NS","PNB.NS","UNIONBANK.NS","INDIANB.NS","IOB.NS","MAHABANK.NS","CENTRALBK.NS","UCOBANK.NS"],
-            "Media": ["SUNTV.NS","ZEEL.NS","NETWORK18.NS","TVTODAY.NS","PVRINOX.NS","SAREGAMA.NS","NAZARA.NS","DBCORP.NS"],
-            "Infrastructure": ["LT.NS","ADANIPORTS.NS","ADANIENT.NS","SIEMENS.NS","ABB.NS","BHEL.NS","IRB.NS","KEC.NS","KALPATPOWR.NS","NBCC.NS"],
-            "Consumption": ["TITAN.NS","TRENT.NS","DMART.NS","ETERNAL.NS","NYKAA.NS","INDIGO.NS","JUBLFOOD.NS","PAGEIND.NS","ASIANPAINT.NS","HAVELLS.NS"],
-        }
-        with st.expander("Sector constituent stocks · stock-level rotation and transitions", expanded=True):
-            sector_choice = st.selectbox("Choose sector to inspect its stocks", sorted(SECTOR_STOCKS.keys()), key="sector_stock_rotation_choice")
-            sector_symbols = SECTOR_STOCKS[sector_choice]
-            sector_stock_tickers = tuple(sorted(set(sector_symbols + ["^CRSLDX"])))
-            @st.cache_data(ttl=900, show_spinner=False)
-            def _sector_stock_download(symbols):
-                try:
-                    return yf.download(list(symbols), period="1y", interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=False)
-                except Exception:
-                    return pd.DataFrame()
-            if st.button("↻ Refresh sector constituent data", key="refresh_sector_constituents"):
-                _sector_stock_download.clear()
-            with st.spinner(f"Fetching constituent history for {sector_choice}…"):
-                sector_raw = _sector_stock_download(sector_stock_tickers)
-            def _sector_stock_close(symbol):
-                try:
-                    if isinstance(sector_raw.columns, pd.MultiIndex):
-                        if (symbol, "Close") in sector_raw.columns:
-                            return sector_raw[(symbol, "Close")].dropna()
-                        if ("Close", symbol) in sector_raw.columns:
-                            return sector_raw[("Close", symbol)].dropna()
-                    elif symbol == sector_stock_tickers[0] and "Close" in sector_raw.columns:
-                        return sector_raw["Close"].dropna()
-                except Exception:
-                    pass
-                return pd.Series(dtype=float)
-            sector_bench = _sector_stock_close("^CRSLDX")
-            constituent_rows = []
-            constituent_transitions = []
-            for symbol in sector_symbols:
-                close = _sector_stock_close(symbol)
-                if len(close) < 60 or len(sector_bench) < 60:
-                    continue
-                close = close.sort_index()
-                aligned_stock = pd.concat([close.rename("stock"), sector_bench.rename("bench")], axis=1).dropna()
-                if len(aligned_stock) < 60:
-                    continue
-                def _stock_rotation_zone(position):
-                    window = aligned_stock.iloc[:position+1]
-                    if len(window) < 22:
-                        return None
-                    rel1 = (window["stock"].iloc[-1] / window["stock"].iloc[-22] - 1) * 100 - (window["bench"].iloc[-1] / window["bench"].iloc[-22] - 1) * 100
-                    rel3 = (window["stock"].iloc[-1] / window["stock"].iloc[-min(64,len(window))] - 1) * 100 - (window["bench"].iloc[-1] / window["bench"].iloc[-min(64,len(window))] - 1) * 100
-                    return "Leading" if rel3 >= 0 and rel1 >= 0 else "Weakening" if rel3 >= 0 else "Improving" if rel1 >= 0 else "Lagging"
-                current_stock_zone = _stock_rotation_zone(len(aligned_stock)-1)
-                prior_stock_zone = _stock_rotation_zone(len(aligned_stock)-6) if len(aligned_stock) >= 27 else None
-                last_close = float(close.iloc[-1])
-                previous_close = float(close.iloc[-2])
-                ema50 = close.ewm(span=50, adjust=False, min_periods=50).mean().iloc[-1]
-                rel1_now = (aligned_stock["stock"].iloc[-1] / aligned_stock["stock"].iloc[-22] - 1) * 100 - (aligned_stock["bench"].iloc[-1] / aligned_stock["bench"].iloc[-22] - 1) * 100
-                rel3_now = (aligned_stock["stock"].iloc[-1] / aligned_stock["stock"].iloc[-min(64,len(aligned_stock))] - 1) * 100 - (aligned_stock["bench"].iloc[-1] / aligned_stock["bench"].iloc[-min(64,len(aligned_stock))] - 1) * 100
-                change = f"{prior_stock_zone} → {current_stock_zone}" if prior_stock_zone and current_stock_zone and prior_stock_zone != current_stock_zone else "No zone change"
-                if prior_stock_zone and current_stock_zone and prior_stock_zone != current_stock_zone:
-                    constituent_transitions.append({"Stock":symbol.replace(".NS",""),"Transition":change})
-                constituent_rows.append({"Stock":symbol.replace(".NS",""),"Rotation zone":current_stock_zone,"Zone change (5 sessions)":change,"1D %":(last_close/previous_close-1)*100 if previous_close else np.nan,"1M %":(last_close/float(close.iloc[-min(22,len(close))])-1)*100,"3M %":(last_close/float(close.iloc[-min(64,len(close))])-1)*100,"1M vs NIFTY 500 (pp)":rel1_now,"3M vs NIFTY 500 (pp)":rel3_now,"Above 50 EMA":bool(last_close>ema50) if pd.notna(ema50) else "Insufficient history"})
-            if constituent_rows:
-                constituent_df = pd.DataFrame(constituent_rows)
-                st.caption(f"{sector_choice} · {len(constituent_df)} of {len(sector_symbols)} mapped constituents with usable price history. Stock zones compare relative 1M and 3M returns against NIFTY 500.")
-                counts = constituent_df["Rotation zone"].value_counts()
-                zcols = st.columns(4)
-                zcolors = {"Leading":"#198754","Improving":"#2864c5","Weakening":"#c27c16","Lagging":"#c92a2a"}
-                for zi, zname in enumerate(["Leading","Improving","Weakening","Lagging"]):
-                    with zcols[zi]:
-                        st.metric(zname, int(counts.get(zname,0)))
-                st.dataframe(constituent_df.sort_values(["Rotation zone","3M vs NIFTY 500 (pp)"],ascending=[True,False]),use_container_width=True,hide_index=True)
-                st.markdown("**Stocks changing rotation zone over the latest five available sessions**")
-                if constituent_transitions:
-                    st.dataframe(pd.DataFrame(constituent_transitions),use_container_width=True,hide_index=True)
-                else:
-                    st.info("No constituent stock zone changes detected over the latest five available sessions.")
-                st.markdown("**Strongest stocks in this sector**")
-                st.dataframe(constituent_df.sort_values("3M vs NIFTY 500 (pp)",ascending=False).head(5)[["Stock","Rotation zone","1D %","1M %","3M %","1M vs NIFTY 500 (pp)","3M vs NIFTY 500 (pp)"]],use_container_width=True,hide_index=True)
-            else:
-                st.warning("No constituent price history returned for this sector. No sample values are shown.")
-
-        if sector_rows:
-            sec = pd.DataFrame(sector_rows).sort_values("Relative return vs NIFTY (pp)", ascending=False)
-            st.dataframe(sec, use_container_width=True, hide_index=True)
-            sec["Direction"] = np.where(sec["Relative return vs NIFTY (pp)"] >= 0, "Outperforming", "Underperforming")
-            fig = px.bar(sec.sort_values("Relative return vs NIFTY (pp)"), x="Relative return vs NIFTY (pp)", y="Sector", color="Direction", color_discrete_map={"Outperforming":"#22c55e","Underperforming":"#ef4444"}, orientation="h", template="plotly_dark", title="Sector relative performance vs NIFTY")
-            fig.update_layout(height=440)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning("No sector index series were returned by the public source. No values have been substituted.")
-
-with st.expander("Micro Sector Rotation", expanded=False):
-    st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#a78bfa,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Micro Sector Rotation</div>""", unsafe_allow_html=True)
-    st.caption("Explore leading, improving, weakening and lagging micro industries, compare their strength against NIFTY 500, and drill down to constituent stocks.")
-    st.caption("Custom equal-weight stock baskets · ranks combine 1M/3M/6M returns and 50-EMA breadth. Public prices may be delayed. This is a research tool, not investment advice.")
-    if st.button("Load / refresh micro-sector rotation", key="load_micro_sector_rotation"):
-        st.session_state["load_micro_sector_rotation_loaded"] = True
-    if st.session_state.get("load_micro_sector_rotation_loaded", False):
-        MICRO_SECTORS = {
-            "API & CDMO": ("Pharma", ["DIVISLAB.NS","LAURUSLABS.NS","NEULANDLAB.NS","SHILPAMED.NS","SUVENPHAR.NS"]),
-            "Gaming": ("Niche", ["NAZARA.NS","ZENTEC.NS","DREAMFOLKS.NS"]),
-            "Engineering R&D": ("Technology", ["LTTS.NS","TATAELXSI.NS","KPITTECH.NS","CYIENT.NS"]),
-            "Telecom Equipment": ("Industrials", ["TEJASNET.NS","HFCL.NS","STLTECH.NS","ITI.NS"]),
-            "Jewellery": ("Consumer", ["TITAN.NS","KALYANKJIL.NS","PNGJL.NS","THANGAMAYL.NS","SENCO.NS"]),
-            "Broadcasting": ("Media & Services", ["SUNTV.NS","ZEEL.NS","TVTODAY.NS","NETWORK18.NS","NAZARA.NS"]),
-            "Brokers": ("Financials", ["ANGELONE.NS","MOTILALOFS.NS","BSE.NS","CDSL.NS","IIFLSEC.NS"]),
-            "Exchanges & Depositories": ("Financials", ["BSE.NS","CDSL.NS","CAMS.NS","KFINTECH.NS"]),
-            "Fintech & Payments": ("Financials", ["PAYTM.NS","POLICYBZR.NS","PBFINTECH.NS","CAMS.NS","KFINTECH.NS"]),
-            "Cooling (ACs & Fans)": ("Consumer Durables", ["VOLTAS.NS","BLUESTARCO.NS","AMBER.NS","HAVELLS.NS","CROMPTON.NS"]),
-            "Fluorochemicals": ("Chemicals", ["SRF.NS","NAVINFLUOR.NS","FLUOROCHEM.NS","GFL.NS"]),
-            "Specialty Chemicals": ("Chemicals", ["AARTIIND.NS","DEEPAKNTR.NS","CLEAN.NS","FINEORG.NS","GALAXYSURF.NS"]),
-            "Agrochemicals": ("Chemicals", ["PIIND.NS","UPL.NS","BAYERCROP.NS","RALLIS.NS","DHANUKA.NS"]),
-            "Paints & Coatings": ("Chemicals", ["ASIANPAINT.NS","BERGEPAINT.NS","KANSAINER.NS","INDIGOPNTS.NS"]),
-            "Cables & Wires": ("Industrials", ["POLYCAB.NS","KEI.NS","RRKABEL.NS","FINCABLES.NS"]),
-            "EMS & Electronics": ("Industrials", ["DIXON.NS","AMBER.NS","KAYNES.NS","SYRMA.NS","AVALON.NS"]),
-            "Defence Electronics": ("Defence", ["BEL.NS","BDL.NS","DATAPATTNS.NS","ASTRAMICRO.NS","PARAS.NS"]),
-            "Shipbuilding": ("Industrials", ["COCHINSHIP.NS","GRSE.NS","MAZDOCK.NS","SWANENERGY.NS"]),
-            "Railway Equipment": ("Industrials", ["TITAGARH.NS","RVNL.NS","TEXRAIL.NS","JWL.NS","RITES.NS"]),
-            "Industrial Automation": ("Industrials", ["ABB.NS","SIEMENS.NS","THERMAX.NS","HONAUT.NS","CGPOWER.NS"]),
-            "Power Transformers": ("Power", ["TRANSFORMERS.NS","VOLTAMP.NS","CGPOWER.NS","POWERINDIA.NS"]),
-            "Renewable Equipment": ("Power", ["SUZLON.NS","INOXWIND.NS","WAAREEENER.NS","PREMIERENE.NS","KPIGREEN.NS"]),
-            "Power Transmission": ("Power", ["KALPATPOWR.NS","KEC.NS","PFC.NS","REC.NS","POWERGRID.NS"]),
-            "Data Centres": ("Technology", ["ANANTRAJ.NS","NETWEB.NS","E2E.NS","TECHNOE.NS"]),
-            "Cybersecurity & IT Services": ("Technology", ["TANLA.NS","KELLTONTEC.NS","ZENSARTECH.NS","CYIENT.NS","LTTS.NS"]),
-            "Digital Platforms": ("Technology", ["INFOEDGE.NS","JUSTDIAL.NS","NAZARA.NS","CARTRADE.NS","INDIAMART.NS"]),
-            "Hospitals": ("Healthcare", ["APOLLOHOSP.NS","MAXHEALTH.NS","FORTIS.NS","RAINBOW.NS","KIMS.NS"]),
-            "Diagnostics": ("Healthcare", ["METROPOLIS.NS","LALPATHLAB.NS","VIJAYA.NS","THYROCARE.NS"]),
-            "Medical Devices": ("Healthcare", ["POLYMED.NS","CONCORDBIO.NS","YATHARTH.NS","ARTEMISMED.NS"]),
-            "Domestic Formulations": ("Pharma", ["ALKEM.NS","MANKIND.NS","TORNTPHARM.NS","GLENMARK.NS","AJANTAPHARM.NS"]),
-            "Biotech & Biosimilars": ("Pharma", ["BIOCON.NS","SYNGENE.NS","DRREDDY.NS","ZYDUSLIFE.NS"]),
-            "Diagnostics & Lab Services": ("Healthcare", ["METROPOLIS.NS","LALPATHLAB.NS","VIJAYA.NS","KRSNAA.NS"]),
-            "QSR & Food Service": ("Consumer", ["JUBLFOOD.NS","DEVYANI.NS","SAPPHIRE.NS","WESTLIFE.NS"]),
-            "Packaged Foods": ("Consumer", ["BRITANNIA.NS","BIKAJI.NS","GODREJAGRO.NS","TATACONSUM.NS","DODLA.NS"]),
-            "Sugar & Ethanol": ("Agri", ["BALRAMCHIN.NS","TRIVENI.NS","DWARKESH.NS","EIDPARRY.NS","RENUKA.NS"]),
-            "Dairy": ("Consumer", ["HATSUN.NS","DODLA.NS","HERITGFOOD.NS","PARAGMILK.NS"]),
-            "Spinning & Yarn": ("Textiles", ["VTL.NS","GOKEX.NS","SANGAMIND.NS","TRIDENT.NS","WELSPUNLIV.NS"]),
-            "Technical Textiles": ("Textiles", ["GARFIBRES.NS","SRF.NS","KPRMILL.NS","WELSPUNLIV.NS"]),
-            "Footwear": ("Consumer", ["BATAINDIA.NS","CAMPUS.NS","RELAXO.NS","METROBRAND.NS"]),
-            "Hotels & Resorts": ("Travel", ["INDHOTEL.NS","LEMONTREE.NS","CHALET.NS","EIHOTEL.NS","ITDC.NS"]),
-            "Travel Platforms": ("Travel", ["EASEMYTRIP.NS","IXIGO.NS","YATRA.NS","THOMASCOOK.NS"]),
-            "Logistics & Warehousing": ("Transport", ["DELHIVERY.NS","TCI.NS","MAHLOG.NS","BLUEDART.NS","ALLCARGO.NS"]),
-            "Ports & Marine Logistics": ("Transport", ["ADANIPORTS.NS","JSWINFRA.NS","GPPL.NS","COCHINSHIP.NS"]),
-            "Passenger Vehicles": ("Auto", ["M&M.NS","MARUTI.NS","TATAMOTORS.NS","HYUNDAI.NS"]),
-            "Auto Components": ("Auto", ["BHARATFORG.NS","BOSCHLTD.NS","SONACOMS.NS","UNOMINDA.NS","MOTHERSON.NS"]),
-            "Tyres": ("Auto", ["MRF.NS","APOLLOTYRE.NS","BALKRISIND.NS","CEATLTD.NS"]),
-            "EV Components": ("Auto", ["EXIDEIND.NS","AMARAJABAT.NS","SONACOMS.NS","UNOMINDA.NS","SANSERA.NS"]),
-            "Two-Wheeler Components": ("Auto", ["ENDURANCE.NS","BOSCHLTD.NS","MOTHERSON.NS","SUPRAJIT.NS"]),
-            "Building Materials": ("Construction", ["ASTRAL.NS","SUPREMEIND.NS","FINOLEXIND.NS","PRINCEPIPE.NS"]),
-            "Cement & Building Products": ("Construction", ["ULTRACEMCO.NS","SHREECEM.NS","DALBHARAT.NS","JKCEMENT.NS","RAMCOCEM.NS"]),
-            "Pipes & Fittings": ("Construction", ["ASTRAL.NS","SUPREMEIND.NS","FINPIPE.NS","JINDALSAW.NS"]),
-            "Real Estate Developers": ("Real Estate", ["DLF.NS","GODREJPROP.NS","OBEROIRLTY.NS","PRESTIGE.NS","PHOENIXLTD.NS"]),
-            "Building Interiors": ("Construction", ["GREENPANEL.NS","CENTURYPLY.NS","GREENPLY.NS","KAJARIACER.NS"]),
-            "Gold Loans": ("Financials", ["MUTHOOTFIN.NS","MANAPPURAM.NS","BAJAJHFL.NS"]),
-            "Microfinance": ("Financials", ["CREDITACC.NS","SPANDANA.NS","SURYODAY.NS","UGROCAP.NS"]),
-            "Small Finance Banks": ("Financials", ["AUBANK.NS","UJJIVANSFB.NS","EQUITASBNK.NS","ESAFSFB.NS"]),
-            "Asset Management": ("Financials", ["HDFCAMC.NS","NAM-INDIA.NS","UTIAMC.NS","ABSLAMC.NS"]),
-            "Insurance": ("Financials", ["HDFCLIFE.NS","SBILIFE.NS","ICICIPRULI.NS","LICI.NS"]),
-            "Capital Market Services": ("Financials", ["CDSL.NS","CAMS.NS","KFINTECH.NS","BSE.NS","MCX.NS"]),
-            "Paper & Packaging": ("Materials", ["JKPAPER.NS","TNPL.NS","HUHTAMAKI.NS","PFOCUS.NS"]),
-            "Glass & Containers": ("Materials", ["BOROSIL.NS","BORORENEW.NS","HINDWAREAP.NS","AGI.NS"]),
-            "Metals Recycling": ("Materials", ["MIDHANI.NS","HINDCOPPER.NS","NATIONALUM.NS","MOIL.NS"]),
-            "Mining & Minerals": ("Materials", ["NMDC.NS","COALINDIA.NS","VEDL.NS","HINDZINC.NS"]),
-            "Oilfield Services": ("Energy", ["OIL.NS","ONGC.NS","SEAMECLTD.NS","GTLINFRA.NS"]),
-            "City Gas Distribution": ("Energy", ["IGL.NS","MGL.NS","GUJGASLTD.NS","ATGL.NS"]),
-            "LPG & Gas Equipment": ("Energy", ["GAIL.NS","PETRONET.NS","GESHIP.NS","GULFPETRO.NS"]),
-            "Water & Waste Management": ("Utilities", ["IONEXCHANG.NS","EMS.NS","VA TECH WABAG.NS","ANTONY.NS"]),
-            "Agri Inputs": ("Agri", ["COROMANDEL.NS","CHAMBLFERT.NS","FACT.NS","NFL.NS"]),
-            "Seeds & Crop Science": ("Agri", ["KAVVERITEL.NS","PIIND.NS","RALLIS.NS","DHANUKA.NS"]),
-            "Fertilizers": ("Agri", ["COROMANDEL.NS","CHAMBLFERT.NS","FACT.NS","RCF.NS","NFL.NS"]),
-            "Education Services": ("Services", ["NIITLTD.NS","NIITMTS.NS","VERANDA.NS","APTECHT.NS"]),
-            "Staffing & HR Services": ("Services", ["TEAMLEASE.NS","QUESS.NS","NIITMTS.NS"]),
-            "Security & Facility Services": ("Services", ["SIS.NS","QUESS.NS","BVCL.NS"]),
-            "Hospitals & Wellness": ("Healthcare", ["KIMS.NS","YATHARTH.NS","RAINBOW.NS","ARTEMISMED.NS"]),
-            "Specialty Retail": ("Consumer", ["TRENT.NS","V2RETAIL.NS","ABFRL.NS","SHOPERSTOP.NS"]),
-            "Home Furnishings": ("Consumer", ["DREAMFOLKS.NS","WELSPUNLIV.NS","TRIDENT.NS","HINDWAREAP.NS"]),
-            "Alcoholic Beverages": ("Consumer", ["UNITDSPR.NS","RADICO.NS","UBL.NS","GLOBUSSPR.NS"]),
-            "Tobacco & Allied": ("Consumer", ["ITC.NS","GODFRYPHLP.NS","VSTIND.NS"]),
-            "Renewable Power Producers": ("Power", ["ADANIGREEN.NS","NTPCGREEN.NS","JSWENERGY.NS","NHPC.NS","SJVN.NS"]),
-            "Power Utilities": ("Power", ["NTPC.NS","POWERGRID.NS","TATAPOWER.NS","CESC.NS","TORNTPOWER.NS"]),
-            "IT Hardware": ("Technology", ["NETWEB.NS","DIXON.NS","KAYNES.NS","SYRMA.NS"]),
-            "Telecom Services": ("Telecom", ["BHARTIARTL.NS","IDEA.NS","INDUSTOWER.NS","TATACOMM.NS"]),
-            "Financial Technology": ("Financials", ["PAYTM.NS","POLICYBZR.NS","PBFINTECH.NS","ANGELONE.NS"]),
-        }
-        micro_tickers = sorted({ticker for _, tickers in MICRO_SECTORS.values() for ticker in tickers} | {"^CRSLDX"})
-        @st.cache_data(ttl=900, show_spinner=False)
-        def _micro_sector_download(symbols):
-            try:
-                raw = yf.download(list(symbols), period="1y", interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=False)
-                return raw
-            except Exception:
-                return pd.DataFrame()
-        if st.button("↻ Refresh micro-sector data", key="refresh_micro_sector_data"):
-            _micro_sector_download.clear()
-        with st.spinner(f"Fetching daily prices for {len(micro_tickers)-1} listed constituents…"):
-            micro_raw = _micro_sector_download(tuple(micro_tickers))
-        def _micro_close(symbol):
-            try:
-                if isinstance(micro_raw.columns, pd.MultiIndex):
-                    if (symbol, "Close") in micro_raw.columns:
-                        return micro_raw[(symbol, "Close")].dropna()
-                    if ("Close", symbol) in micro_raw.columns:
-                        return micro_raw[("Close", symbol)].dropna()
-                    return pd.Series(dtype=float)
-                if symbol == micro_tickers[0] and "Close" in micro_raw.columns:
-                    return micro_raw["Close"].dropna()
-            except Exception:
-                pass
-            return pd.Series(dtype=float)
-        bench = _micro_close("^CRSLDX")
-        if bench.empty:
-            st.warning("NIFTY 500 benchmark history is unavailable. Relative rotation scores are withheld until benchmark data is available.")
-        micro_rows = []
-        micro_histories = {}
-        if not micro_raw.empty:
-            for micro_name, (micro_group, symbols) in MICRO_SECTORS.items():
-                constituent_returns = []
-                constituent_breadth = []
-                constituent_series = []
-                for symbol in symbols:
-                    close = _micro_close(symbol)
-                    if len(close) < 60:
+        with st.expander("Sector rotation", expanded=False):
+            st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Sector rotation</div>""", unsafe_allow_html=True)
+            st.caption("Only sectors that return usable source rows are plotted. Relative strength is computed against NIFTY 50 over the selected lookback; it is not institutional money-flow data.")
+            if st.button("Load / refresh sector rotation", key="load_sector_rotation"):
+                get_history.clear()
+                st.session_state["load_sector_rotation_loaded"] = True
+            if st.session_state.get("load_sector_rotation_loaded", False):
+                sector_rows = []
+                rotation_rows = []
+                base_df = market_data["NIFTY 50"].copy()
+                if not base_df.empty:
+                    base_df = base_df.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last").copy()
+                    base_df["_day"] = pd.to_datetime(base_df["Date"]).dt.date
+                    base_df = base_df.set_index("_day")["Close"]
+                for sector, ticker in SECTOR_TICKERS.items():
+                    sdf, err = get_history(ticker, "6mo", "1d")
+                    if sdf.empty or len(sdf) < 12 or len(base_df) < 12:
                         continue
-                    close = close.sort_index()
-                    last = float(close.iloc[-1])
-                    ret1d = (last / float(close.iloc[-2]) - 1) * 100 if len(close) >= 2 else np.nan
-                    ret1w = (last / float(close.iloc[-min(6, len(close))]) - 1) * 100
-                    ret1 = (last / float(close.iloc[-min(22, len(close))]) - 1) * 100
-                    ret3 = (last / float(close.iloc[-min(64, len(close))]) - 1) * 100
-                    ret6 = (last / float(close.iloc[-min(127, len(close))]) - 1) * 100
-                    ret1y = (last / float(close.iloc[0]) - 1) * 100
-                    ema50 = close.ewm(span=50, adjust=False, min_periods=50).mean()
-                    constituent_returns.append((ret1d, ret1w, ret1, ret3, ret6, ret1y))
-                    constituent_breadth.append(float(last > float(ema50.iloc[-1])))
-                    constituent_series.append(close / float(close.iloc[-min(127, len(close))]) * 100)
-                if not constituent_returns:
-                    continue
-                arr = np.array(constituent_returns, dtype=float)
-                avg1d, avg1w, avg1, avg3, avg6, avg1y = np.nanmean(arr, axis=0)
-                breadth = float(np.mean(constituent_breadth)) * 100
-                composite = 0.25 * avg1 + 0.40 * avg3 + 0.25 * avg6 + 0.10 * ((breadth - 50) / 5)
-                micro_rows.append({"Micro sector": micro_name, "Group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1D %": avg1d, "1W %": avg1w, "1M %": avg1, "3M %": avg3, "6M %": avg6, "1Y %": avg1y, "50 EMA breadth %": breadth, "_raw_score": composite})
-                if constituent_series:
-                    aligned = pd.concat(constituent_series, axis=1).sort_index()
-                    micro_histories[micro_name] = aligned.mean(axis=1)
-        micro_df = pd.DataFrame(micro_rows)
-        if not micro_df.empty:
-            for col in ["1M %", "3M %", "6M %", "_raw_score"]:
-                micro_df[col] = pd.to_numeric(micro_df[col], errors="coerce")
-            for col in ["1M %", "3M %", "6M %", "50 EMA breadth %"]:
-                micro_df[col + " percentile"] = micro_df[col].rank(pct=True) * 100
-            micro_df["Score"] = (micro_df["1M % percentile"] * 0.25 + micro_df["3M % percentile"] * 0.35 + micro_df["6M % percentile"] * 0.25 + micro_df["50 EMA breadth % percentile"] * 0.15).round().astype(int)
-            bench1 = bench.iloc[-1] / bench.iloc[-min(22, len(bench))] * 100 - 100 if len(bench) >= 22 else np.nan
-            bench3 = bench.iloc[-1] / bench.iloc[-min(64, len(bench))] * 100 - 100 if len(bench) >= 64 else np.nan
-            micro_df["1M vs NIFTY 500 (pp)"] = micro_df["1M %"] - bench1
-            micro_df["3M vs NIFTY 500 (pp)"] = micro_df["3M %"] - bench3
-            def _micro_zone(row):
-                ahead = pd.notna(row["3M vs NIFTY 500 (pp)"]) and row["3M vs NIFTY 500 (pp)"] >= 0
-                rising = pd.notna(row["1M vs NIFTY 500 (pp)"]) and row["1M vs NIFTY 500 (pp)"] >= 0
-                return "Leading" if ahead and rising else "Weakening" if ahead else "Improving" if rising else "Lagging"
-            micro_df["Zone"] = micro_df.apply(_micro_zone, axis=1)
-            micro_df = micro_df.sort_values("Score", ascending=False).reset_index(drop=True)
-            latest_dates = [s.index[-1] for s in [bench] if not s.empty]
-            asof = pd.Timestamp(latest_dates[0]).strftime("%d %b %Y") if latest_dates else "date unavailable"
-            st.markdown(f"**Data date:** {asof} · **Micro sectors available:** {len(micro_df)} · **Constituent prices fetched:** {len(micro_tickers)-1}")
-            st.markdown("### What changed · Where money is moving")
-            micro_period = st.segmented_control("Theme movement period", ["1D", "1W", "1M", "3M", "6M"], default="1D", key="micro_movers_period")
-            micro_climbers = micro_df.sort_values(micro_period + " %", ascending=False).head(6)
-            micro_fallers = micro_df.sort_values(micro_period + " %", ascending=True).head(6)
-            mc, mf = st.columns(2, gap="medium")
-            for panel, heading, frame, panel_color in [
-                (mc, "CLIMBERS", micro_climbers, "#329b72"),
-                (mf, "FALLERS", micro_fallers, "#c56b72"),
-            ]:
-                with panel:
-                    st.markdown(f'<div style="font-size:12px;font-weight:800;letter-spacing:1px;color:{panel_color};margin:4px 0 8px;">{heading}</div>', unsafe_allow_html=True)
-                    for rank_no, (_, theme_row) in enumerate(frame.iterrows(), 1):
-                        move = float(theme_row[micro_period + " %"])
-                        st.markdown(
-                            f'<div style="display:flex;justify-content:space-between;gap:8px;padding:9px 10px;border-bottom:1px solid rgba(130,145,135,.25);">'
-                            f'<b>{rank_no}. {html.escape(str(theme_row["Micro sector"]))}</b>'
-                            f'<span style="font-weight:800;color:{panel_color};">{move:+.2f}%</span></div>',
-                            unsafe_allow_html=True,
+                    sdf = sdf.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last").copy()
+                    sdf["_day"] = pd.to_datetime(sdf["Date"]).dt.date
+                    s_close = sdf.set_index("_day")["Close"]
+                    aligned = pd.concat([s_close.rename("sector"), base_df.rename("nifty")], axis=1).dropna()
+                    if len(aligned) < 12:
+                        continue
+                    relative = (aligned["sector"] / aligned["nifty"]) * 100
+                    rs_mean = relative.rolling(20, min_periods=8).mean()
+                    rs_momentum = relative.pct_change(5) * 100
+    
+                    def _rotation_zone(pos):
+                        if pos < 0 or pos >= len(relative) or pd.isna(rs_mean.iloc[pos]) or pd.isna(rs_momentum.iloc[pos]):
+                            return None
+                        strong = relative.iloc[pos] >= rs_mean.iloc[pos]
+                        accelerating = rs_momentum.iloc[pos] >= 0
+                        if strong and accelerating:
+                            return "Leading"
+                        if strong and not accelerating:
+                            return "Weakening"
+                        if not strong and accelerating:
+                            return "Improving"
+                        return "Lagging"
+    
+                    cur_pos = len(aligned) - 1
+                    prev_pos = max(0, cur_pos - 5)
+                    current_zone = _rotation_zone(cur_pos)
+                    previous_zone = _rotation_zone(prev_pos)
+                    recent = aligned.iloc[-min(21, len(aligned)):]
+                    perf = (recent["sector"].iloc[-1] / recent["sector"].iloc[0] - 1) * 100
+                    base_perf = (recent["nifty"].iloc[-1] / recent["nifty"].iloc[0] - 1) * 100
+                    last_date = pd.to_datetime(aligned.index[-1]).strftime("%d %b %Y")
+                    relative_pp = perf - base_perf
+                    def _relative_window(window):
+                        sample = aligned.iloc[-min(window, len(aligned)):]
+                        if len(sample) < 2:
+                            return np.nan
+                        return ((sample["sector"].iloc[-1] / sample["sector"].iloc[0] - 1) -
+                                (sample["nifty"].iloc[-1] / sample["nifty"].iloc[0] - 1)) * 100
+                    sector_rows.append({
+                        "Sector": sector, "Ticker": ticker, "Period return %": perf,
+                        "NIFTY return %": base_perf, "Relative return vs NIFTY (pp)": relative_pp,
+                        "1D vs NIFTY (pp)": _relative_window(2),
+                        "1W vs NIFTY (pp)": _relative_window(6),
+                        "3W vs NIFTY (pp)": _relative_window(16),
+                        "6W vs NIFTY (pp)": _relative_window(31),
+                        "Last source bar": last_date
+                    })
+                    if current_zone:
+                        rotation_rows.append({"Sector": sector, "Previous zone": previous_zone or current_zone, "Current zone": current_zone, "Relative return vs NIFTY (pp)": relative_pp, "Last source bar": last_date})
+    
+                if sector_rows:
+                    sector_board = pd.DataFrame(sector_rows)
+                    sector_period = st.segmented_control(
+                        "Rank sector money flow by period",
+                        ["1D", "1W", "3W", "6W"],
+                        default="1W",
+                        key="sector_rotation_period",
+                    )
+                    sector_metric = {"1D": "1D vs NIFTY (pp)", "1W": "1W vs NIFTY (pp)", "3W": "3W vs NIFTY (pp)", "6W": "6W vs NIFTY (pp)"}[sector_period]
+                    sector_board = sector_board.dropna(subset=[sector_metric]).sort_values(sector_metric, ascending=False)
+                    rising_sectors = sector_board.head(5)
+                    falling_sectors = sector_board.tail(5).sort_values(sector_metric)
+                    st.markdown("### What changed · Where sector money is moving")
+                    st.caption(f"Relative performance versus NIFTY 50 · {sector_period} window · latest available source bar")
+                    climb_col, fall_col = st.columns(2, gap="medium")
+                    for board_col, board_title, board_data, board_color in [
+                        (climb_col, "CLIMBERS", rising_sectors, "#329b72"),
+                        (fall_col, "FALLERS", falling_sectors, "#c56b72"),
+                    ]:
+                        with board_col:
+                            st.markdown(f'<div style="font-size:12px;font-weight:800;letter-spacing:1px;color:{board_color};margin:4px 0 8px;">{board_title}</div>', unsafe_allow_html=True)
+                            for rank_no, (_, sector_item) in enumerate(board_data.iterrows(), 1):
+                                score = float(sector_item[sector_metric])
+                                st.markdown(
+                                    f'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 9px;border-bottom:1px solid rgba(130,145,135,.25);">'
+                                    f'<b>{rank_no}. {html.escape(str(sector_item["Sector"]))}</b>'
+                                    f'<span style="font-weight:800;color:{board_color};">{score:+.2f} pp</span></div>',
+                                    unsafe_allow_html=True,
+                                )
+    
+                if rotation_rows:
+                    zone_colors = {"Leading": "#198754", "Weakening": "#b45309", "Improving": "#2864c5", "Lagging": "#dc3545"}
+                    zone_order = {"Leading": 0, "Improving": 1, "Weakening": 2, "Lagging": 3}
+                    for item in rotation_rows:
+                        item["Changed this week"] = item["Previous zone"] != item["Current zone"]
+                        item["Signal"] = f'{item["Previous zone"]} → {item["Current zone"]}' if item["Changed this week"] else f'{item["Current zone"]} · holding'
+                    # Always show six useful sector signals where six sectors have valid data.
+                    # Actual zone changes rank first; remaining slots show the strongest current setups by zone and relative strength.
+                    top_rotation_signals = sorted(
+                        rotation_rows,
+                        key=lambda x: (
+                            not x["Changed this week"],
+                            zone_order.get(x["Current zone"], 4),
+                            -float(x.get("Relative return vs NIFTY (pp)", -999))
                         )
-            rank_metric = st.segmented_control("Rank leading micro sectors by", options=["Score", "1D %", "1W %", "1M %", "3M %", "6M %", "1Y %"], default="Score", key="micro_rank_mode")
-            rank_col = rank_metric if rank_metric in micro_df.columns else "Score"
-            ranked = micro_df.sort_values(rank_col, ascending=False).head(6)
-            st.subheader("Leading micro sectors")
-            cards = st.columns(2)
-            for idx, (_, row) in enumerate(ranked.iterrows()):
-                with cards[idx % 2]:
-                    zone_color = {"Leading":"#198754","Improving":"#2864c5","Weakening":"#c27c16","Lagging":"#c92a2a"}.get(row["Zone"], "#64748b")
-                    metric_html = "".join(
-                        f'<div><small>{label}</small><br><b style="color:{("#198754" if value >= 0 else "#c92a2a")}">{value:+.1f}%</b></div>'
-                        for label, value in [("1M", row["1M %"]), ("3M", row["3M %"]), ("6M", row["6M %"])]
-                    )
-                    card_html = (
-                        f'<div style="border:1px solid #5b5747;border-radius:16px;padding:15px;margin-bottom:12px;background:#171d1b;color:#f2f0e8;">'
-                        f'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
-                        f'<span style="background:#d7b967;color:#20251f;border-radius:999px;padding:4px 10px;font-weight:800;">#{idx+1}</span>'
-                        f'<span style="border:1px solid {zone_color};color:{zone_color};border-radius:999px;padding:3px 10px;font-weight:700;">{html.escape(str(row["Zone"]))}</span></div>'
-                        f'<h3 style="margin:12px 0 4px;color:#f2f0e8;">{html.escape(str(row["Micro sector"]))}</h3>'
-                        f'<div style="opacity:.75;font-size:13px;">{html.escape(str(row["Group"]))} · {int(row["Stocks available"])} stocks · Score {int(row["Score"])}</div>'
-                        f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:14px;">{metric_html}</div></div>'
-                    )
-                    st.markdown(card_html, unsafe_allow_html=True)
-                    hist = micro_histories.get(row["Micro sector"], pd.Series(dtype=float))
-                    if len(hist) > 2:
-                        spark = go.Figure(go.Scatter(x=hist.index, y=hist.values, mode="lines", line=dict(color="#198754" if hist.iloc[-1] >= hist.iloc[-min(22,len(hist))] else "#c92a2a", width=2), fill="tozeroy"))
-                        spark.update_layout(height=75, margin=dict(l=0,r=0,t=0,b=0), showlegend=False, xaxis=dict(visible=False), yaxis=dict(visible=False), template="plotly_white")
-                        st.plotly_chart(spark, use_container_width=True, config={"displayModeBar":False}, key=f"micro_spark_{idx}")
-            st.subheader("Rotation zones")
-            zone_counts = micro_df["Zone"].value_counts()
-            zone_cols = st.columns(4)
-            zone_text = {"Leading":"Outperforming over 3M and gaining relative ground over 1M","Improving":"Behind over 3M, but gaining over 1M","Weakening":"Ahead over 3M, but losing relative ground over 1M","Lagging":"Behind over both 3M and 1M"}
-            zone_colors = {"Leading":"#198754","Improving":"#2864c5","Weakening":"#c27c16","Lagging":"#c92a2a"}
-            for j, zone in enumerate(["Leading","Improving","Weakening","Lagging"]):
-                with zone_cols[j]:
-                    st.markdown(f'<div style="border-top:4px solid {zone_colors[zone]};border-radius:12px;padding:12px;border-left:1px solid #dbe2ea;border-right:1px solid #dbe2ea;border-bottom:1px solid #dbe2ea;"><b style="color:{zone_colors[zone]}">{zone} · {int(zone_counts.get(zone,0))}</b><div style="font-size:13px;margin-top:8px;opacity:.8;">{zone_text[zone]}</div></div>', unsafe_allow_html=True)
-            st.subheader("All micro sectors · current rotation status")
-            zone_filter = st.selectbox("Filter micro sectors by rotation zone", ["All zones", "Leading", "Improving", "Weakening", "Lagging"], key="micro_zone_filter")
-            zone_view = micro_df if zone_filter == "All zones" else micro_df[micro_df["Zone"] == zone_filter]
-            display_cols = ["Micro sector", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Stocks available"]
-            st.dataframe(zone_view[display_cols].sort_values("Score", ascending=False), use_container_width=True, hide_index=True)
-            st.caption("This list shows every available micro sector in each rotation zone—not only the top six cards.")
-
-            st.subheader("Rotation map: every micro sector against NIFTY 500")
-            map_df = micro_df.dropna(subset=["3M vs NIFTY 500 (pp)", "1M vs NIFTY 500 (pp)"]).copy()
-            if not map_df.empty:
-                map_fig = px.scatter(map_df, x="3M vs NIFTY 500 (pp)", y="1M vs NIFTY 500 (pp)", size="Stocks available", color="Zone", hover_name="Micro sector", hover_data=["Group","Score","1M %","3M %","6M %"], color_discrete_map=zone_colors, template="plotly_white", title="Relative return and momentum")
-                map_fig.add_vline(x=0,line_color="#9ca3af")
-                map_fig.add_hline(y=0,line_color="#9ca3af")
-                map_fig.update_layout(height=560, xaxis_title="3M return vs NIFTY 500 (percentage points)", yaxis_title="1M return vs NIFTY 500 (percentage points)", legend_title="Rotation zone")
-                st.plotly_chart(map_fig, use_container_width=True, config={"displaylogo":False}, key="micro_rotation_map")
-            st.subheader("Rotation signals · zone changes this week")
-            # Daily data may not include a prior saved weekly snapshot; compare latest zone with the zone five sessions ago where enough history exists.
-            signal_rows = []
-            for micro_name, (micro_group, symbols) in MICRO_SECTORS.items():
-                hist = micro_histories.get(micro_name)
-                if hist is None or len(hist) < 30 or bench.empty:
-                    continue
-                b_aligned = pd.concat([hist.rename("sector"), bench.rename("bench")], axis=1).dropna()
-                if len(b_aligned) < 30:
-                    continue
-                def _zone_at(pos):
-                    curr = b_aligned.iloc[:pos+1]
-                    if len(curr) < 22:
-                        return None
-                    r1 = (curr["sector"].iloc[-1] / curr["sector"].iloc[-22] - 1) * 100 - (curr["bench"].iloc[-1] / curr["bench"].iloc[-22] - 1) * 100
-                    r3 = (curr["sector"].iloc[-1] / curr["sector"].iloc[-min(64,len(curr))] - 1) * 100 - (curr["bench"].iloc[-1] / curr["bench"].iloc[-min(64,len(curr))] - 1) * 100
-                    return "Leading" if r3 >= 0 and r1 >= 0 else "Weakening" if r3 >= 0 else "Improving" if r1 >= 0 else "Lagging"
-                old_zone = _zone_at(len(b_aligned)-6)
-                new_zone = _zone_at(len(b_aligned)-1)
-                if old_zone and new_zone and old_zone != new_zone:
-                    signal_rows.append({"Micro sector":micro_name,"Group":micro_group,"Transition":f"{old_zone} → {new_zone}"})
-            if signal_rows:
-                signal_df = pd.DataFrame(signal_rows)
-                signal_cols = st.columns(2)
-                for j, (_, sr) in enumerate(signal_df.iterrows()):
-                    with signal_cols[j % 2]:
-                        new_zone = sr["Transition"].split(" → ")[-1]
-                        zc = zone_colors[new_zone]
-                        st.markdown(f'<div style="border:2px solid {zc}66;border-radius:999px;padding:11px 15px;margin-bottom:8px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;"><b>{html.escape(sr["Micro sector"])}</b><span style="color:{zc};font-weight:750;">{html.escape(sr["Transition"])}</span></div>', unsafe_allow_html=True)
-            else:
-                st.info("No zone changes detected across the latest five available sessions, or insufficient history to verify transitions.")
-            st.subheader("Group strength")
-            group_df = micro_df.groupby("Group", as_index=False).agg(**{"Average score":("Score","mean"),"Micro sectors":("Micro sector","count"),"Leading":("Zone",lambda s:int((s=="Leading").sum()))}).sort_values("Average score",ascending=False)
-            group_cols = st.columns(2)
-            for j, (_, gr) in enumerate(group_df.head(12).iterrows()):
-                with group_cols[j % 2]:
-                    group_score = float(gr["Average score"])
-                    group_name = html.escape(str(gr["Group"]))
-                    group_leading = int(gr["Leading"])
-                    group_count = int(gr["Micro sectors"])
-                    st.markdown(
-                        f'<div style="border:1px solid #dbe2ea;border-radius:14px;padding:13px;margin-bottom:9px;">'
-                        f'<b>{group_name}</b><span style="float:right;font-size:20px;font-weight:800;">{group_score:.0f}</span>'
-                        f'<div style="height:7px;background:#e2e8f0;border-radius:99px;margin:8px 0;">'
-                        f'<div style="height:7px;width:{max(0,min(100,group_score)):.0f}%;background:linear-gradient(90deg,#60a5fa,#16a34a);border-radius:99px;"></div></div>'
-                        f'<small>{group_leading} of {group_count} leading · {group_count} micro sectors</small></div>',
-                        unsafe_allow_html=True,
-                    )
-            st.subheader("Find a micro sector or stock")
-            choices = sorted(MICRO_SECTORS.keys())
-            chosen = st.selectbox("Select micro sector", choices, key="micro_sector_drilldown")
-            chosen_group, chosen_symbols = MICRO_SECTORS[chosen]
-            st.write(f"**{chosen}** · {chosen_group} · equal-weight basket")
-            drill_rows = []
-            stock_transition_rows = []
-            stock_zone_colors = {"Leading":"#198754","Improving":"#2864c5","Weakening":"#c27c16","Lagging":"#c92a2a"}
-            for symbol in chosen_symbols:
-                close = _micro_close(symbol)
-                if len(close) < 60:
-                    continue
-                close = close.sort_index()
-                last = float(close.iloc[-1])
-                prev = float(close.iloc[-2])
-                e50_series = close.ewm(span=50, adjust=False, min_periods=50).mean()
-                e50 = e50_series.iloc[-1]
-                stock_aligned = pd.concat([close.rename("stock"), bench.rename("bench")], axis=1).dropna() if not bench.empty else pd.DataFrame()
-                def _stock_zone_at(aligned, pos):
-                    current = aligned.iloc[:pos+1]
-                    if len(current) < 22:
-                        return None
-                    rel1 = (current["stock"].iloc[-1] / current["stock"].iloc[-22] - 1) * 100 - (current["bench"].iloc[-1] / current["bench"].iloc[-22] - 1) * 100
-                    rel3 = (current["stock"].iloc[-1] / current["stock"].iloc[-min(64,len(current))] - 1) * 100 - (current["bench"].iloc[-1] / current["bench"].iloc[-min(64,len(current))] - 1) * 100
-                    return "Leading" if rel3 >= 0 and rel1 >= 0 else "Weakening" if rel3 >= 0 else "Improving" if rel1 >= 0 else "Lagging"
-                current_zone = _stock_zone_at(stock_aligned, len(stock_aligned)-1) if len(stock_aligned) >= 22 else "Unclassified"
-                previous_zone = _stock_zone_at(stock_aligned, len(stock_aligned)-6) if len(stock_aligned) >= 27 else None
-                transition = f"{previous_zone} → {current_zone}" if previous_zone and current_zone and previous_zone != current_zone else "No zone change"
-                if previous_zone and current_zone and previous_zone != current_zone:
-                    stock_transition_rows.append({"Stock":symbol.replace(".NS",""),"Transition":transition})
-                rel1_value = (last / float(close.iloc[-min(22,len(close))]) - 1) * 100 - (float(bench.iloc[-1]) / float(bench.iloc[-min(22,len(bench))]) - 1) * 100 if len(bench) >= 22 else np.nan
-                rel3_value = (last / float(close.iloc[-min(64,len(close))]) - 1) * 100 - (float(bench.iloc[-1]) / float(bench.iloc[-min(64,len(bench))]) - 1) * 100 if len(bench) >= 64 else np.nan
-                drill_rows.append({"Stock":symbol.replace(".NS",""),"Rotation zone":current_zone,"Zone change (5 sessions)":transition,"Latest close":last,"1D %":(last/prev-1)*100 if prev else np.nan,"1M %":(last/close.iloc[-min(22,len(close))]-1)*100,"3M %":(last/close.iloc[-min(64,len(close))]-1)*100,"1M vs NIFTY 500 (pp)":rel1_value,"3M vs NIFTY 500 (pp)":rel3_value,"Above 50 EMA":bool(last>e50) if pd.notna(e50) else "Insufficient history"})
-            if drill_rows:
-                drill_df = pd.DataFrame(drill_rows)
-                st.markdown("**Constituent stock rotation** · each stock is classified against NIFTY 500 using relative 1M and 3M performance.")
-                counts = drill_df["Rotation zone"].value_counts()
-                zone_cols = st.columns(4)
-                for zi, zone in enumerate(["Leading","Improving","Weakening","Lagging"]):
-                    with zone_cols[zi]:
-                        st.metric(zone, int(counts.get(zone,0)))
-                st.dataframe(drill_df.sort_values(["Rotation zone","3M vs NIFTY 500 (pp)"],ascending=[True,False]),use_container_width=True,hide_index=True)
-                st.markdown("**Stocks changing rotation zone over the latest five available sessions**")
-                if stock_transition_rows:
-                    st.dataframe(pd.DataFrame(stock_transition_rows),use_container_width=True,hide_index=True)
+                    )[:6]
+                    st.markdown("### Top 6 sector rotation signals")
+                    st.caption("Actual zone transitions are prioritised. If fewer than six sectors changed zones this week, the remaining cards show the strongest current zone/relative-strength setups and are marked 'holding' rather than presented as new transitions.")
+                    pills = []
+                    for item in top_rotation_signals:
+                        sector_name = item["Sector"]
+                        transition = item["Signal"]
+                        color = zone_colors.get(item["Current zone"], "#64748b")
+                        stamp = item["Last source bar"]
+                        pills.append(
+                            f'<div style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:10px;'
+                            f'border:2px solid {color}55;border-radius:999px;background:rgba(255,255,255,.025);'
+                            f'padding:10px 18px;margin:0 8px 8px 0;font-size:clamp(14px,1.5vw,19px);font-weight:650;">'
+                            f'<span style="color:var(--text-color);">{html.escape(sector_name)}</span>'
+                            f'<span style="color:{color};">{html.escape(transition)}</span>'
+                            f'<span style="font-size:11px;font-weight:400;opacity:.7;">{html.escape(stamp)}</span></div>'
+                        )
+                    st.markdown('<div style="background:rgba(80,120,200,.07);border-radius:24px;padding:18px;">' + "".join(pills) + '</div>', unsafe_allow_html=True)
+                    with st.expander("View all current rotation zones", expanded=False):
+                        current_zones = sorted(rotation_rows, key=lambda x: (zone_order.get(x["Current zone"], 4), -float(x.get("Relative return vs NIFTY (pp)", -999))))
+                        st.dataframe(pd.DataFrame(current_zones), use_container_width=True, hide_index=True)
                 else:
-                    st.info("No constituent stock zone changes detected over the latest five available sessions.")
-                st.markdown("**Strongest stocks in this micro sector**")
-                st.dataframe(drill_df.sort_values("3M vs NIFTY 500 (pp)",ascending=False).head(5)[["Stock","Rotation zone","1D %","1M %","3M %","1M vs NIFTY 500 (pp)","3M vs NIFTY 500 (pp)"]],use_container_width=True,hide_index=True)
-                st.code(" ".join(s.replace(".NS","") for s in chosen_symbols), language="text")
-                st.caption("Copy the displayed symbols into your TradingView watchlist. Stock rotation zones compare each constituent with NIFTY 500; this is a relative-strength classification, not an investment recommendation.")
-            else:
-                st.warning("No constituent prices were returned for this micro sector.")
-        else:
-            st.warning("No usable micro-sector prices were returned. Refresh later; no sample values are shown.")
-
-
-
-
+                    st.warning("Not enough overlapping daily sector and NIFTY data to calculate rotation zones. No values have been substituted.")
+    
+                # Constituent stock-level rotation for each conventional NSE sector.
+                SECTOR_STOCKS = {
+                    "IT": ["TCS.NS","INFY.NS","HCLTECH.NS","WIPRO.NS","TECHM.NS","LTIM.NS","PERSISTENT.NS","COFORGE.NS","MPHASIS.NS","OFSS.NS"],
+                    "Pharma": ["SUNPHARMA.NS","DRREDDY.NS","CIPLA.NS","DIVISLAB.NS","TORNTPHARM.NS","LUPIN.NS","AUROPHARMA.NS","ALKEM.NS","ZYDUSLIFE.NS","MANKIND.NS"],
+                    "Auto": ["MARUTI.NS","M&M.NS","TATAMOTORS.NS","BAJAJ-AUTO.NS","EICHERMOT.NS","HEROMOTOCO.NS","TVSMOTOR.NS","ASHOKLEY.NS","BOSCHLTD.NS","MOTHERSON.NS"],
+                    "Metal": ["TATASTEEL.NS","JSWSTEEL.NS","HINDALCO.NS","VEDL.NS","COALINDIA.NS","JINDALSTEL.NS","NMDC.NS","SAIL.NS","NATIONALUM.NS","HINDZINC.NS"],
+                    "Energy": ["RELIANCE.NS","ONGC.NS","NTPC.NS","POWERGRID.NS","BPCL.NS","IOC.NS","GAIL.NS","TATAPOWER.NS","ADANIGREEN.NS","JSWENERGY.NS"],
+                    "FMCG": ["HINDUNILVR.NS","ITC.NS","NESTLEIND.NS","BRITANNIA.NS","TATACONSUM.NS","GODREJCP.NS","DABUR.NS","MARICO.NS","COLPAL.NS","UNITDSPR.NS"],
+                    "Realty": ["DLF.NS","GODREJPROP.NS","OBEROIRLTY.NS","PRESTIGE.NS","PHOENIXLTD.NS","LODHA.NS","BRIGADE.NS","SOBHA.NS","MAHLIFE.NS","ANANTRAJ.NS"],
+                    "Financial Services": ["HDFCBANK.NS","ICICIBANK.NS","SBIN.NS","AXISBANK.NS","KOTAKBANK.NS","BAJFINANCE.NS","BAJAJFINSV.NS","SHRIRAMFIN.NS","CHOLAFIN.NS","PFC.NS"],
+                    "PSU Bank": ["SBIN.NS","BANKBARODA.NS","CANBK.NS","PNB.NS","UNIONBANK.NS","INDIANB.NS","IOB.NS","MAHABANK.NS","CENTRALBK.NS","UCOBANK.NS"],
+                    "Media": ["SUNTV.NS","ZEEL.NS","NETWORK18.NS","TVTODAY.NS","PVRINOX.NS","SAREGAMA.NS","NAZARA.NS","DBCORP.NS"],
+                    "Infrastructure": ["LT.NS","ADANIPORTS.NS","ADANIENT.NS","SIEMENS.NS","ABB.NS","BHEL.NS","IRB.NS","KEC.NS","KALPATPOWR.NS","NBCC.NS"],
+                    "Consumption": ["TITAN.NS","TRENT.NS","DMART.NS","ETERNAL.NS","NYKAA.NS","INDIGO.NS","JUBLFOOD.NS","PAGEIND.NS","ASIANPAINT.NS","HAVELLS.NS"],
+                }
+                with st.expander("Sector constituent stocks · stock-level rotation and transitions", expanded=True):
+                    sector_choice = st.selectbox("Choose sector to inspect its stocks", sorted(SECTOR_STOCKS.keys()), key="sector_stock_rotation_choice")
+                    sector_symbols = SECTOR_STOCKS[sector_choice]
+                    sector_stock_tickers = tuple(sorted(set(sector_symbols + ["^CRSLDX"])))
+                    @st.cache_data(ttl=900, show_spinner=False)
+                    def _sector_stock_download(symbols):
+                        try:
+                            return yf.download(list(symbols), period="1y", interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=False)
+                        except Exception:
+                            return pd.DataFrame()
+                    if st.button("↻ Refresh sector constituent data", key="refresh_sector_constituents"):
+                        _sector_stock_download.clear()
+                    with st.spinner(f"Fetching constituent history for {sector_choice}…"):
+                        sector_raw = _sector_stock_download(sector_stock_tickers)
+                    def _sector_stock_close(symbol):
+                        try:
+                            if isinstance(sector_raw.columns, pd.MultiIndex):
+                                if (symbol, "Close") in sector_raw.columns:
+                                    return sector_raw[(symbol, "Close")].dropna()
+                                if ("Close", symbol) in sector_raw.columns:
+                                    return sector_raw[("Close", symbol)].dropna()
+                            elif symbol == sector_stock_tickers[0] and "Close" in sector_raw.columns:
+                                return sector_raw["Close"].dropna()
+                        except Exception:
+                            pass
+                        return pd.Series(dtype=float)
+                    sector_bench = _sector_stock_close("^CRSLDX")
+                    constituent_rows = []
+                    constituent_transitions = []
+                    for symbol in sector_symbols:
+                        close = _sector_stock_close(symbol)
+                        if len(close) < 60 or len(sector_bench) < 60:
+                            continue
+                        close = close.sort_index()
+                        aligned_stock = pd.concat([close.rename("stock"), sector_bench.rename("bench")], axis=1).dropna()
+                        if len(aligned_stock) < 60:
+                            continue
+                        def _stock_rotation_zone(position):
+                            window = aligned_stock.iloc[:position+1]
+                            if len(window) < 22:
+                                return None
+                            rel1 = (window["stock"].iloc[-1] / window["stock"].iloc[-22] - 1) * 100 - (window["bench"].iloc[-1] / window["bench"].iloc[-22] - 1) * 100
+                            rel3 = (window["stock"].iloc[-1] / window["stock"].iloc[-min(64,len(window))] - 1) * 100 - (window["bench"].iloc[-1] / window["bench"].iloc[-min(64,len(window))] - 1) * 100
+                            return "Leading" if rel3 >= 0 and rel1 >= 0 else "Weakening" if rel3 >= 0 else "Improving" if rel1 >= 0 else "Lagging"
+                        current_stock_zone = _stock_rotation_zone(len(aligned_stock)-1)
+                        prior_stock_zone = _stock_rotation_zone(len(aligned_stock)-6) if len(aligned_stock) >= 27 else None
+                        last_close = float(close.iloc[-1])
+                        previous_close = float(close.iloc[-2])
+                        ema50 = close.ewm(span=50, adjust=False, min_periods=50).mean().iloc[-1]
+                        rel1_now = (aligned_stock["stock"].iloc[-1] / aligned_stock["stock"].iloc[-22] - 1) * 100 - (aligned_stock["bench"].iloc[-1] / aligned_stock["bench"].iloc[-22] - 1) * 100
+                        rel3_now = (aligned_stock["stock"].iloc[-1] / aligned_stock["stock"].iloc[-min(64,len(aligned_stock))] - 1) * 100 - (aligned_stock["bench"].iloc[-1] / aligned_stock["bench"].iloc[-min(64,len(aligned_stock))] - 1) * 100
+                        change = f"{prior_stock_zone} → {current_stock_zone}" if prior_stock_zone and current_stock_zone and prior_stock_zone != current_stock_zone else "No zone change"
+                        if prior_stock_zone and current_stock_zone and prior_stock_zone != current_stock_zone:
+                            constituent_transitions.append({"Stock":symbol.replace(".NS",""),"Transition":change})
+                        constituent_rows.append({"Stock":symbol.replace(".NS",""),"Rotation zone":current_stock_zone,"Zone change (5 sessions)":change,"1D %":(last_close/previous_close-1)*100 if previous_close else np.nan,"1M %":(last_close/float(close.iloc[-min(22,len(close))])-1)*100,"3M %":(last_close/float(close.iloc[-min(64,len(close))])-1)*100,"1M vs NIFTY 500 (pp)":rel1_now,"3M vs NIFTY 500 (pp)":rel3_now,"Above 50 EMA":bool(last_close>ema50) if pd.notna(ema50) else "Insufficient history"})
+                    if constituent_rows:
+                        constituent_df = pd.DataFrame(constituent_rows)
+                        st.caption(f"{sector_choice} · {len(constituent_df)} of {len(sector_symbols)} mapped constituents with usable price history. Stock zones compare relative 1M and 3M returns against NIFTY 500.")
+                        counts = constituent_df["Rotation zone"].value_counts()
+                        zcols = st.columns(4)
+                        zcolors = {"Leading":"#198754","Improving":"#2864c5","Weakening":"#c27c16","Lagging":"#c92a2a"}
+                        for zi, zname in enumerate(["Leading","Improving","Weakening","Lagging"]):
+                            with zcols[zi]:
+                                st.metric(zname, int(counts.get(zname,0)))
+                        st.dataframe(constituent_df.sort_values(["Rotation zone","3M vs NIFTY 500 (pp)"],ascending=[True,False]),use_container_width=True,hide_index=True)
+                        st.markdown("**Stocks changing rotation zone over the latest five available sessions**")
+                        if constituent_transitions:
+                            st.dataframe(pd.DataFrame(constituent_transitions),use_container_width=True,hide_index=True)
+                        else:
+                            st.info("No constituent stock zone changes detected over the latest five available sessions.")
+                        st.markdown("**Strongest stocks in this sector**")
+                        st.dataframe(constituent_df.sort_values("3M vs NIFTY 500 (pp)",ascending=False).head(5)[["Stock","Rotation zone","1D %","1M %","3M %","1M vs NIFTY 500 (pp)","3M vs NIFTY 500 (pp)"]],use_container_width=True,hide_index=True)
+                    else:
+                        st.warning("No constituent price history returned for this sector. No sample values are shown.")
+    
+                if sector_rows:
+                    sec = pd.DataFrame(sector_rows).sort_values("Relative return vs NIFTY (pp)", ascending=False)
+                    st.dataframe(sec, use_container_width=True, hide_index=True)
+                    sec["Direction"] = np.where(sec["Relative return vs NIFTY (pp)"] >= 0, "Outperforming", "Underperforming")
+                    fig = px.bar(sec.sort_values("Relative return vs NIFTY (pp)"), x="Relative return vs NIFTY (pp)", y="Sector", color="Direction", color_discrete_map={"Outperforming":"#22c55e","Underperforming":"#ef4444"}, orientation="h", template="plotly_dark", title="Sector relative performance vs NIFTY")
+                    fig.update_layout(height=440)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("No sector index series were returned by the public source. No values have been substituted.")
+    
+        with st.expander("Micro Sector Rotation", expanded=False):
+            st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#a78bfa,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Micro Sector Rotation</div>""", unsafe_allow_html=True)
+            st.caption("Explore leading, improving, weakening and lagging micro industries, compare their strength against NIFTY 500, and drill down to constituent stocks.")
+            st.caption("Custom equal-weight stock baskets · ranks combine 1M/3M/6M returns and 50-EMA breadth. Public prices may be delayed. This is a research tool, not investment advice.")
+            if st.button("Load / refresh micro-sector rotation", key="load_micro_sector_rotation"):
+                st.session_state["load_micro_sector_rotation_loaded"] = True
+            if st.session_state.get("load_micro_sector_rotation_loaded", False):
+                MICRO_SECTORS = {
+                    "API & CDMO": ("Pharma", ["DIVISLAB.NS","LAURUSLABS.NS","NEULANDLAB.NS","SHILPAMED.NS","SUVENPHAR.NS"]),
+                    "Gaming": ("Niche", ["NAZARA.NS","ZENTEC.NS","DREAMFOLKS.NS"]),
+                    "Engineering R&D": ("Technology", ["LTTS.NS","TATAELXSI.NS","KPITTECH.NS","CYIENT.NS"]),
+                    "Telecom Equipment": ("Industrials", ["TEJASNET.NS","HFCL.NS","STLTECH.NS","ITI.NS"]),
+                    "Jewellery": ("Consumer", ["TITAN.NS","KALYANKJIL.NS","PNGJL.NS","THANGAMAYL.NS","SENCO.NS"]),
+                    "Broadcasting": ("Media & Services", ["SUNTV.NS","ZEEL.NS","TVTODAY.NS","NETWORK18.NS","NAZARA.NS"]),
+                    "Brokers": ("Financials", ["ANGELONE.NS","MOTILALOFS.NS","BSE.NS","CDSL.NS","IIFLSEC.NS"]),
+                    "Exchanges & Depositories": ("Financials", ["BSE.NS","CDSL.NS","CAMS.NS","KFINTECH.NS"]),
+                    "Fintech & Payments": ("Financials", ["PAYTM.NS","POLICYBZR.NS","PBFINTECH.NS","CAMS.NS","KFINTECH.NS"]),
+                    "Cooling (ACs & Fans)": ("Consumer Durables", ["VOLTAS.NS","BLUESTARCO.NS","AMBER.NS","HAVELLS.NS","CROMPTON.NS"]),
+                    "Fluorochemicals": ("Chemicals", ["SRF.NS","NAVINFLUOR.NS","FLUOROCHEM.NS","GFL.NS"]),
+                    "Specialty Chemicals": ("Chemicals", ["AARTIIND.NS","DEEPAKNTR.NS","CLEAN.NS","FINEORG.NS","GALAXYSURF.NS"]),
+                    "Agrochemicals": ("Chemicals", ["PIIND.NS","UPL.NS","BAYERCROP.NS","RALLIS.NS","DHANUKA.NS"]),
+                    "Paints & Coatings": ("Chemicals", ["ASIANPAINT.NS","BERGEPAINT.NS","KANSAINER.NS","INDIGOPNTS.NS"]),
+                    "Cables & Wires": ("Industrials", ["POLYCAB.NS","KEI.NS","RRKABEL.NS","FINCABLES.NS"]),
+                    "EMS & Electronics": ("Industrials", ["DIXON.NS","AMBER.NS","KAYNES.NS","SYRMA.NS","AVALON.NS"]),
+                    "Defence Electronics": ("Defence", ["BEL.NS","BDL.NS","DATAPATTNS.NS","ASTRAMICRO.NS","PARAS.NS"]),
+                    "Shipbuilding": ("Industrials", ["COCHINSHIP.NS","GRSE.NS","MAZDOCK.NS","SWANENERGY.NS"]),
+                    "Railway Equipment": ("Industrials", ["TITAGARH.NS","RVNL.NS","TEXRAIL.NS","JWL.NS","RITES.NS"]),
+                    "Industrial Automation": ("Industrials", ["ABB.NS","SIEMENS.NS","THERMAX.NS","HONAUT.NS","CGPOWER.NS"]),
+                    "Power Transformers": ("Power", ["TRANSFORMERS.NS","VOLTAMP.NS","CGPOWER.NS","POWERINDIA.NS"]),
+                    "Renewable Equipment": ("Power", ["SUZLON.NS","INOXWIND.NS","WAAREEENER.NS","PREMIERENE.NS","KPIGREEN.NS"]),
+                    "Power Transmission": ("Power", ["KALPATPOWR.NS","KEC.NS","PFC.NS","REC.NS","POWERGRID.NS"]),
+                    "Data Centres": ("Technology", ["ANANTRAJ.NS","NETWEB.NS","E2E.NS","TECHNOE.NS"]),
+                    "Cybersecurity & IT Services": ("Technology", ["TANLA.NS","KELLTONTEC.NS","ZENSARTECH.NS","CYIENT.NS","LTTS.NS"]),
+                    "Digital Platforms": ("Technology", ["INFOEDGE.NS","JUSTDIAL.NS","NAZARA.NS","CARTRADE.NS","INDIAMART.NS"]),
+                    "Hospitals": ("Healthcare", ["APOLLOHOSP.NS","MAXHEALTH.NS","FORTIS.NS","RAINBOW.NS","KIMS.NS"]),
+                    "Diagnostics": ("Healthcare", ["METROPOLIS.NS","LALPATHLAB.NS","VIJAYA.NS","THYROCARE.NS"]),
+                    "Medical Devices": ("Healthcare", ["POLYMED.NS","CONCORDBIO.NS","YATHARTH.NS","ARTEMISMED.NS"]),
+                    "Domestic Formulations": ("Pharma", ["ALKEM.NS","MANKIND.NS","TORNTPHARM.NS","GLENMARK.NS","AJANTAPHARM.NS"]),
+                    "Biotech & Biosimilars": ("Pharma", ["BIOCON.NS","SYNGENE.NS","DRREDDY.NS","ZYDUSLIFE.NS"]),
+                    "Diagnostics & Lab Services": ("Healthcare", ["METROPOLIS.NS","LALPATHLAB.NS","VIJAYA.NS","KRSNAA.NS"]),
+                    "QSR & Food Service": ("Consumer", ["JUBLFOOD.NS","DEVYANI.NS","SAPPHIRE.NS","WESTLIFE.NS"]),
+                    "Packaged Foods": ("Consumer", ["BRITANNIA.NS","BIKAJI.NS","GODREJAGRO.NS","TATACONSUM.NS","DODLA.NS"]),
+                    "Sugar & Ethanol": ("Agri", ["BALRAMCHIN.NS","TRIVENI.NS","DWARKESH.NS","EIDPARRY.NS","RENUKA.NS"]),
+                    "Dairy": ("Consumer", ["HATSUN.NS","DODLA.NS","HERITGFOOD.NS","PARAGMILK.NS"]),
+                    "Spinning & Yarn": ("Textiles", ["VTL.NS","GOKEX.NS","SANGAMIND.NS","TRIDENT.NS","WELSPUNLIV.NS"]),
+                    "Technical Textiles": ("Textiles", ["GARFIBRES.NS","SRF.NS","KPRMILL.NS","WELSPUNLIV.NS"]),
+                    "Footwear": ("Consumer", ["BATAINDIA.NS","CAMPUS.NS","RELAXO.NS","METROBRAND.NS"]),
+                    "Hotels & Resorts": ("Travel", ["INDHOTEL.NS","LEMONTREE.NS","CHALET.NS","EIHOTEL.NS","ITDC.NS"]),
+                    "Travel Platforms": ("Travel", ["EASEMYTRIP.NS","IXIGO.NS","YATRA.NS","THOMASCOOK.NS"]),
+                    "Logistics & Warehousing": ("Transport", ["DELHIVERY.NS","TCI.NS","MAHLOG.NS","BLUEDART.NS","ALLCARGO.NS"]),
+                    "Ports & Marine Logistics": ("Transport", ["ADANIPORTS.NS","JSWINFRA.NS","GPPL.NS","COCHINSHIP.NS"]),
+                    "Passenger Vehicles": ("Auto", ["M&M.NS","MARUTI.NS","TATAMOTORS.NS","HYUNDAI.NS"]),
+                    "Auto Components": ("Auto", ["BHARATFORG.NS","BOSCHLTD.NS","SONACOMS.NS","UNOMINDA.NS","MOTHERSON.NS"]),
+                    "Tyres": ("Auto", ["MRF.NS","APOLLOTYRE.NS","BALKRISIND.NS","CEATLTD.NS"]),
+                    "EV Components": ("Auto", ["EXIDEIND.NS","AMARAJABAT.NS","SONACOMS.NS","UNOMINDA.NS","SANSERA.NS"]),
+                    "Two-Wheeler Components": ("Auto", ["ENDURANCE.NS","BOSCHLTD.NS","MOTHERSON.NS","SUPRAJIT.NS"]),
+                    "Building Materials": ("Construction", ["ASTRAL.NS","SUPREMEIND.NS","FINOLEXIND.NS","PRINCEPIPE.NS"]),
+                    "Cement & Building Products": ("Construction", ["ULTRACEMCO.NS","SHREECEM.NS","DALBHARAT.NS","JKCEMENT.NS","RAMCOCEM.NS"]),
+                    "Pipes & Fittings": ("Construction", ["ASTRAL.NS","SUPREMEIND.NS","FINPIPE.NS","JINDALSAW.NS"]),
+                    "Real Estate Developers": ("Real Estate", ["DLF.NS","GODREJPROP.NS","OBEROIRLTY.NS","PRESTIGE.NS","PHOENIXLTD.NS"]),
+                    "Building Interiors": ("Construction", ["GREENPANEL.NS","CENTURYPLY.NS","GREENPLY.NS","KAJARIACER.NS"]),
+                    "Gold Loans": ("Financials", ["MUTHOOTFIN.NS","MANAPPURAM.NS","BAJAJHFL.NS"]),
+                    "Microfinance": ("Financials", ["CREDITACC.NS","SPANDANA.NS","SURYODAY.NS","UGROCAP.NS"]),
+                    "Small Finance Banks": ("Financials", ["AUBANK.NS","UJJIVANSFB.NS","EQUITASBNK.NS","ESAFSFB.NS"]),
+                    "Asset Management": ("Financials", ["HDFCAMC.NS","NAM-INDIA.NS","UTIAMC.NS","ABSLAMC.NS"]),
+                    "Insurance": ("Financials", ["HDFCLIFE.NS","SBILIFE.NS","ICICIPRULI.NS","LICI.NS"]),
+                    "Capital Market Services": ("Financials", ["CDSL.NS","CAMS.NS","KFINTECH.NS","BSE.NS","MCX.NS"]),
+                    "Paper & Packaging": ("Materials", ["JKPAPER.NS","TNPL.NS","HUHTAMAKI.NS","PFOCUS.NS"]),
+                    "Glass & Containers": ("Materials", ["BOROSIL.NS","BORORENEW.NS","HINDWAREAP.NS","AGI.NS"]),
+                    "Metals Recycling": ("Materials", ["MIDHANI.NS","HINDCOPPER.NS","NATIONALUM.NS","MOIL.NS"]),
+                    "Mining & Minerals": ("Materials", ["NMDC.NS","COALINDIA.NS","VEDL.NS","HINDZINC.NS"]),
+                    "Oilfield Services": ("Energy", ["OIL.NS","ONGC.NS","SEAMECLTD.NS","GTLINFRA.NS"]),
+                    "City Gas Distribution": ("Energy", ["IGL.NS","MGL.NS","GUJGASLTD.NS","ATGL.NS"]),
+                    "LPG & Gas Equipment": ("Energy", ["GAIL.NS","PETRONET.NS","GESHIP.NS","GULFPETRO.NS"]),
+                    "Water & Waste Management": ("Utilities", ["IONEXCHANG.NS","EMS.NS","VA TECH WABAG.NS","ANTONY.NS"]),
+                    "Agri Inputs": ("Agri", ["COROMANDEL.NS","CHAMBLFERT.NS","FACT.NS","NFL.NS"]),
+                    "Seeds & Crop Science": ("Agri", ["KAVVERITEL.NS","PIIND.NS","RALLIS.NS","DHANUKA.NS"]),
+                    "Fertilizers": ("Agri", ["COROMANDEL.NS","CHAMBLFERT.NS","FACT.NS","RCF.NS","NFL.NS"]),
+                    "Education Services": ("Services", ["NIITLTD.NS","NIITMTS.NS","VERANDA.NS","APTECHT.NS"]),
+                    "Staffing & HR Services": ("Services", ["TEAMLEASE.NS","QUESS.NS","NIITMTS.NS"]),
+                    "Security & Facility Services": ("Services", ["SIS.NS","QUESS.NS","BVCL.NS"]),
+                    "Hospitals & Wellness": ("Healthcare", ["KIMS.NS","YATHARTH.NS","RAINBOW.NS","ARTEMISMED.NS"]),
+                    "Specialty Retail": ("Consumer", ["TRENT.NS","V2RETAIL.NS","ABFRL.NS","SHOPERSTOP.NS"]),
+                    "Home Furnishings": ("Consumer", ["DREAMFOLKS.NS","WELSPUNLIV.NS","TRIDENT.NS","HINDWAREAP.NS"]),
+                    "Alcoholic Beverages": ("Consumer", ["UNITDSPR.NS","RADICO.NS","UBL.NS","GLOBUSSPR.NS"]),
+                    "Tobacco & Allied": ("Consumer", ["ITC.NS","GODFRYPHLP.NS","VSTIND.NS"]),
+                    "Renewable Power Producers": ("Power", ["ADANIGREEN.NS","NTPCGREEN.NS","JSWENERGY.NS","NHPC.NS","SJVN.NS"]),
+                    "Power Utilities": ("Power", ["NTPC.NS","POWERGRID.NS","TATAPOWER.NS","CESC.NS","TORNTPOWER.NS"]),
+                    "IT Hardware": ("Technology", ["NETWEB.NS","DIXON.NS","KAYNES.NS","SYRMA.NS"]),
+                    "Telecom Services": ("Telecom", ["BHARTIARTL.NS","IDEA.NS","INDUSTOWER.NS","TATACOMM.NS"]),
+                    "Financial Technology": ("Financials", ["PAYTM.NS","POLICYBZR.NS","PBFINTECH.NS","ANGELONE.NS"]),
+                }
+                micro_tickers = sorted({ticker for _, tickers in MICRO_SECTORS.values() for ticker in tickers} | {"^CRSLDX"})
+                @st.cache_data(ttl=900, show_spinner=False)
+                def _micro_sector_download(symbols):
+                    try:
+                        raw = yf.download(list(symbols), period="1y", interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=False)
+                        return raw
+                    except Exception:
+                        return pd.DataFrame()
+                if st.button("↻ Refresh micro-sector data", key="refresh_micro_sector_data"):
+                    _micro_sector_download.clear()
+                with st.spinner(f"Fetching daily prices for {len(micro_tickers)-1} listed constituents…"):
+                    micro_raw = _micro_sector_download(tuple(micro_tickers))
+                def _micro_close(symbol):
+                    try:
+                        if isinstance(micro_raw.columns, pd.MultiIndex):
+                            if (symbol, "Close") in micro_raw.columns:
+                                return micro_raw[(symbol, "Close")].dropna()
+                            if ("Close", symbol) in micro_raw.columns:
+                                return micro_raw[("Close", symbol)].dropna()
+                            return pd.Series(dtype=float)
+                        if symbol == micro_tickers[0] and "Close" in micro_raw.columns:
+                            return micro_raw["Close"].dropna()
+                    except Exception:
+                        pass
+                    return pd.Series(dtype=float)
+                bench = _micro_close("^CRSLDX")
+                if bench.empty:
+                    st.warning("NIFTY 500 benchmark history is unavailable. Relative rotation scores are withheld until benchmark data is available.")
+                micro_rows = []
+                micro_histories = {}
+                if not micro_raw.empty:
+                    for micro_name, (micro_group, symbols) in MICRO_SECTORS.items():
+                        constituent_returns = []
+                        constituent_breadth = []
+                        constituent_series = []
+                        for symbol in symbols:
+                            close = _micro_close(symbol)
+                            if len(close) < 60:
+                                continue
+                            close = close.sort_index()
+                            last = float(close.iloc[-1])
+                            ret1d = (last / float(close.iloc[-2]) - 1) * 100 if len(close) >= 2 else np.nan
+                            ret1w = (last / float(close.iloc[-min(6, len(close))]) - 1) * 100
+                            ret1 = (last / float(close.iloc[-min(22, len(close))]) - 1) * 100
+                            ret3 = (last / float(close.iloc[-min(64, len(close))]) - 1) * 100
+                            ret6 = (last / float(close.iloc[-min(127, len(close))]) - 1) * 100
+                            ret1y = (last / float(close.iloc[0]) - 1) * 100
+                            ema50 = close.ewm(span=50, adjust=False, min_periods=50).mean()
+                            constituent_returns.append((ret1d, ret1w, ret1, ret3, ret6, ret1y))
+                            constituent_breadth.append(float(last > float(ema50.iloc[-1])))
+                            constituent_series.append(close / float(close.iloc[-min(127, len(close))]) * 100)
+                        if not constituent_returns:
+                            continue
+                        arr = np.array(constituent_returns, dtype=float)
+                        avg1d, avg1w, avg1, avg3, avg6, avg1y = np.nanmean(arr, axis=0)
+                        breadth = float(np.mean(constituent_breadth)) * 100
+                        composite = 0.25 * avg1 + 0.40 * avg3 + 0.25 * avg6 + 0.10 * ((breadth - 50) / 5)
+                        micro_rows.append({"Micro sector": micro_name, "Group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1D %": avg1d, "1W %": avg1w, "1M %": avg1, "3M %": avg3, "6M %": avg6, "1Y %": avg1y, "50 EMA breadth %": breadth, "_raw_score": composite})
+                        if constituent_series:
+                            aligned = pd.concat(constituent_series, axis=1).sort_index()
+                            micro_histories[micro_name] = aligned.mean(axis=1)
+                micro_df = pd.DataFrame(micro_rows)
+                if not micro_df.empty:
+                    for col in ["1M %", "3M %", "6M %", "_raw_score"]:
+                        micro_df[col] = pd.to_numeric(micro_df[col], errors="coerce")
+                    for col in ["1M %", "3M %", "6M %", "50 EMA breadth %"]:
+                        micro_df[col + " percentile"] = micro_df[col].rank(pct=True) * 100
+                    micro_df["Score"] = (micro_df["1M % percentile"] * 0.25 + micro_df["3M % percentile"] * 0.35 + micro_df["6M % percentile"] * 0.25 + micro_df["50 EMA breadth % percentile"] * 0.15).round().astype(int)
+                    bench1 = bench.iloc[-1] / bench.iloc[-min(22, len(bench))] * 100 - 100 if len(bench) >= 22 else np.nan
+                    bench3 = bench.iloc[-1] / bench.iloc[-min(64, len(bench))] * 100 - 100 if len(bench) >= 64 else np.nan
+                    micro_df["1M vs NIFTY 500 (pp)"] = micro_df["1M %"] - bench1
+                    micro_df["3M vs NIFTY 500 (pp)"] = micro_df["3M %"] - bench3
+                    def _micro_zone(row):
+                        ahead = pd.notna(row["3M vs NIFTY 500 (pp)"]) and row["3M vs NIFTY 500 (pp)"] >= 0
+                        rising = pd.notna(row["1M vs NIFTY 500 (pp)"]) and row["1M vs NIFTY 500 (pp)"] >= 0
+                        return "Leading" if ahead and rising else "Weakening" if ahead else "Improving" if rising else "Lagging"
+                    micro_df["Zone"] = micro_df.apply(_micro_zone, axis=1)
+                    micro_df = micro_df.sort_values("Score", ascending=False).reset_index(drop=True)
+                    latest_dates = [s.index[-1] for s in [bench] if not s.empty]
+                    asof = pd.Timestamp(latest_dates[0]).strftime("%d %b %Y") if latest_dates else "date unavailable"
+                    st.markdown(f"**Data date:** {asof} · **Micro sectors available:** {len(micro_df)} · **Constituent prices fetched:** {len(micro_tickers)-1}")
+                    st.markdown("### What changed · Where money is moving")
+                    micro_period = st.segmented_control("Theme movement period", ["1D", "1W", "1M", "3M", "6M"], default="1D", key="micro_movers_period")
+                    micro_climbers = micro_df.sort_values(micro_period + " %", ascending=False).head(6)
+                    micro_fallers = micro_df.sort_values(micro_period + " %", ascending=True).head(6)
+                    mc, mf = st.columns(2, gap="medium")
+                    for panel, heading, frame, panel_color in [
+                        (mc, "CLIMBERS", micro_climbers, "#329b72"),
+                        (mf, "FALLERS", micro_fallers, "#c56b72"),
+                    ]:
+                        with panel:
+                            st.markdown(f'<div style="font-size:12px;font-weight:800;letter-spacing:1px;color:{panel_color};margin:4px 0 8px;">{heading}</div>', unsafe_allow_html=True)
+                            for rank_no, (_, theme_row) in enumerate(frame.iterrows(), 1):
+                                move = float(theme_row[micro_period + " %"])
+                                st.markdown(
+                                    f'<div style="display:flex;justify-content:space-between;gap:8px;padding:9px 10px;border-bottom:1px solid rgba(130,145,135,.25);">'
+                                    f'<b>{rank_no}. {html.escape(str(theme_row["Micro sector"]))}</b>'
+                                    f'<span style="font-weight:800;color:{panel_color};">{move:+.2f}%</span></div>',
+                                    unsafe_allow_html=True,
+                                )
+                    rank_metric = st.segmented_control("Rank leading micro sectors by", options=["Score", "1D %", "1W %", "1M %", "3M %", "6M %", "1Y %"], default="Score", key="micro_rank_mode")
+                    rank_col = rank_metric if rank_metric in micro_df.columns else "Score"
+                    ranked = micro_df.sort_values(rank_col, ascending=False).head(6)
+                    st.subheader("Leading micro sectors")
+                    cards = st.columns(2)
+                    for idx, (_, row) in enumerate(ranked.iterrows()):
+                        with cards[idx % 2]:
+                            zone_color = {"Leading":"#198754","Improving":"#2864c5","Weakening":"#c27c16","Lagging":"#c92a2a"}.get(row["Zone"], "#64748b")
+                            metric_html = "".join(
+                                f'<div><small>{label}</small><br><b style="color:{("#198754" if value >= 0 else "#c92a2a")}">{value:+.1f}%</b></div>'
+                                for label, value in [("1M", row["1M %"]), ("3M", row["3M %"]), ("6M", row["6M %"])]
+                            )
+                            card_html = (
+                                f'<div style="border:1px solid #5b5747;border-radius:16px;padding:15px;margin-bottom:12px;background:#171d1b;color:#f2f0e8;">'
+                                f'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
+                                f'<span style="background:#d7b967;color:#20251f;border-radius:999px;padding:4px 10px;font-weight:800;">#{idx+1}</span>'
+                                f'<span style="border:1px solid {zone_color};color:{zone_color};border-radius:999px;padding:3px 10px;font-weight:700;">{html.escape(str(row["Zone"]))}</span></div>'
+                                f'<h3 style="margin:12px 0 4px;color:#f2f0e8;">{html.escape(str(row["Micro sector"]))}</h3>'
+                                f'<div style="opacity:.75;font-size:13px;">{html.escape(str(row["Group"]))} · {int(row["Stocks available"])} stocks · Score {int(row["Score"])}</div>'
+                                f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:14px;">{metric_html}</div></div>'
+                            )
+                            st.markdown(card_html, unsafe_allow_html=True)
+                            hist = micro_histories.get(row["Micro sector"], pd.Series(dtype=float))
+                            if len(hist) > 2:
+                                spark = go.Figure(go.Scatter(x=hist.index, y=hist.values, mode="lines", line=dict(color="#198754" if hist.iloc[-1] >= hist.iloc[-min(22,len(hist))] else "#c92a2a", width=2), fill="tozeroy"))
+                                spark.update_layout(height=75, margin=dict(l=0,r=0,t=0,b=0), showlegend=False, xaxis=dict(visible=False), yaxis=dict(visible=False), template="plotly_white")
+                                st.plotly_chart(spark, use_container_width=True, config={"displayModeBar":False}, key=f"micro_spark_{idx}")
+                    st.subheader("Rotation zones")
+                    zone_counts = micro_df["Zone"].value_counts()
+                    zone_cols = st.columns(4)
+                    zone_text = {"Leading":"Outperforming over 3M and gaining relative ground over 1M","Improving":"Behind over 3M, but gaining over 1M","Weakening":"Ahead over 3M, but losing relative ground over 1M","Lagging":"Behind over both 3M and 1M"}
+                    zone_colors = {"Leading":"#198754","Improving":"#2864c5","Weakening":"#c27c16","Lagging":"#c92a2a"}
+                    for j, zone in enumerate(["Leading","Improving","Weakening","Lagging"]):
+                        with zone_cols[j]:
+                            st.markdown(f'<div style="border-top:4px solid {zone_colors[zone]};border-radius:12px;padding:12px;border-left:1px solid #dbe2ea;border-right:1px solid #dbe2ea;border-bottom:1px solid #dbe2ea;"><b style="color:{zone_colors[zone]}">{zone} · {int(zone_counts.get(zone,0))}</b><div style="font-size:13px;margin-top:8px;opacity:.8;">{zone_text[zone]}</div></div>', unsafe_allow_html=True)
+                    st.subheader("All micro sectors · current rotation status")
+                    zone_filter = st.selectbox("Filter micro sectors by rotation zone", ["All zones", "Leading", "Improving", "Weakening", "Lagging"], key="micro_zone_filter")
+                    zone_view = micro_df if zone_filter == "All zones" else micro_df[micro_df["Zone"] == zone_filter]
+                    display_cols = ["Micro sector", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Stocks available"]
+                    st.dataframe(zone_view[display_cols].sort_values("Score", ascending=False), use_container_width=True, hide_index=True)
+                    st.caption("This list shows every available micro sector in each rotation zone—not only the top six cards.")
+    
+                    st.subheader("Rotation map: every micro sector against NIFTY 500")
+                    map_df = micro_df.dropna(subset=["3M vs NIFTY 500 (pp)", "1M vs NIFTY 500 (pp)"]).copy()
+                    if not map_df.empty:
+                        map_fig = px.scatter(map_df, x="3M vs NIFTY 500 (pp)", y="1M vs NIFTY 500 (pp)", size="Stocks available", color="Zone", hover_name="Micro sector", hover_data=["Group","Score","1M %","3M %","6M %"], color_discrete_map=zone_colors, template="plotly_white", title="Relative return and momentum")
+                        map_fig.add_vline(x=0,line_color="#9ca3af")
+                        map_fig.add_hline(y=0,line_color="#9ca3af")
+                        map_fig.update_layout(height=560, xaxis_title="3M return vs NIFTY 500 (percentage points)", yaxis_title="1M return vs NIFTY 500 (percentage points)", legend_title="Rotation zone")
+                        st.plotly_chart(map_fig, use_container_width=True, config={"displaylogo":False}, key="micro_rotation_map")
+                    st.subheader("Rotation signals · zone changes this week")
+                    # Daily data may not include a prior saved weekly snapshot; compare latest zone with the zone five sessions ago where enough history exists.
+                    signal_rows = []
+                    for micro_name, (micro_group, symbols) in MICRO_SECTORS.items():
+                        hist = micro_histories.get(micro_name)
+                        if hist is None or len(hist) < 30 or bench.empty:
+                            continue
+                        b_aligned = pd.concat([hist.rename("sector"), bench.rename("bench")], axis=1).dropna()
+                        if len(b_aligned) < 30:
+                            continue
+                        def _zone_at(pos):
+                            curr = b_aligned.iloc[:pos+1]
+                            if len(curr) < 22:
+                                return None
+                            r1 = (curr["sector"].iloc[-1] / curr["sector"].iloc[-22] - 1) * 100 - (curr["bench"].iloc[-1] / curr["bench"].iloc[-22] - 1) * 100
+                            r3 = (curr["sector"].iloc[-1] / curr["sector"].iloc[-min(64,len(curr))] - 1) * 100 - (curr["bench"].iloc[-1] / curr["bench"].iloc[-min(64,len(curr))] - 1) * 100
+                            return "Leading" if r3 >= 0 and r1 >= 0 else "Weakening" if r3 >= 0 else "Improving" if r1 >= 0 else "Lagging"
+                        old_zone = _zone_at(len(b_aligned)-6)
+                        new_zone = _zone_at(len(b_aligned)-1)
+                        if old_zone and new_zone and old_zone != new_zone:
+                            signal_rows.append({"Micro sector":micro_name,"Group":micro_group,"Transition":f"{old_zone} → {new_zone}"})
+                    if signal_rows:
+                        signal_df = pd.DataFrame(signal_rows)
+                        signal_cols = st.columns(2)
+                        for j, (_, sr) in enumerate(signal_df.iterrows()):
+                            with signal_cols[j % 2]:
+                                new_zone = sr["Transition"].split(" → ")[-1]
+                                zc = zone_colors[new_zone]
+                                st.markdown(f'<div style="border:2px solid {zc}66;border-radius:999px;padding:11px 15px;margin-bottom:8px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;"><b>{html.escape(sr["Micro sector"])}</b><span style="color:{zc};font-weight:750;">{html.escape(sr["Transition"])}</span></div>', unsafe_allow_html=True)
+                    else:
+                        st.info("No zone changes detected across the latest five available sessions, or insufficient history to verify transitions.")
+                    st.subheader("Group strength")
+                    group_df = micro_df.groupby("Group", as_index=False).agg(**{"Average score":("Score","mean"),"Micro sectors":("Micro sector","count"),"Leading":("Zone",lambda s:int((s=="Leading").sum()))}).sort_values("Average score",ascending=False)
+                    group_cols = st.columns(2)
+                    for j, (_, gr) in enumerate(group_df.head(12).iterrows()):
+                        with group_cols[j % 2]:
+                            group_score = float(gr["Average score"])
+                            group_name = html.escape(str(gr["Group"]))
+                            group_leading = int(gr["Leading"])
+                            group_count = int(gr["Micro sectors"])
+                            st.markdown(
+                                f'<div style="border:1px solid #dbe2ea;border-radius:14px;padding:13px;margin-bottom:9px;">'
+                                f'<b>{group_name}</b><span style="float:right;font-size:20px;font-weight:800;">{group_score:.0f}</span>'
+                                f'<div style="height:7px;background:#e2e8f0;border-radius:99px;margin:8px 0;">'
+                                f'<div style="height:7px;width:{max(0,min(100,group_score)):.0f}%;background:linear-gradient(90deg,#60a5fa,#16a34a);border-radius:99px;"></div></div>'
+                                f'<small>{group_leading} of {group_count} leading · {group_count} micro sectors</small></div>',
+                                unsafe_allow_html=True,
+                            )
+                    st.subheader("Find a micro sector or stock")
+                    choices = sorted(MICRO_SECTORS.keys())
+                    chosen = st.selectbox("Select micro sector", choices, key="micro_sector_drilldown")
+                    chosen_group, chosen_symbols = MICRO_SECTORS[chosen]
+                    st.write(f"**{chosen}** · {chosen_group} · equal-weight basket")
+                    drill_rows = []
+                    stock_transition_rows = []
+                    stock_zone_colors = {"Leading":"#198754","Improving":"#2864c5","Weakening":"#c27c16","Lagging":"#c92a2a"}
+                    for symbol in chosen_symbols:
+                        close = _micro_close(symbol)
+                        if len(close) < 60:
+                            continue
+                        close = close.sort_index()
+                        last = float(close.iloc[-1])
+                        prev = float(close.iloc[-2])
+                        e50_series = close.ewm(span=50, adjust=False, min_periods=50).mean()
+                        e50 = e50_series.iloc[-1]
+                        stock_aligned = pd.concat([close.rename("stock"), bench.rename("bench")], axis=1).dropna() if not bench.empty else pd.DataFrame()
+                        def _stock_zone_at(aligned, pos):
+                            current = aligned.iloc[:pos+1]
+                            if len(current) < 22:
+                                return None
+                            rel1 = (current["stock"].iloc[-1] / current["stock"].iloc[-22] - 1) * 100 - (current["bench"].iloc[-1] / current["bench"].iloc[-22] - 1) * 100
+                            rel3 = (current["stock"].iloc[-1] / current["stock"].iloc[-min(64,len(current))] - 1) * 100 - (current["bench"].iloc[-1] / current["bench"].iloc[-min(64,len(current))] - 1) * 100
+                            return "Leading" if rel3 >= 0 and rel1 >= 0 else "Weakening" if rel3 >= 0 else "Improving" if rel1 >= 0 else "Lagging"
+                        current_zone = _stock_zone_at(stock_aligned, len(stock_aligned)-1) if len(stock_aligned) >= 22 else "Unclassified"
+                        previous_zone = _stock_zone_at(stock_aligned, len(stock_aligned)-6) if len(stock_aligned) >= 27 else None
+                        transition = f"{previous_zone} → {current_zone}" if previous_zone and current_zone and previous_zone != current_zone else "No zone change"
+                        if previous_zone and current_zone and previous_zone != current_zone:
+                            stock_transition_rows.append({"Stock":symbol.replace(".NS",""),"Transition":transition})
+                        rel1_value = (last / float(close.iloc[-min(22,len(close))]) - 1) * 100 - (float(bench.iloc[-1]) / float(bench.iloc[-min(22,len(bench))]) - 1) * 100 if len(bench) >= 22 else np.nan
+                        rel3_value = (last / float(close.iloc[-min(64,len(close))]) - 1) * 100 - (float(bench.iloc[-1]) / float(bench.iloc[-min(64,len(bench))]) - 1) * 100 if len(bench) >= 64 else np.nan
+                        drill_rows.append({"Stock":symbol.replace(".NS",""),"Rotation zone":current_zone,"Zone change (5 sessions)":transition,"Latest close":last,"1D %":(last/prev-1)*100 if prev else np.nan,"1M %":(last/close.iloc[-min(22,len(close))]-1)*100,"3M %":(last/close.iloc[-min(64,len(close))]-1)*100,"1M vs NIFTY 500 (pp)":rel1_value,"3M vs NIFTY 500 (pp)":rel3_value,"Above 50 EMA":bool(last>e50) if pd.notna(e50) else "Insufficient history"})
+                    if drill_rows:
+                        drill_df = pd.DataFrame(drill_rows)
+                        st.markdown("**Constituent stock rotation** · each stock is classified against NIFTY 500 using relative 1M and 3M performance.")
+                        counts = drill_df["Rotation zone"].value_counts()
+                        zone_cols = st.columns(4)
+                        for zi, zone in enumerate(["Leading","Improving","Weakening","Lagging"]):
+                            with zone_cols[zi]:
+                                st.metric(zone, int(counts.get(zone,0)))
+                        st.dataframe(drill_df.sort_values(["Rotation zone","3M vs NIFTY 500 (pp)"],ascending=[True,False]),use_container_width=True,hide_index=True)
+                        st.markdown("**Stocks changing rotation zone over the latest five available sessions**")
+                        if stock_transition_rows:
+                            st.dataframe(pd.DataFrame(stock_transition_rows),use_container_width=True,hide_index=True)
+                        else:
+                            st.info("No constituent stock zone changes detected over the latest five available sessions.")
+                        st.markdown("**Strongest stocks in this micro sector**")
+                        st.dataframe(drill_df.sort_values("3M vs NIFTY 500 (pp)",ascending=False).head(5)[["Stock","Rotation zone","1D %","1M %","3M %","1M vs NIFTY 500 (pp)","3M vs NIFTY 500 (pp)"]],use_container_width=True,hide_index=True)
+                        st.code(" ".join(s.replace(".NS","") for s in chosen_symbols), language="text")
+                        st.caption("Copy the displayed symbols into your TradingView watchlist. Stock rotation zones compare each constituent with NIFTY 500; this is a relative-strength classification, not an investment recommendation.")
+                    else:
+                        st.warning("No constituent prices were returned for this micro sector.")
+                else:
+                    st.warning("No usable micro-sector prices were returned. Refresh later; no sample values are shown.")
+    
+    
+    
+            with fear_col:
+                fear_score = np.nan
+                fear_components = []
+                recent_rc = overview_rc.dropna(subset=["Close"]).copy()
+                if len(recent_rc) >= 20:
+                    # RSI contribution: RSI 50 maps to neutral; 0..100 maps to the same scale.
+                    rsi_series = recent_rc["RSI 14"] if "RSI 14" in recent_rc.columns else pd.Series(dtype=float)
+                    rsi_series = pd.to_numeric(rsi_series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+                    if rsi_series.empty:
+                        # Calculate RSI directly from the returned close series if the indicator frame lacks RSI.
+                        close_delta = pd.to_numeric(recent_rc["Close"], errors="coerce").diff()
+                        close_gain = close_delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                        close_loss = (-close_delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                        close_rs = close_gain / close_loss.replace(0, np.nan)
+                        fallback_rsi = (100 - 100 / (1 + close_rs)).replace([np.inf, -np.inf], np.nan).dropna()
+                        if not fallback_rsi.empty:
+                            rsi_series = fallback_rsi
+                    if not rsi_series.empty:
+                        fear_components.append((float(np.clip(rsi_series.iloc[-1], 0, 100)), 0.35))
+                    # Trend contribution: close vs EMA 20 and EMA 50, mapped around neutral.
+                    trend_parts = []
+                    for ema_col in ["EMA 20", "EMA 50"]:
+                        if ema_col in recent_rc.columns and pd.notna(recent_rc[ema_col].iloc[-1]) and recent_rc[ema_col].iloc[-1] != 0:
+                            gap_pct = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc[ema_col].iloc[-1]) - 1) * 100
+                            trend_parts.append(float(np.clip(50 + gap_pct * 12, 0, 100)))
+                    if trend_parts:
+                        # Price vs EMA 20/50 contributes 25% to the proxy score.
+                        fear_components.append((float(np.mean(trend_parts)), 0.25))
+                    # Medium-term momentum: 20-session return mapped around neutral.
+                    if len(recent_rc) >= 21 and recent_rc["Close"].iloc[-21] != 0:
+                        ret20 = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc["Close"].iloc[-21]) - 1) * 100
+                        fear_components.append((float(np.clip(50 + ret20 * 8, 0, 100)), 0.15))
+                    # India VIX: higher volatility tilts the proxy toward fear.
+                    vix_frame = market_data.get("India VIX", pd.DataFrame())
+                    vix_snap = quote_snapshot(vix_frame) if not vix_frame.empty else None
+                    if vix_snap:
+                        vix_value = float(vix_snap[0]["Close"])
+                        # India VIX contributes 25% to the proxy score.
+                        fear_components.append((float(np.clip(100 - vix_value * 3, 0, 100)), 0.25))
+                    # Keep only finite, valid components. Missing/invalid inputs must not turn into a fake 0/100 reading.
+                    fear_components = [
+                        (float(value), float(weight))
+                        for value, weight in fear_components
+                        if pd.notna(value) and np.isfinite(float(value)) and 0 <= float(value) <= 100 and weight > 0
+                    ]
+                    if fear_components:
+                        fear_weight = sum(weight for _, weight in fear_components)
+                        if fear_weight > 0:
+                            fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
+                            if not np.isfinite(fear_score):
+                                fear_score = np.nan
+                if pd.notna(fear_score):
+                    fear_score = int(round(float(np.clip(fear_score, 0, 100))))
+                    fear_label = "Extreme Fear" if fear_score < 20 else "Fear" if fear_score < 40 else "Neutral" if fear_score < 60 else "Greed" if fear_score < 80 else "Extreme Greed"
+                    fear_color = "#ef4444" if fear_score < 20 else "#f97316" if fear_score < 40 else "#f59e0b" if fear_score < 60 else "#84cc16" if fear_score < 80 else "#16a34a"
+                    gauge_fig = go.Figure(go.Indicator(
+                        mode="gauge+number",
+                        value=fear_score,
+                        number={"font": {"size": 30, "color": fear_color}, "suffix": "/100"},
+                        title={"text": "Fear & Greed<br><span style='font-size:11px;color:#aeb6c2'>Market proxy</span>", "font": {"size": 15}},
+                        gauge={
+                            "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 20, 40, 60, 80, 100], "ticktext": ["0", "20", "40", "60", "80", "100"], "tickfont": {"size": 9}},
+                            "bar": {"color": fear_color, "thickness": 0.22},
+                            "bgcolor": "#11151d",
+                            "borderwidth": 0,
+                            "steps": [
+                                {"range": [0, 20], "color": "#7f1d1d"},
+                                {"range": [20, 40], "color": "#c2410c"},
+                                {"range": [40, 60], "color": "#b45309"},
+                                {"range": [60, 80], "color": "#4d7c0f"},
+                                {"range": [80, 100], "color": "#047857"},
+                            ],
+                            "threshold": {"line": {"color": "#e5e7eb", "width": 2}, "thickness": 0.8, "value": fear_score},
+                        },
+                    ))
+                    gauge_fig.update_layout(template="plotly_dark", height=250, margin=dict(l=8,r=8,t=48,b=8), paper_bgcolor="rgba(0,0,0,0)")
+                    fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
+                    fear_col.markdown(f'<div style="text-align:center;font-weight:700;color:{fear_color};font-size:16px;margin-top:-8px;">{fear_label}</div>', unsafe_allow_html=True)
+                    # Explanatory caption removed to save vertical space.
+                else:
+                    fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
+    
+    
+    
 from explosive_breakout_scanner import render_explosive_breakout_scanner
 
 with st.expander("🚀 Explosive Breakout Scanner", expanded=False):
