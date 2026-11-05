@@ -182,6 +182,21 @@ with st.sidebar:
     refresh = st.button("↻ Refresh ALL data now", use_container_width=True, help="Clears Streamlit data caches and reruns every dashboard data fetch.")
     if refresh:
         st.cache_data.clear()
+        # Clear session-held scan tables as well as Streamlit's function caches.
+        # Otherwise a global refresh can rerun the page while still rendering old
+        # NSE 500 / breakout / turnaround results from session_state.
+        for _key in (
+            "nse500_rs_stage_results", "nse500_rs_stage_sectors",
+            "nse500_rs_stage_industries", "nse500_rs_stage_time",
+            "nse500_rs_stage_epoch", "nse500_rs_stage_counts",
+            "nse500_rs_stage_weeks", "nse500_rs_stage_price_date",
+            "nse500_rs_stage_last_error",
+            "explosive_breakout_scan_data", "explosive_breakout_scan_time",
+            "explosive_breakout_scan_epoch", "explosive_breakout_scan_version",
+            "auto_turnaround_scan_results", "auto_turnaround_scan_time",
+            "auto_turnaround_scan_warning",
+        ):
+            st.session_state.pop(_key, None)
         st.rerun()
     auto_refresh_enabled = st.checkbox("Automatic refresh", value=True, key="market_auto_refresh_enabled", help="Refreshes the dashboard every 5 minutes by default. Some upstream sources may still publish delayed data.")
     if auto_refresh_enabled:
