@@ -457,6 +457,9 @@ def render_historical_breakout_postmortem():
     st.caption("Finds NIFTY 500 stocks that gained at least 100% within 26, 52 or 78 weeks after a historical B1, then studies the earliest qualifying B1 and the 4–12 weeks before it.")
     st.info("This is a hindsight-selected winners study for discovering pre-breakout patterns, not a validated trading strategy. A dated filing near B1 is evidence to investigate, not proof of causation.")
     if st.button("Run / refresh Explosive Winners study", key="run_six_stock_postmortem"):
+        # Explicit refresh invalidates the five-year price batches and filing lookups.
+        _history_batch.clear()
+        _official_filings.clear()
         with st.spinner("Scanning five years for historical 100%+ winners, tracing B1 dates and checking NSE filings…"):
             result = run_historical_breakout_postmortem()
         st.session_state["six_stock_postmortem_data"] = result
