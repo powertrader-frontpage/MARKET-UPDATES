@@ -28,21 +28,37 @@ from urllib.parse import urlencode
 st.set_page_config(page_title="Market Intelligence Terminal", page_icon="📈", layout="wide")
 st.markdown("""
 <style>
-.block-container{padding-top:1rem;padding-bottom:2rem}
-[data-testid="stMetric"]{border-left:4px solid #64748b}
+.block-container{max-width:1600px;padding-top:.8rem;padding-bottom:1.25rem;padding-left:clamp(.8rem,2vw,1.6rem);padding-right:clamp(.8rem,2vw,1.6rem)}
+/* Consistent dashboard rhythm: tighter vertical flow without crowding content. */
+div[data-testid="stVerticalBlock"]{gap:.62rem}
+div[data-testid="stHorizontalBlock"]{gap:.8rem;align-items:stretch}
+div[data-testid="stElementContainer"]{margin-bottom:0}
+h1{letter-spacing:-.6px;margin:.15rem 0 .2rem}
+h2{letter-spacing:-.35px;margin:.65rem 0 .3rem}
+h3{letter-spacing:-.2px;margin:.45rem 0 .2rem}
+[data-testid="stMetric"]{border-left:4px solid #64748b;background:rgba(100,120,145,.08);border:1px solid rgba(120,140,160,.25);padding:10px 12px;border-radius:11px;min-height:88px}
 .signal-good [data-testid="stMetric"]{border-left-color:#22c55e}
 .signal-bad [data-testid="stMetric"]{border-left-color:#ef4444}
 .signal-neutral [data-testid="stMetric"]{border-left-color:#f59e0b}
-div[data-testid="stExpander"]{border:1px solid rgba(148,163,184,.3);border-radius:12px;overflow:hidden}
-div[data-testid="stExpander"] summary{font-weight:750;color:#25d6b1} div[data-testid="stExpander"] summary p{background:linear-gradient(90deg,#20d6a5,#38bdf8,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:800;letter-spacing:.15px}
-div[data-testid="stDataFrame"]{border-radius:10px;overflow:hidden}
-
-[data-testid="stMetric"]{background:rgba(100,120,145,.08);border:1px solid rgba(120,140,160,.25);padding:12px;border-radius:12px}
-.small-note{font-size:.85rem;opacity:.8}\n[data-testid='stDataFrame']{max-width:100%}
+div[data-testid="stExpander"]{border:1px solid rgba(148,163,184,.3);border-radius:11px;overflow:hidden;margin:.12rem 0}
+div[data-testid="stExpander"] summary{font-weight:750;color:#25d6b1;padding:.35rem .55rem}
+div[data-testid="stExpander"] summary p{background:linear-gradient(90deg,#20d6a5,#38bdf8,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:800;letter-spacing:.15px}
+div[data-testid="stDataFrame"]{border-radius:10px;overflow:hidden;max-width:100%}
 [data-testid="stMetricDelta"] svg{display:inline-block}
 [data-testid="stMetricDelta"] [data-testid="stMarkdownContainer"]{font-weight:650}
 [data-testid="stMetricDelta"][data-testid*="positive"],[data-testid="stMetricDelta"] svg[fill="green"]{color:#22c55e}
-@media(max-width:700px){.block-container{padding-left:.7rem;padding-right:.7rem}[data-testid='stMetricValue']{font-size:1.35rem}h1{font-size:1.7rem}h2{font-size:1.35rem}}
+[data-testid="stPlotlyChart"]{margin:.1rem 0 .25rem}
+button[kind="secondary"]{border-radius:8px}
+.small-note{font-size:.85rem;opacity:.8}
+@media(max-width:700px){
+ .block-container{padding-left:.65rem;padding-right:.65rem;padding-top:.55rem;padding-bottom:1rem}
+ div[data-testid="stVerticalBlock"]{gap:.48rem}
+ div[data-testid="stHorizontalBlock"]{gap:.45rem}
+ [data-testid='stMetricValue']{font-size:1.25rem}
+ [data-testid="stMetric"]{padding:8px 9px;min-height:78px}
+ h1{font-size:1.65rem}h2{font-size:1.3rem}h3{font-size:1.08rem}
+ div[data-testid="stExpander"] summary{padding:.25rem .4rem}
+}
 </style>
 """, unsafe_allow_html=True)
 
