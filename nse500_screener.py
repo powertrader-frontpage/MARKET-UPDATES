@@ -47,7 +47,7 @@ def _constituents():
     return out.reset_index(drop=True)
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def _daily_ohlc(tickers):
     """Fetch adjusted daily OHLC once per batch; shared by RS and Weinstein calculations."""
     close_parts, high_parts, low_parts, volume_parts = [], [], [], []
@@ -200,7 +200,7 @@ def _stage_at(weekly, ticker, position, weekly_high, weekly_low):
     stage_series, _, _, _ = _pine_stage_series(weekly[ticker], weekly_high[ticker], weekly_low[ticker])
     return stage_series.iloc[position]
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def _calculate():
     universe = _constituents()
     tickers = tuple(universe["Ticker"].tolist())
@@ -233,7 +233,14 @@ def _calculate():
     if len(weekly) < 34:
         raise ValueError("Not enough completed weekly bars after excluding the in-progress week.")
 
+    # Weekly series below is deliberately completed-week-only for Weinstein stages.
+    # Display prices and daily breadth use the newest available daily close.
     latest = weekly.iloc[-1]
+    daily_prices = prices.dropna(how="all")
+    if daily_prices.empty:
+        raise ValueError("No dated daily prices were returned by the market-data source.")
+    latest_daily_date = daily_prices.index[-1]
+    daily_now = daily_prices.iloc[-1]
     def prior(n):
         return weekly.iloc[-(n + 1)] if len(weekly) > n else weekly.iloc[0]
 
@@ -265,7 +272,6 @@ def _calculate():
     fresh_b2_frame = pd.DataFrame(fresh_b2_series_by_ticker, index=weekly.index)
     slope = (ma30_now / ma30.shift(2).iloc[-1] - 1) * 100
     high52 = weekly.tail(52).max()
-    daily_now, daily_prev = prices.iloc[-1], prices.iloc[-2]
     current_week_label = weekly.index[-1]
     previous_week_label = weekly.index[-2]
 
@@ -274,7 +280,13 @@ def _calculate():
         ticker = item["Ticker"]
         if ticker not in prices.columns or pd.isna(latest.get(ticker)) or pd.isna(ma30_now.get(ticker)):
             continue
-        price = float(latest[ticker])
+        weekly_price = float(latest[ticker])
+        # Use the latest valid daily close for this ticker, not the completed weekly close.
+        ticker_daily = prices[ticker].dropna()
+        if ticker_daily.empty:
+            continue
+        price = float(ticker_daily.iloc[-1])
+        previous_daily_price = float(ticker_daily.iloc[-2]) if len(ticker_daily) > 1 else np.nan
         avg30 = float(ma30_now[ticker])
         avg10 = ma10_now.get(ticker)
         prev_avg10 = ma10_prev.get(ticker)
@@ -323,8 +335,7 @@ def _calculate():
             "Slipping" if price < avg30 and float(ma_slope) < 0 else
             "Near 30W average"
         )
-        d0, d1 = daily_now.get(ticker), daily_prev.get(ticker)
-        day_change = (float(d0) / float(d1) - 1) * 100 if pd.notna(d0) and pd.notna(d1) and float(d1) else np.nan
+        day_change = (price / previous_daily_price - 1) * 100 if pd.notna(previous_daily_price) and previous_daily_price else np.nan
         records.append({
             "Symbol": item["Symbol"], "Company": item["Company"], "Sector": item["Sector"],
             "Industry": item.get("Industry", item["Sector"]),
@@ -444,7 +455,7 @@ def _calculate():
         & (result["30W Slope %"] > 0) & (result["Volume vs 10W Avg"] >= 1.5)
         & (result["Sector Median RS"] >= 60) & result["Gap vs 30W %"].between(0, 15)
     )
-    return result, sectors, industries, len(universe), len(prices.columns), current_week_label, previous_week_label
+    return result, sectors, industries, len(universe), len(prices.columns), current_week_label, previous_week_label, latest_daily_date
 
 
 def render_nse500_screener():
@@ -456,23 +467,40 @@ def render_nse500_screener():
             "Weinstein stages match the supplied weekly Pine engine: 30-week SMA, two-week SMA slope and ATR(14) flatness. "
             "A fresh Stage 2 entry means the stock was Stage 1 in the previous completed week and is Stage 2 now."
         )
-        # Automatically calculate the screener when the section is first opened.
-        # The calculation is cached, so reruns and repeat visits reuse recent results.
+        # Explicit refresh clears all screener caches; normal reruns refresh every 15 minutes.
+        force_refresh = st.button("↻ Refresh NSE 500 prices and rotation now", key="nse500_force_refresh")
+        if force_refresh:
+            _calculate.clear()
+            _daily_ohlc.clear()
+            _constituents.clear()
+            for key in (
+                "nse500_rs_stage_results", "nse500_rs_stage_sectors",
+                "nse500_rs_stage_industries", "nse500_rs_stage_time",
+                "nse500_rs_stage_epoch", "nse500_rs_stage_counts",
+                "nse500_rs_stage_weeks", "nse500_rs_stage_price_date",
+            ):
+                st.session_state.pop(key, None)
+
+        last_epoch = st.session_state.get("nse500_rs_stage_epoch", 0)
+        session_data_expired = (time.time() - last_epoch) >= 900
         cached_session_results = st.session_state.get("nse500_rs_stage_results")
         needs_peer_rs_refresh = (
             not isinstance(cached_session_results, pd.DataFrame)
             or "RS vs Sector 12W (pp)" not in cached_session_results.columns
             or "Industry" not in cached_session_results.columns
             or "nse500_rs_stage_industries" not in st.session_state
+            or session_data_expired
         )
         if needs_peer_rs_refresh:
             with st.spinner("Loading NSE 500 screener and calculating peer-relative strength…"):
                 try:
-                    results, sectors, industries, universe_count, priced_count, current_week, previous_week = _calculate()
+                    results, sectors, industries, universe_count, priced_count, current_week, previous_week, price_date = _calculate()
                     st.session_state["nse500_rs_stage_results"] = results
                     st.session_state["nse500_rs_stage_sectors"] = sectors
                     st.session_state["nse500_rs_stage_industries"] = industries
                     st.session_state["nse500_rs_stage_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y, %I:%M %p IST")
+                    st.session_state["nse500_rs_stage_epoch"] = time.time()
+                    st.session_state["nse500_rs_stage_price_date"] = pd.Timestamp(price_date).strftime("%d %b %Y")
                     st.session_state["nse500_rs_stage_counts"] = (universe_count, priced_count)
                     st.session_state["nse500_rs_stage_weeks"] = (current_week.strftime("%d %b %Y"), previous_week.strftime("%d %b %Y"))
                 except Exception as exc:
@@ -484,10 +512,12 @@ def render_nse500_screener():
         if isinstance(results, pd.DataFrame) and not results.empty:
             universe_count, priced_count = st.session_state.get("nse500_rs_stage_counts", (len(results), len(results)))
             current_week, previous_week = st.session_state.get("nse500_rs_stage_weeks", ("—", "—"))
+            price_date = st.session_state.get("nse500_rs_stage_price_date", "—")
             st.caption(
-                f"Last calculated: {st.session_state.get('nse500_rs_stage_time', '—')} · "
-                f"Completed week: {current_week} · Compared with: {previous_week} · "
-                f"Official constituents: {universe_count} · With usable prices: {priced_count}"
+                f"Latest daily price date: {price_date} · Last scan: {st.session_state.get('nse500_rs_stage_time', '—')} · "
+                f"Weinstein stages use completed week: {current_week} (prior: {previous_week}) · "
+                f"Official constituents: {universe_count} · With usable prices: {priced_count} · "
+                "Market data source: Yahoo Finance (daily close; may be delayed)"
             )
 
             fresh = results[results["New Stage 2"]].copy().sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False])
@@ -832,7 +862,8 @@ def render_nse500_screener():
             st.caption(
                 "Stage 2 follows the supplied Pine rules: close above the 30W SMA, positive two-week SMA slope and non-flat ATR(14) slope. "
                 "Fresh entries compare the two latest completed weekly bars; an unfinished current week is excluded. "
-                "Extended is a price-distance label and can coexist with Stage 2. Data cache: 24 hours."
+                "Extended is a price-distance label and can coexist with Stage 2. Daily price/scan cache: 15 minutes; "
+                "Weinstein stages remain based on completed weekly candles."
             )
         else:
             st.info("Run the scan to calculate the full NSE 500 universe. The first run may take several minutes; no illustrative stock scores are substituted.")
