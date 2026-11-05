@@ -240,7 +240,6 @@ def _calculate():
     if daily_prices.empty:
         raise ValueError("No dated daily prices were returned by the market-data source.")
     latest_daily_date = daily_prices.index[-1]
-    daily_now = daily_prices.iloc[-1]
     def prior(n):
         return weekly.iloc[-(n + 1)] if len(weekly) > n else weekly.iloc[0]
 
@@ -280,12 +279,12 @@ def _calculate():
         ticker = item["Ticker"]
         if ticker not in prices.columns or pd.isna(latest.get(ticker)) or pd.isna(ma30_now.get(ticker)):
             continue
-        weekly_price = float(latest[ticker])
         # Use the latest valid daily close for this ticker, not the completed weekly close.
         ticker_daily = prices[ticker].dropna()
         if ticker_daily.empty:
             continue
         price = float(ticker_daily.iloc[-1])
+        ticker_price_date = ticker_daily.index[-1]
         previous_daily_price = float(ticker_daily.iloc[-2]) if len(ticker_daily) > 1 else np.nan
         avg30 = float(ma30_now[ticker])
         avg10 = ma10_now.get(ticker)
@@ -339,7 +338,8 @@ def _calculate():
         records.append({
             "Symbol": item["Symbol"], "Company": item["Company"], "Sector": item["Sector"],
             "Industry": item.get("Industry", item["Sector"]),
-            "Price": price, "RS Rank": int(rank), "Stage": stage, "Previous Stage": previous_stage,
+            "Price": price, "Price Date": pd.Timestamp(ticker_price_date).strftime("%d %b %Y"),
+            "RS Rank": int(rank), "Stage": stage, "Previous Stage": previous_stage,
             "New Stage 2": newly_stage2, "4W Return %": return_4w, "12W Return %": return_12w,
             "5W / Prior 10W Volume": volume_contraction, "4W Range %": range4_pct,
             "Reclaimed 10W": reclaimed_10w,
@@ -519,6 +519,12 @@ def render_nse500_screener():
                 f"Official constituents: {universe_count} · With usable prices: {priced_count} · "
                 "Market data source: Yahoo Finance (daily close; may be delayed)"
             )
+            try:
+                quote_age_days = (datetime.now(ZoneInfo("Asia/Kolkata")).date() - pd.Timestamp(price_date).date()).days
+                if quote_age_days > 4:
+                    st.warning(f"Market data is stale: latest available daily price date is {price_date} ({quote_age_days} calendar days old). Do not treat these quotes as current.")
+            except Exception:
+                st.warning("The latest market-data date could not be verified. Check the source before using these prices.")
 
             fresh = results[results["New Stage 2"]].copy().sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False])
             current_stage2 = results[results["Stage"] == STAGE_2].copy().sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False])
