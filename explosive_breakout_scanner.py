@@ -454,6 +454,8 @@ def run_explosive_breakout_scan():
         gap30 = (close / ma30 - 1) * 100 if pd.notna(ma30) and ma30 else np.nan
         daily = group.sort_values("Date").dropna(subset=["Open", "High", "Low", "Close"]).copy()
         dclose = daily["Close"].dropna()
+        latest_daily_close = float(dclose.iloc[-1]) if len(dclose) else np.nan
+        latest_daily_date = pd.Timestamp(daily.loc[daily["Close"].notna(), "Date"].iloc[-1]) if len(dclose) else pd.NaT
         daily_change = (float(dclose.iloc[-1]) / float(dclose.iloc[-2]) - 1) * 100 if len(dclose) >= 2 else np.nan
         # Formula 1: confirmed explosive gap-up through the prior 250-session high.
         # Rolling levels and averages are shifted where the scan formula specifies "1 day ago".
@@ -504,12 +506,13 @@ def run_explosive_breakout_scan():
         ema10 = dclose.ewm(span=10, adjust=False).mean().iloc[-1]
         ema21 = dclose.ewm(span=21, adjust=False).mean().iloc[-1]
         ema55 = dclose.ewm(span=55, adjust=False).mean().iloc[-1]
-        ema_aligned = close > ema10 > ema21 > ema55
+        ema_aligned = latest_daily_close > ema10 > ema21 > ema55
         # Relative strength is ranked against the scanned mid/small-cap universe.
         ret13 = float(weekly["Close"].iloc[-1] / weekly["Close"].iloc[-14] - 1) * 100 if len(weekly) >= 14 else np.nan
         records.append({
             "Symbol": info["Symbol"], "Company": info["Company"], "Segment": info["Segment"], "Sector": info["Sector"],
-            "Price": close, "Stage": current_stage, "Previous Stage": prior_stage,
+            "Price": latest_daily_close, "Price Date": latest_daily_date.strftime("%Y-%m-%d") if pd.notna(latest_daily_date) else "Unavailable",
+            "Stage": current_stage, "Previous Stage": prior_stage,
             "Fresh B1": bool(fresh_b1), "Base Count": base_count, "4W breakout": bool(breakout), "Breakout level": breakout_level,
             "Volume vs 10W Avg": vol, "13W return %": ret13, "30W slope %": slope_pct,
             "Gap vs 30W %": gap30, "EMA 10>21>55": bool(ema_aligned), "Daily change %": daily_change,
