@@ -2278,9 +2278,9 @@ else:
             if sector_rows:
                 sec = pd.DataFrame(sector_rows).sort_values("Relative return vs NIFTY (pp)", ascending=False)
                 st.dataframe(sec, use_container_width=True, hide_index=True)
-                # Keep this chart on a consistent 1-week horizon, independent of the
-                # climbers/fallers period selector above.
-                chart_metric = "1W vs NIFTY (pp)"
+                # Follow the same period selected for the climbers/fallers board above.
+                chart_metric = sector_metric
+                chart_period_label = {"1D": "1-day", "1W": "1-week", "3W": "3-week", "6W": "6-week"}[sector_period]
                 chart_sec = sec.dropna(subset=[chart_metric]).copy()
                 chart_sec["Direction"] = np.where(chart_sec[chart_metric] >= 0, "Outperforming", "Underperforming")
                 if not chart_sec.empty:
@@ -2292,13 +2292,13 @@ else:
                         color_discrete_map={"Outperforming":"#22c55e","Underperforming":"#ef4444"},
                         orientation="h",
                         template="plotly_dark",
-                        title="1-week sector relative performance vs NIFTY 50",
-                        labels={chart_metric: "1-week relative return vs NIFTY 50 (percentage points)"}
+                        title=f"{chart_period_label} sector relative performance vs NIFTY 50",
+                        labels={chart_metric: f"{chart_period_label} relative return vs NIFTY 50 (percentage points)"}
                     )
-                    fig.update_layout(height=440, yaxis_title="Sector", xaxis_title="1-week relative return vs NIFTY 50 (pp)")
+                    fig.update_layout(height=440, yaxis_title="Sector", xaxis_title=f"{chart_period_label} relative return vs NIFTY 50 (pp)")
                     st.plotly_chart(fig, use_container_width=True)
                 else:
-                    st.warning("No overlapping one-week sector and NIFTY 50 data is available for the bar chart.")
+                    st.warning(f"No overlapping {chart_period_label} sector and NIFTY 50 data is available for the bar chart.")
             else:
                 st.warning("No sector index series were returned by the public source. No values have been substituted.")
     
