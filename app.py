@@ -947,6 +947,66 @@ def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, 
         return data.reset_index(drop=True), None
     return pd.DataFrame(), yf_error or fallback_error or "Both Yahoo history routes returned no data."
 
+def get_main_index_history(ticker: str, period: str, interval: str, fyers_symbol: str | None = None) -> tuple[pd.DataFrame, str | None]:
+    """Use FYERS daily index candles only when they validate against Yahoo; otherwise retain Yahoo unchanged."""
+    yahoo_frame, yahoo_error = get_history(ticker, period, interval)
+    if not fyers_symbol or interval != "1d":
+        return yahoo_frame, yahoo_error
+
+    config = fyers_credentials()
+    access_token = st.session_state.get("fyers_access_token")
+    if not config or not access_token:
+        return yahoo_frame, yahoo_error
+
+    period_days = {"1mo": 45, "3mo": 110, "6mo": 210, "1y": 400, "2y": 770, "5y": 1900}
+    fyers_frame, fyers_error = fyers_history(config[0], access_token, fyers_symbol, "D", period_days.get(period, 210))
+    if fyers_frame.empty:
+        return yahoo_frame, yahoo_error
+
+    required = {"Date", "Open", "High", "Low", "Close"}
+    if not required.issubset(fyers_frame.columns):
+        return yahoo_frame, yahoo_error
+
+    candidate = fyers_frame.copy()
+    for column in ["Open", "High", "Low", "Close", "Volume"]:
+        if column in candidate:
+            candidate[column] = pd.to_numeric(candidate[column], errors="coerce")
+    candidate = candidate.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
+    if candidate.empty or not np.isfinite(candidate[["Open", "High", "Low", "Close"]].to_numpy()).all():
+        return yahoo_frame, yahoo_error
+    valid_ohlc = (
+        (candidate["High"] >= candidate["Low"])
+        & (candidate["High"] >= candidate[["Open", "Close"]].max(axis=1))
+        & (candidate["Low"] <= candidate[["Open", "Close"]].min(axis=1))
+    )
+    if not valid_ohlc.all():
+        return yahoo_frame, yahoo_error
+    candidate = candidate.drop_duplicates("Date", keep="last").reset_index(drop=True)
+
+    # Require the same latest completed daily session and a close within 0.5% of Yahoo.
+    # If Yahoo is unavailable or the feeds disagree, fail closed to the existing route.
+    if yahoo_frame.empty or "Close" not in yahoo_frame.columns:
+        return yahoo_frame, yahoo_error
+    yahoo_check = yahoo_frame.copy()
+    yahoo_check["Date"] = pd.to_datetime(yahoo_check["Date"], errors="coerce")
+    candidate["Date"] = pd.to_datetime(candidate["Date"], errors="coerce")
+    yahoo_check = yahoo_check.dropna(subset=["Date", "Close"]).sort_values("Date")
+    candidate = candidate.dropna(subset=["Date", "Close"]).sort_values("Date")
+    if yahoo_check.empty or candidate.empty:
+        return yahoo_frame, yahoo_error
+    yahoo_latest = yahoo_check.iloc[-1]
+    fyers_latest = candidate.iloc[-1]
+    yahoo_day = pd.Timestamp(yahoo_latest["Date"]).date()
+    fyers_day = pd.Timestamp(fyers_latest["Date"]).date()
+    yahoo_close = float(yahoo_latest["Close"])
+    fyers_close = float(fyers_latest["Close"])
+    if yahoo_day != fyers_day or yahoo_close <= 0 or abs(fyers_close / yahoo_close - 1) > 0.005:
+        return yahoo_frame, yahoo_error
+
+    candidate["Source"] = "FYERS (validated against Yahoo)"
+    return candidate.reset_index(drop=True), None
+
+
 # Actually invalidate only the short-lived Yahoo history cache once per new browser session.
 # Keep longer-running research/scanner caches untouched to avoid expensive reloads.
 if not st.session_state.get("_market_data_cache_cleared_on_open", False):
@@ -1099,6 +1159,10 @@ with st.spinner("Loading best-effort public market data…"):
         # do not silently substitute Upstox, Trading Economics, EIA, or Yahoo data.
         if name == "Brent Crude":
             hist, err = get_oilprice_brent_quote()
+        elif name == "NIFTY 50":
+            hist, err = get_main_index_history(ticker, period, "1d", "NSE:NIFTY50-INDEX")
+        elif name == "BANK NIFTY":
+            hist, err = get_main_index_history(ticker, period, "1d", "NSE:NIFTYBANK-INDEX")
         else:
             hist, err = get_history(ticker, period, "1d")
         market_data[name], market_errors[name] = hist, err
