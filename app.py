@@ -1320,6 +1320,11 @@ for _name in headline_names:
             headline_dates.append(f"{_name}: {_date.iloc[-1]:%d %b} ({_source}){_freshness}")
     else:
         headline_dates.append(f"{_name}: unavailable")
+_fyers_live_count = sum(1 for _name in ("NIFTY 50", "BANK NIFTY", "India VIX") if str(market_data.get(_name, pd.DataFrame()).iloc[-1].get("Source", "")) == "FYERS live quote" and not market_data.get(_name, pd.DataFrame()).empty)
+if _fyers_live_count:
+    st.caption(f"FYERS live quotes active for {_fyers_live_count}/3 benchmark indices · snapshot fetched {fyers_snapshot_at:%d %b %Y %H:%M:%S IST} · quote cache 20 seconds")
+elif _active_fyers_token and fyers_quote_error:
+    st.warning("FYERS live quotes could not be loaded: " + str(fyers_quote_error) + " · displayed benchmark values use their labelled historical source.")
 st.caption("Actual source candle dates · " + "  |  ".join(headline_dates))
 
 # Daily global-cue sentiment panel is intentionally placed immediately above Market Regime.
