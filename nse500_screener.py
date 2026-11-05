@@ -482,7 +482,7 @@ def render_nse500_screener():
                 st.session_state.pop(key, None)
 
         last_epoch = st.session_state.get("nse500_rs_stage_epoch", 0)
-        session_data_expired = (time.time() - last_epoch) >= 900
+        session_data_expired = (datetime.now(ZoneInfo("Asia/Kolkata")).timestamp() - last_epoch) >= 900
         cached_session_results = st.session_state.get("nse500_rs_stage_results")
         needs_peer_rs_refresh = (
             not isinstance(cached_session_results, pd.DataFrame)
@@ -499,7 +499,7 @@ def render_nse500_screener():
                     st.session_state["nse500_rs_stage_sectors"] = sectors
                     st.session_state["nse500_rs_stage_industries"] = industries
                     st.session_state["nse500_rs_stage_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y, %I:%M %p IST")
-                    st.session_state["nse500_rs_stage_epoch"] = time.time()
+                    st.session_state["nse500_rs_stage_epoch"] = datetime.now(ZoneInfo("Asia/Kolkata")).timestamp()
                     st.session_state["nse500_rs_stage_price_date"] = pd.Timestamp(price_date).strftime("%d %b %Y")
                     st.session_state["nse500_rs_stage_counts"] = (universe_count, priced_count)
                     st.session_state["nse500_rs_stage_weeks"] = (current_week.strftime("%d %b %Y"), previous_week.strftime("%d %b %Y"))
