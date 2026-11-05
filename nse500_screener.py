@@ -496,6 +496,7 @@ def render_nse500_screener():
                 try:
                     results, sectors, industries, universe_count, priced_count, current_week, previous_week, price_date = _calculate()
                     st.session_state["nse500_rs_stage_results"] = results
+                    st.session_state.pop("nse500_rs_stage_last_error", None)
                     st.session_state["nse500_rs_stage_sectors"] = sectors
                     st.session_state["nse500_rs_stage_industries"] = industries
                     st.session_state["nse500_rs_stage_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y, %I:%M %p IST")
@@ -504,7 +505,8 @@ def render_nse500_screener():
                     st.session_state["nse500_rs_stage_counts"] = (universe_count, priced_count)
                     st.session_state["nse500_rs_stage_weeks"] = (current_week.strftime("%d %b %Y"), previous_week.strftime("%d %b %Y"))
                 except Exception as exc:
-                    st.warning(f"NSE 500 screener could not complete: {exc.__class__.__name__}: {exc}")
+                    st.session_state["nse500_rs_stage_last_error"] = f"{exc.__class__.__name__}: {exc}"
+                    st.warning(f"NSE 500 screener refresh failed: {exc.__class__.__name__}: {exc}")
 
         results = st.session_state.get("nse500_rs_stage_results", pd.DataFrame())
         sectors = st.session_state.get("nse500_rs_stage_sectors", pd.DataFrame())
@@ -523,8 +525,16 @@ def render_nse500_screener():
                 quote_age_days = (datetime.now(ZoneInfo("Asia/Kolkata")).date() - pd.Timestamp(price_date).date()).days
                 if quote_age_days > 4:
                     st.warning(f"Market data is stale: latest available daily price date is {price_date} ({quote_age_days} calendar days old). Do not treat these quotes as current.")
+                if "Price Date" in results.columns:
+                    individual_dates = pd.to_datetime(results["Price Date"], errors="coerce", format="%d %b %Y")
+                    individual_age = (datetime.now(ZoneInfo("Asia/Kolkata")).date() - individual_dates.dt.date).apply(lambda value: value.days if pd.notna(value) else 999)
+                    stale_count = int((individual_age > 4).sum())
+                    if stale_count:
+                        st.warning(f"{stale_count} individual stock quotes are older than four calendar days. Check each stock's Price Date before relying on its ranking.")
             except Exception:
                 st.warning("The latest market-data date could not be verified. Check the source before using these prices.")
+            if st.session_state.get("nse500_rs_stage_last_error"):
+                st.warning("The latest refresh failed. The table below is the last successful scan, not confirmed current data: " + st.session_state["nse500_rs_stage_last_error"])
 
             fresh = results[results["New Stage 2"]].copy().sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False])
             current_stage2 = results[results["Stage"] == STAGE_2].copy().sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False])
