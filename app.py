@@ -1849,7 +1849,20 @@ if active_page == "Main Dashboard":
         if overview_regime_df.empty:
             st.warning(f"History unavailable for {overview_regime_name}: {overview_regime_error or nifty500_symbols_error or 'No source data returned.'}")
     if overview_regime_df.empty or len(overview_regime_df) < 30:
-        st.warning("Insufficient returned OHLC history to assess regime. No regime label generated.")
+        # Keep the Main Dashboard's trend chart, Fear & Greed proxy, and rotation
+        # sections available when a selected regime instrument has insufficient history.
+        # Fall back to NIFTY 50 only when it has enough returned OHLC rows.
+        nifty_fallback_df = market_data.get("NIFTY 50", pd.DataFrame())
+        if not nifty_fallback_df.empty and len(nifty_fallback_df) >= 30:
+            st.warning(
+                f"Insufficient history for {overview_regime_name}; using NIFTY 50 data "
+                "for the regime and trend display. Sector rotation remains available."
+            )
+            overview_regime_df = nifty_fallback_df
+        else:
+            st.warning("Insufficient returned OHLC history to assess regime. No regime label generated.")
+    if overview_regime_df.empty or len(overview_regime_df) < 30:
+        pass
     else:
         overview_rc = indicators(overview_regime_df).copy()
         if {"High", "Low", "Close"}.issubset(overview_rc.columns):
