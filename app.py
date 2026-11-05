@@ -1438,16 +1438,16 @@ for gift_source_name, gift_url in gift_sources:
     except Exception as exc:
         gift_failures.append(f"{gift_source_name}: {exc.__class__.__name__}")
 if not gift_loaded:
-    # Last visibly confirmed GiftCityNifty.com snapshot supplied by the user.
-    # Show it transparently as stale context only; do not add it to the current weighted score.
+    # Never display a remembered GIFT Nifty value as if it were current.
+    # Missing live data remains unavailable and contributes no sentiment score.
     sentiment_details.append({
-        "Factor": "GIFT Nifty · GiftCityNifty.com (last confirmed snapshot; stale)",
+        "Factor": "GIFT Nifty · live quote unavailable",
         "Weight": "60% (not scored)",
-        "Latest change": "-0.32% (-72.50 pts)",
-        "Signal": "Negative",
-        "Source bar": "24 Oct 2026 · stale",
+        "Latest change": "Unavailable",
+        "Signal": "Unavailable",
+        "Source bar": "No verified current source quote",
     })
-    sentiment_errors.append("GIFT Nifty live quote unavailable; showing the last confirmed 24 Oct snapshot for reference only (" + "; ".join(gift_failures) + ")")
+    sentiment_errors.append("GIFT Nifty live quote unavailable; excluded from the weighted sentiment score (" + "; ".join(gift_failures) + ")")
 # Prefer Upstox's global Oil (Brent) quote; use EIA only as a dated fallback.
 try:
     brent_frame = market_data.get("Brent Crude", pd.DataFrame())
