@@ -710,6 +710,18 @@ def render_explosive_breakout_scanner():
             upcoming = pd.DataFrame()
         if st.session_state.get("explosive_breakout_scan_time"):
             st.caption("Last scan: " + st.session_state["explosive_breakout_scan_time"])
+        if not all_rows.empty and "Price Date" in all_rows.columns:
+            source_dates = pd.to_datetime(all_rows["Price Date"], errors="coerce")
+            latest_price_date = source_dates.max()
+            if pd.notna(latest_price_date):
+                today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+                quote_ages = source_dates.dt.date.apply(lambda value: (today_ist - value).days if pd.notna(value) else 999)
+                stale_quotes = int((quote_ages > 4).sum())
+                st.caption(f"Latest daily price date in scan: {latest_price_date:%d %b %Y} · Yahoo Finance daily close · {stale_quotes} stocks with quotes older than four calendar days")
+                if stale_quotes:
+                    st.warning("Some breakout-scan stock prices are stale. Verify each symbol's Price Date before using its signal.")
+            else:
+                st.warning("Breakout scanner could not verify the source dates for its stock prices.")
         if not fresh.empty:
             st.subheader("Fresh B1 · Stage 2 breakouts")
             display = ["Status", "Opportunity Score", "Technical Score", "Fundamental Score", "Catalyst Score", "Early-entry quality", "Catalyst status", "Official catalyst", "Official catalyst date", "Official source", "Symbol", "Company", "Segment", "Sector", "Price", "Breakout level", "Base Count", "Volume vs 10W Avg", "Sales growth YoY %", "Profit growth YoY %", "13W return %", "30W slope %", "EMA 10>21>55", "Daily change %"]
