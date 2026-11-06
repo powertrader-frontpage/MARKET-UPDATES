@@ -2082,18 +2082,87 @@ if active_page == "Main Dashboard":
             nifty_pcr_text = f"{nifty_pcr:.2f}" if pd.notna(nifty_pcr) else "—"
             regime_cols[4].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {nifty_pcr_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY 50 · PCR (OI)</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{nifty_pcr_color};">{nifty_pcr_text}</div><div style="font-size:12px;color:{nifty_pcr_color};margin-top:4px;">{nifty_pcr_status}</div><div style="font-size:11px;color:#aeb6c2;margin-top:4px;">Source: FYERS · {nifty_pcr_source_time}</div></div>', unsafe_allow_html=True)
             # Compact Fear & Greed proxy beside the existing price trend chart.
-            # This is an explicitly labelled dashboard-derived proxy, not an official NSE index.
+            # EMA warm-up uses up to five years of daily history; the visible range
+            # still follows the user's Historical lookback selection.
             st.markdown("#### Price trend")
             trend_col, fear_col = st.columns([2, 1], gap="small")
-            trend_fig = go.Figure()
-            trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["Close"], name="Close", mode="lines", line=dict(color="#60a5fa", width=2)))
-            if "EMA 20" in overview_rc:
-                trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 20"], name="EMA 20", mode="lines", line=dict(color="#f59e0b", width=1.5)))
-            if "EMA 50" in overview_rc:
-                trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 50"], name="EMA 50", mode="lines", line=dict(color="#a78bfa", width=1.5)))
-            trend_fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified", xaxis_title="Source candle date", yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0))
             with trend_col:
-                st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
+                trend_timeframe = st.radio(
+                    "Chart timeframe",
+                    ["Daily", "Weekly"],
+                    horizontal=True,
+                    key="overview_regime_trend_timeframe",
+                    label_visibility="collapsed",
+                )
+
+            trend_ticker = INDEXES.get(overview_regime_name, overview_regime_name + ".NS")
+            trend_history, trend_history_error = get_history(trend_ticker, "5y", "1d")
+            if trend_history.empty or not {"Date", "Open", "High", "Low", "Close"}.issubset(trend_history.columns):
+                trend_history = overview_regime_df.copy()
+                trend_history_error = trend_history_error or "Extended history unavailable; using the selected regime history."
+
+            trend_base = trend_history.copy()
+            trend_base["Date"] = pd.to_datetime(trend_base["Date"], errors="coerce")
+            for _ema_col in ["Open", "High", "Low", "Close", "Volume"]:
+                if _ema_col in trend_base.columns:
+                    trend_base[_ema_col] = pd.to_numeric(trend_base[_ema_col], errors="coerce")
+            trend_base = trend_base.dropna(subset=["Date", "Close"]).sort_values("Date")
+            trend_base = trend_base.drop_duplicates("Date", keep="last").set_index("Date")
+
+            if trend_timeframe == "Weekly":
+                # Build true weekly OHLC candles from daily sessions (week ending Friday).
+                trend_frame = trend_base.resample("W-FRI").agg({
+                    "Open": "first",
+                    "High": "max",
+                    "Low": "min",
+                    "Close": "last",
+                    **({"Volume": "sum"} if "Volume" in trend_base.columns else {}),
+                }).dropna(subset=["Close"]).reset_index()
+                trend_x_title = "Week ending"
+            else:
+                trend_frame = trend_base.reset_index()
+                trend_x_title = "Source candle date"
+
+            for _ema_period in [20, 50, 100, 200]:
+                trend_frame[f"EMA {_ema_period}"] = trend_frame["Close"].ewm(
+                    span=_ema_period, adjust=False, min_periods=_ema_period
+                ).mean()
+
+            # Keep the chart window consistent with the sidebar lookback, while
+            # retaining the longer pre-window history for correct EMA warm-up.
+            trend_days = {"1mo": 31, "3mo": 93, "6mo": 186, "1y": 366, "2y": 732, "5y": 1830}.get(period, 186)
+            trend_cutoff = pd.Timestamp.now(tz="Asia/Kolkata") - pd.Timedelta(days=trend_days)
+            trend_dates = pd.to_datetime(trend_frame["Date"], errors="coerce")
+            if getattr(trend_dates.dt, "tz", None) is not None:
+                trend_dates = trend_dates.dt.tz_convert("Asia/Kolkata")
+            trend_visible = trend_frame.loc[trend_dates >= trend_cutoff.tz_localize(None) if getattr(trend_dates.dt, "tz", None) is None else trend_dates >= trend_cutoff].copy()
+            trend_fig = go.Figure()
+            trend_fig.add_trace(go.Scatter(x=trend_visible["Date"], y=trend_visible["Close"], name="Close", mode="lines", line=dict(color="#60a5fa", width=2)))
+            trend_colors = {20: "#f59e0b", 50: "#a78bfa", 100: "#22c55e", 200: "#f87171"}
+            for _ema_period in [20, 50, 100, 200]:
+                _ema_name = f"EMA {_ema_period}"
+                trend_fig.add_trace(go.Scatter(
+                    x=trend_visible["Date"], y=trend_visible[_ema_name],
+                    name=_ema_name, mode="lines",
+                    line=dict(color=trend_colors[_ema_period], width=1.5),
+                ))
+            trend_fig.update_layout(
+                template="plotly_dark", height=300,
+                margin=dict(l=10, r=10, t=20, b=10),
+                hovermode="x unified", xaxis_title=trend_x_title,
+                yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0),
+            )
+            with trend_col:
+                st.plotly_chart(
+                    trend_fig, use_container_width=True,
+                    config={"displaylogo": False},
+                    key=f"overview_regime_trend_chart_{trend_timeframe.lower()}",
+                )
+                st.caption(
+                    f"{trend_timeframe} candles · EMA 20 / 50 / 100 / 200 · "
+                    f"Visible range: {period}"
+                    + (f" · {trend_history_error}" if trend_history_error else "")
+                )
 
             # Minimal NIFTY 50 pivot strip directly below Price Trend.
             nifty_levels_df = market_data.get("NIFTY 50", pd.DataFrame()).copy()
