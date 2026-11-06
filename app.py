@@ -2137,20 +2137,51 @@ if active_page == "Main Dashboard":
                 trend_dates = trend_dates.dt.tz_convert("Asia/Kolkata")
             trend_visible = trend_frame.loc[trend_dates >= trend_cutoff.tz_localize(None) if getattr(trend_dates.dt, "tz", None) is None else trend_dates >= trend_cutoff].copy()
             trend_fig = go.Figure()
-            trend_fig.add_trace(go.Scatter(x=trend_visible["Date"], y=trend_visible["Close"], name="Close", mode="lines", line=dict(color="#60a5fa", width=2)))
+            # Keep this as a clean line chart: price is visually dominant and
+            # each EMA is a thinner overlay. No candlesticks or point markers.
+            trend_fig.add_trace(go.Scatter(
+                x=trend_visible["Date"], y=trend_visible["Close"],
+                name="Close", mode="lines",
+                line=dict(color="#60a5fa", width=2.7),
+                hovertemplate="%{x|%d %b %Y}<br>Close: %{y:,.2f}<extra></extra>",
+            ))
             trend_colors = {20: "#f59e0b", 50: "#a78bfa", 100: "#22c55e", 200: "#f87171"}
             for _ema_period in [20, 50, 100, 200]:
                 _ema_name = f"EMA {_ema_period}"
                 trend_fig.add_trace(go.Scatter(
                     x=trend_visible["Date"], y=trend_visible[_ema_name],
                     name=_ema_name, mode="lines",
-                    line=dict(color=trend_colors[_ema_period], width=1.5),
+                    line=dict(color=trend_colors[_ema_period], width=1.55),
+                    hovertemplate=f"%{{x|%d %b %Y}}<br>{_ema_name}: %{{y:,.2f}}<extra></extra>",
                 ))
             trend_fig.update_layout(
-                template="plotly_dark", height=300,
-                margin=dict(l=10, r=10, t=20, b=10),
-                hovermode="x unified", xaxis_title=trend_x_title,
-                yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0),
+                template="plotly_dark", height=320,
+                margin=dict(l=12, r=12, t=28, b=12),
+                hovermode="x unified",
+                xaxis=dict(
+                    title=trend_x_title,
+                    showgrid=False,
+                    zeroline=False,
+                    showline=True,
+                    linecolor="rgba(148,163,184,.25)",
+                    tickfont=dict(size=11),
+                ),
+                yaxis=dict(
+                    title="Price",
+                    showgrid=True,
+                    gridcolor="rgba(148,163,184,.16)",
+                    zeroline=False,
+                    tickformat=",.0f",
+                    tickfont=dict(size=11),
+                ),
+                legend=dict(
+                    orientation="h", y=1.08, x=0,
+                    font=dict(size=11),
+                    bgcolor="rgba(0,0,0,0)",
+                    itemwidth=55,
+                ),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
             )
             with trend_col:
                 st.plotly_chart(
@@ -2159,7 +2190,7 @@ if active_page == "Main Dashboard":
                     key=f"overview_regime_trend_chart_{trend_timeframe.lower()}",
                 )
                 st.caption(
-                    f"{trend_timeframe} candles · EMA 20 / 50 / 100 / 200 · "
+                    f"{trend_timeframe} line chart · EMA 20 / 50 / 100 / 200 · "
                     f"Visible range: {period}"
                     + (f" · {trend_history_error}" if trend_history_error else "")
                 )
