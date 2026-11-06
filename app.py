@@ -2085,7 +2085,7 @@ if active_page == "Main Dashboard":
             # EMA warm-up uses up to five years of daily history; the visible range
             # still follows the user's Historical lookback selection.
             st.markdown("#### Price trend")
-            trend_col, fear_col = st.columns([2, 1], gap="small")
+            trend_col = st.container()
             with trend_col:
                 trend_timeframe = st.radio(
                     "Chart timeframe",
@@ -2840,7 +2840,9 @@ if active_page == "Main Dashboard":
         
         
         
+                fear_col = st.container()
                 with fear_col:
+                    st.markdown("#### Fear & Greed")
                     fear_score = np.nan
                     fear_components = []
                     recent_rc = overview_rc.dropna(subset=["Close"]).copy()
