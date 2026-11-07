@@ -2179,7 +2179,7 @@ if active_page == "Main Dashboard":
                 trend_frame = trend_base.reset_index()
                 trend_x_title = "Source candle date"
 
-            for _ema_period in [20, 50, 100, 200]:
+            for _ema_period in [10, 20, 33, 50, 100, 200]:
                 trend_frame[f"EMA {_ema_period}"] = trend_frame["Close"].ewm(
                     span=_ema_period, adjust=False, min_periods=_ema_period
                 ).mean()
@@ -2192,7 +2192,7 @@ if active_page == "Main Dashboard":
             if getattr(trend_dates.dt, "tz", None) is not None:
                 trend_dates = trend_dates.dt.tz_convert("Asia/Kolkata")
             trend_visible = trend_frame.loc[trend_dates >= trend_cutoff.tz_localize(None) if getattr(trend_dates.dt, "tz", None) is None else trend_dates >= trend_cutoff].copy()
-            ema_options = ["EMA 20", "EMA 50", "EMA 100", "EMA 200"]
+            ema_options = ["EMA 10", "EMA 20", "EMA 33", "EMA 50", "EMA 100", "EMA 200"]
             with trend_col:
                 selected_emas = st.segmented_control(
                     "EMA overlays",
@@ -2211,7 +2211,7 @@ if active_page == "Main Dashboard":
                 line=dict(color="#60a5fa", width=2.7),
                 hovertemplate="%{x|%d %b %Y}<br>Close: %{y:,.2f}<extra></extra>",
             ))
-            trend_colors = {"EMA 20": "#f59e0b", "EMA 50": "#a78bfa", "EMA 100": "#22c55e", "EMA 200": "#f87171"}
+            trend_colors = {"EMA 10": "#38bdf8", "EMA 20": "#f59e0b", "EMA 33": "#fb923c", "EMA 50": "#a78bfa", "EMA 100": "#22c55e", "EMA 200": "#f87171"}
             for _ema_name in ema_options:
                 if _ema_name not in selected_emas:
                     continue
