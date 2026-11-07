@@ -646,13 +646,15 @@ if "auth_code" in st.query_params:
         st.error("FYERS returned without an authorization code. Please retry the connection.")
         st.query_params.clear()
 
-if "fyers_access_token" in st.session_state and fyers_credentials():
-    fyers_app_id = fyers_credentials()[0]
-    # Keep the optional live-quote tool available without taking space on the main dashboard.
-    with st.expander("FYERS live market snapshot · optional", expanded=False):
+# Keep the FYERS snapshot panel visible even while disconnected or reconnecting.
+with st.expander("FYERS live market snapshot · optional", expanded=False):
+    fyers_config = fyers_credentials()
+    fyers_active_token = st.session_state.get("fyers_access_token")
+    if fyers_config and fyers_active_token:
+        fyers_app_id = fyers_config[0]
         fyers_symbols = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:INFY-EQ"]
         if st.button("Fetch FYERS live quotes", key="fyers_fetch_quotes"):
-            quote_rows, quote_error = fyers_live_quotes(fyers_app_id, st.session_state["fyers_access_token"], fyers_symbols)
+            quote_rows, quote_error = fyers_live_quotes(fyers_app_id, fyers_active_token, fyers_symbols)
             if quote_error:
                 st.warning(f"FYERS quote data unavailable: {quote_error}")
             elif not quote_rows:
@@ -674,6 +676,10 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                     })
                 st.dataframe(pd.DataFrame(normalized), use_container_width=True, hide_index=True)
                 st.caption("Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
+    elif not fyers_config:
+        st.info("Configure FYERS_APP_ID, FYERS_APP_SECRET and FYERS_REDIRECT_URI in Streamlit Secrets to enable live quotes.")
+    else:
+        st.info("FYERS is not connected in this app session. Connect or reconnect FYERS, then reopen this panel to fetch live quotes.")
 
 
 
@@ -947,6 +953,66 @@ def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, 
         return data.reset_index(drop=True), None
     return pd.DataFrame(), yf_error or fallback_error or "Both Yahoo history routes returned no data."
 
+def get_main_index_history(ticker: str, period: str, interval: str, fyers_symbol: str | None = None) -> tuple[pd.DataFrame, str | None]:
+    """Use FYERS daily index candles only when they validate against Yahoo; otherwise retain Yahoo unchanged."""
+    yahoo_frame, yahoo_error = get_history(ticker, period, interval)
+    if not fyers_symbol or interval != "1d":
+        return yahoo_frame, yahoo_error
+
+    config = fyers_credentials()
+    access_token = st.session_state.get("fyers_access_token")
+    if not config or not access_token:
+        return yahoo_frame, yahoo_error
+
+    period_days = {"1mo": 45, "3mo": 110, "6mo": 210, "1y": 400, "2y": 770, "5y": 1900}
+    fyers_frame, fyers_error = fyers_history(config[0], access_token, fyers_symbol, "D", period_days.get(period, 210))
+    if fyers_frame.empty:
+        return yahoo_frame, yahoo_error
+
+    required = {"Date", "Open", "High", "Low", "Close"}
+    if not required.issubset(fyers_frame.columns):
+        return yahoo_frame, yahoo_error
+
+    candidate = fyers_frame.copy()
+    for column in ["Open", "High", "Low", "Close", "Volume"]:
+        if column in candidate:
+            candidate[column] = pd.to_numeric(candidate[column], errors="coerce")
+    candidate = candidate.dropna(subset=["Date", "Open", "High", "Low", "Close"]).sort_values("Date")
+    if candidate.empty or not np.isfinite(candidate[["Open", "High", "Low", "Close"]].to_numpy()).all():
+        return yahoo_frame, yahoo_error
+    valid_ohlc = (
+        (candidate["High"] >= candidate["Low"])
+        & (candidate["High"] >= candidate[["Open", "Close"]].max(axis=1))
+        & (candidate["Low"] <= candidate[["Open", "Close"]].min(axis=1))
+    )
+    if not valid_ohlc.all():
+        return yahoo_frame, yahoo_error
+    candidate = candidate.drop_duplicates("Date", keep="last").reset_index(drop=True)
+
+    # Require the same latest completed daily session and a close within 0.5% of Yahoo.
+    # If Yahoo is unavailable or the feeds disagree, fail closed to the existing route.
+    if yahoo_frame.empty or "Close" not in yahoo_frame.columns:
+        return yahoo_frame, yahoo_error
+    yahoo_check = yahoo_frame.copy()
+    yahoo_check["Date"] = pd.to_datetime(yahoo_check["Date"], errors="coerce")
+    candidate["Date"] = pd.to_datetime(candidate["Date"], errors="coerce")
+    yahoo_check = yahoo_check.dropna(subset=["Date", "Close"]).sort_values("Date")
+    candidate = candidate.dropna(subset=["Date", "Close"]).sort_values("Date")
+    if yahoo_check.empty or candidate.empty:
+        return yahoo_frame, yahoo_error
+    yahoo_latest = yahoo_check.iloc[-1]
+    fyers_latest = candidate.iloc[-1]
+    yahoo_day = pd.Timestamp(yahoo_latest["Date"]).date()
+    fyers_day = pd.Timestamp(fyers_latest["Date"]).date()
+    yahoo_close = float(yahoo_latest["Close"])
+    fyers_close = float(fyers_latest["Close"])
+    if yahoo_day != fyers_day or yahoo_close <= 0 or abs(fyers_close / yahoo_close - 1) > 0.005:
+        return yahoo_frame, yahoo_error
+
+    candidate["Source"] = "FYERS (validated against Yahoo)"
+    return candidate.reset_index(drop=True), None
+
+
 # Actually invalidate only the short-lived Yahoo history cache once per new browser session.
 # Keep longer-running research/scanner caches untouched to avoid expensive reloads.
 if not st.session_state.get("_market_data_cache_cleared_on_open", False):
@@ -1099,6 +1165,10 @@ with st.spinner("Loading best-effort public market data…"):
         # do not silently substitute Upstox, Trading Economics, EIA, or Yahoo data.
         if name == "Brent Crude":
             hist, err = get_oilprice_brent_quote()
+        elif name == "NIFTY 50":
+            hist, err = get_main_index_history(ticker, period, "1d", "NSE:NIFTY50-INDEX")
+        elif name == "BANK NIFTY":
+            hist, err = get_main_index_history(ticker, period, "1d", "NSE:NIFTYBANK-INDEX")
         else:
             hist, err = get_history(ticker, period, "1d")
         market_data[name], market_errors[name] = hist, err
@@ -1305,7 +1375,6 @@ if active_page == "Main Dashboard":
                 headline_dates.append(f"{_name}: {_date.iloc[-1]:%d %b} ({_source}){_freshness}")
         else:
             headline_dates.append(f"{_name}: unavailable")
-    st.caption("Actual source candle dates · " + "  |  ".join(headline_dates))
 
 if active_page == "Main Dashboard":
     # Daily global-cue sentiment panel is intentionally placed immediately above Market Regime.
@@ -2017,21 +2086,7 @@ if active_page == "Main Dashboard":
             regime_cols[3].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {weekly_ema_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY · Weekly EMA 200 gap</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{weekly_ema_color};">{weekly_gap_text}</div><div style="font-size:12px;color:#aeb6c2;">Close {weekly_close_text} · EMA {weekly_ema_text}</div><div style="font-size:12px;color:{weekly_ema_color};margin-top:4px;">{weekly_subtext}</div></div>', unsafe_allow_html=True)
             nifty_pcr_text = f"{nifty_pcr:.2f}" if pd.notna(nifty_pcr) else "—"
             regime_cols[4].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {nifty_pcr_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY 50 · PCR (OI)</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{nifty_pcr_color};">{nifty_pcr_text}</div><div style="font-size:12px;color:{nifty_pcr_color};margin-top:4px;">{nifty_pcr_status}</div><div style="font-size:11px;color:#aeb6c2;margin-top:4px;">Source: FYERS · {nifty_pcr_source_time}</div></div>', unsafe_allow_html=True)
-            # Compact Fear & Greed proxy beside the existing price trend chart.
-            # This is an explicitly labelled dashboard-derived proxy, not an official NSE index.
-            st.markdown("#### Price trend")
-            trend_col, fear_col = st.columns([2, 1], gap="small")
-            trend_fig = go.Figure()
-            trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["Close"], name="Close", mode="lines", line=dict(color="#60a5fa", width=2)))
-            if "EMA 20" in overview_rc:
-                trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 20"], name="EMA 20", mode="lines", line=dict(color="#f59e0b", width=1.5)))
-            if "EMA 50" in overview_rc:
-                trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 50"], name="EMA 50", mode="lines", line=dict(color="#a78bfa", width=1.5)))
-            trend_fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified", xaxis_title="Source candle date", yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0))
-            with trend_col:
-                st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
-
-            # Minimal NIFTY 50 pivot strip directly below Price Trend.
+            # NIFTY 50 support and resistance levels above the Price Trend chart.
             nifty_levels_df = market_data.get("NIFTY 50", pd.DataFrame()).copy()
             if not nifty_levels_df.empty and {"Date", "High", "Low", "Close"}.issubset(nifty_levels_df.columns):
                 # Normalize source timestamps to IST and use the latest completed session
@@ -2071,15 +2126,230 @@ if active_page == "Main Dashboard":
                         ):
                             level_col.markdown(
                                 f'<div style="border:1px solid #343a46;border-top:2px solid {level_color};border-radius:7px;'
-                                f'padding:6px 5px;text-align:center;background:rgba(15,23,42,.42);">'
-                                f'<div style="font-size:10px;color:#aeb6c2;">{level_name}</div>'
-                                f'<div style="font-size:13px;font-weight:750;color:{level_color};">{level_value:,.2f}</div></div>',
+                                f'padding:9px 4px;text-align:center;background:rgba(15,23,42,.42);min-height:62px;">'
+                                f'<div style="font-size:clamp(11px,1.2vw,13px);font-weight:650;color:#aeb6c2;margin-bottom:5px;">{level_name}</div>'
+                                f'<div style="font-size:clamp(15px,2vw,19px);font-weight:800;line-height:1.2;color:{level_color};white-space:nowrap;">{level_value:,.2f}</div></div>',
                                 unsafe_allow_html=True,
                             )
                         st.caption("Classic pivot estimates for information only; not guaranteed price levels.")
                     else:
                         st.caption(f"NIFTY 50 pivot levels hidden: latest completed-session data is stale ({nifty_pivot_date:%d %b %Y}).")
 
+
+
+            # Compact Fear & Greed proxy below Price Trend and above the rotation sections.
+            # EMA warm-up uses up to five years of daily history; the visible range
+            # still follows the user's Historical lookback selection.
+            st.markdown("#### Price trend")
+            trend_col = st.container()
+            with trend_col:
+                trend_timeframe = st.radio(
+                    "Chart timeframe",
+                    ["Daily", "Weekly"],
+                    horizontal=True,
+                    key="overview_regime_trend_timeframe",
+                    label_visibility="collapsed",
+                )
+
+            trend_ticker = INDEXES.get(overview_regime_name, overview_regime_name + ".NS")
+            trend_history, trend_history_error = get_history(trend_ticker, "5y", "1d")
+            if trend_history.empty or not {"Date", "Open", "High", "Low", "Close"}.issubset(trend_history.columns):
+                trend_history = overview_regime_df.copy()
+                trend_history_error = trend_history_error or "Extended history unavailable; using the selected regime history."
+
+            trend_base = trend_history.copy()
+            trend_base["Date"] = pd.to_datetime(trend_base["Date"], errors="coerce")
+            for _ema_col in ["Open", "High", "Low", "Close", "Volume"]:
+                if _ema_col in trend_base.columns:
+                    trend_base[_ema_col] = pd.to_numeric(trend_base[_ema_col], errors="coerce")
+            trend_base = trend_base.dropna(subset=["Date", "Close"]).sort_values("Date")
+            trend_base = trend_base.drop_duplicates("Date", keep="last").set_index("Date")
+
+            if trend_timeframe == "Weekly":
+                # Build true weekly OHLC candles from daily sessions (week ending Friday).
+                trend_frame = trend_base.resample("W-FRI").agg({
+                    "Open": "first",
+                    "High": "max",
+                    "Low": "min",
+                    "Close": "last",
+                    **({"Volume": "sum"} if "Volume" in trend_base.columns else {}),
+                }).dropna(subset=["Close"]).reset_index()
+                trend_x_title = "Week ending"
+            else:
+                trend_frame = trend_base.reset_index()
+                trend_x_title = "Source candle date"
+
+            for _ema_period in [20, 50, 100, 200]:
+                trend_frame[f"EMA {_ema_period}"] = trend_frame["Close"].ewm(
+                    span=_ema_period, adjust=False, min_periods=_ema_period
+                ).mean()
+
+            # Keep the chart window consistent with the sidebar lookback, while
+            # retaining the longer pre-window history for correct EMA warm-up.
+            trend_days = {"1mo": 31, "3mo": 93, "6mo": 186, "1y": 366, "2y": 732, "5y": 1830}.get(period, 186)
+            trend_cutoff = pd.Timestamp.now(tz="Asia/Kolkata") - pd.Timedelta(days=trend_days)
+            trend_dates = pd.to_datetime(trend_frame["Date"], errors="coerce")
+            if getattr(trend_dates.dt, "tz", None) is not None:
+                trend_dates = trend_dates.dt.tz_convert("Asia/Kolkata")
+            trend_visible = trend_frame.loc[trend_dates >= trend_cutoff.tz_localize(None) if getattr(trend_dates.dt, "tz", None) is None else trend_dates >= trend_cutoff].copy()
+            ema_options = ["EMA 20", "EMA 50", "EMA 100", "EMA 200"]
+            with trend_col:
+                selected_emas = st.segmented_control(
+                    "EMA overlays",
+                    options=ema_options,
+                    selection_mode="multi",
+                    default=["EMA 20", "EMA 50"],
+                    key=f"overview_regime_trend_emas_{trend_timeframe.lower()}",
+                    label_visibility="collapsed",
+                ) or []
+            trend_fig = go.Figure()
+            # Keep this as a clean line chart: price is visually dominant and
+            # EMA 20 is active by default; additional EMA overlays are optional.
+            trend_fig.add_trace(go.Scatter(
+                x=trend_visible["Date"], y=trend_visible["Close"],
+                name="Close", mode="lines",
+                line=dict(color="#60a5fa", width=2.7),
+                hovertemplate="%{x|%d %b %Y}<br>Close: %{y:,.2f}<extra></extra>",
+            ))
+            trend_colors = {"EMA 20": "#f59e0b", "EMA 50": "#a78bfa", "EMA 100": "#22c55e", "EMA 200": "#f87171"}
+            for _ema_name in ema_options:
+                if _ema_name not in selected_emas:
+                    continue
+                _ema_period = int(_ema_name.split()[-1])
+                trend_fig.add_trace(go.Scatter(
+                    x=trend_visible["Date"], y=trend_visible[_ema_name],
+                    name=_ema_name, mode="lines",
+                    line=dict(color=trend_colors[_ema_name], width=1.55),
+                    hovertemplate=f"%{{x|%d %b %Y}}<br>{_ema_name}: %{{y:,.2f}}<extra></extra>",
+                ))
+            trend_fig.update_layout(
+                template="plotly_dark", height=320,
+                margin=dict(l=12, r=12, t=28, b=12),
+                hovermode="x unified",
+                xaxis=dict(
+                    title=trend_x_title,
+                    showgrid=False,
+                    zeroline=False,
+                    showline=True,
+                    linecolor="rgba(148,163,184,.25)",
+                    tickfont=dict(size=11),
+                ),
+                yaxis=dict(
+                    title="Price",
+                    showgrid=True,
+                    gridcolor="rgba(148,163,184,.16)",
+                    zeroline=False,
+                    tickformat=",.0f",
+                    tickfont=dict(size=11),
+                ),
+                legend=dict(
+                    orientation="h", y=1.08, x=0,
+                    font=dict(size=11),
+                    bgcolor="rgba(0,0,0,0)",
+                    itemwidth=55,
+                ),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+            )
+            with trend_col:
+                st.plotly_chart(
+                    trend_fig, use_container_width=True,
+                    config={"displaylogo": False},
+                    key=f"overview_regime_trend_chart_{trend_timeframe.lower()}",
+                )
+
+            fear_col = st.container()
+            with fear_col:
+                st.markdown("#### Fear & Greed")
+                fear_score = np.nan
+                fear_components = []
+                recent_rc = overview_rc.dropna(subset=["Close"]).copy()
+                if len(recent_rc) >= 20:
+                    # RSI contribution: RSI 50 maps to neutral; 0..100 maps to the same scale.
+                    rsi_series = recent_rc["RSI 14"] if "RSI 14" in recent_rc.columns else pd.Series(dtype=float)
+                    rsi_series = pd.to_numeric(rsi_series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+                    if rsi_series.empty:
+                        # Calculate RSI directly from the returned close series if the indicator frame lacks RSI.
+                        close_delta = pd.to_numeric(recent_rc["Close"], errors="coerce").diff()
+                        close_gain = close_delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                        close_loss = (-close_delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                        close_rs = close_gain / close_loss.replace(0, np.nan)
+                        fallback_rsi = (100 - 100 / (1 + close_rs)).replace([np.inf, -np.inf], np.nan).dropna()
+                        if not fallback_rsi.empty:
+                            rsi_series = fallback_rsi
+                    if not rsi_series.empty:
+                        fear_components.append((float(np.clip(rsi_series.iloc[-1], 0, 100)), 0.35))
+                    # Trend contribution: close vs EMA 20 and EMA 50, mapped around neutral.
+                    trend_parts = []
+                    for ema_col in ["EMA 20", "EMA 50"]:
+                        if ema_col in recent_rc.columns and pd.notna(recent_rc[ema_col].iloc[-1]) and recent_rc[ema_col].iloc[-1] != 0:
+                            gap_pct = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc[ema_col].iloc[-1]) - 1) * 100
+                            trend_parts.append(float(np.clip(50 + gap_pct * 12, 0, 100)))
+                    if trend_parts:
+                        # Price vs EMA 20/50 contributes 25% to the proxy score.
+                        fear_components.append((float(np.mean(trend_parts)), 0.25))
+                    # Medium-term momentum: 20-session return mapped around neutral.
+                    if len(recent_rc) >= 21 and recent_rc["Close"].iloc[-21] != 0:
+                        ret20 = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc["Close"].iloc[-21]) - 1) * 100
+                        fear_components.append((float(np.clip(50 + ret20 * 8, 0, 100)), 0.15))
+                    # India VIX: higher volatility tilts the proxy toward fear.
+                    vix_frame = market_data.get("India VIX", pd.DataFrame())
+                    vix_snap = quote_snapshot(vix_frame) if not vix_frame.empty else None
+                    if vix_snap:
+                        vix_value = float(vix_snap[0]["Close"])
+                        # India VIX contributes 25% to the proxy score.
+                        fear_components.append((float(np.clip(100 - vix_value * 3, 0, 100)), 0.25))
+                    # Keep only finite, valid components. Missing/invalid inputs must not turn into a fake 0/100 reading.
+                    fear_components = [
+                        (float(value), float(weight))
+                        for value, weight in fear_components
+                        if pd.notna(value) and np.isfinite(float(value)) and 0 <= float(value) <= 100 and weight > 0
+                    ]
+                    if fear_components:
+                        fear_weight = sum(weight for _, weight in fear_components)
+                        if fear_weight > 0:
+                            fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
+                            if not np.isfinite(fear_score):
+                                fear_score = np.nan
+                if pd.notna(fear_score):
+                    fear_score = int(round(float(np.clip(fear_score, 0, 100))))
+                    fear_label = "Extreme Fear" if fear_score < 20 else "Fear" if fear_score < 40 else "Neutral" if fear_score < 60 else "Greed" if fear_score < 80 else "Extreme Greed"
+                    fear_color = "#ef4444" if fear_score < 20 else "#f97316" if fear_score < 40 else "#f59e0b" if fear_score < 60 else "#84cc16" if fear_score < 80 else "#16a34a"
+                    fear_col.markdown(
+                        f'<div style="display:inline-flex;align-items:center;gap:8px;margin:0 0 2px 0;'
+                        f'padding:4px 10px;border:1px solid {fear_color};border-radius:20px;'
+                        f'color:{fear_color};font-size:13px;font-weight:750;">{fear_label.upper()}'
+                        f'<span style="color:#aeb6c2;font-weight:500;">· Market proxy</span></div>',
+                        unsafe_allow_html=True,
+                    )
+                    gauge_fig = go.Figure(go.Indicator(
+                        mode="gauge+number",
+                        value=fear_score,
+                        number={"font": {"size": 25, "color": fear_color}, "suffix": "/100"},
+                        title={"text": ""},
+                        gauge={
+                            "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 20, 40, 60, 80, 100], "ticktext": ["0", "20", "40", "60", "80", "100"], "tickfont": {"size": 9}},
+                            "bar": {"color": fear_color, "thickness": 0.22},
+                            "bgcolor": "#11151d",
+                            "borderwidth": 0,
+                            "steps": [
+                                {"range": [0, 20], "color": "#7f1d1d"},
+                                {"range": [20, 40], "color": "#c2410c"},
+                                {"range": [40, 60], "color": "#b45309"},
+                                {"range": [60, 80], "color": "#4d7c0f"},
+                                {"range": [80, 100], "color": "#047857"},
+                            ],
+                            "threshold": {"line": {"color": "#e5e7eb", "width": 2}, "thickness": 0.8, "value": fear_score},
+                        },
+                    ))
+                    gauge_fig.update_layout(template="plotly_dark", height=175, margin=dict(l=6, r=6, t=4, b=0), paper_bgcolor="rgba(0,0,0,0)")
+                    fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
+
+                else:
+                    fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
+        
+        
+        
 
             with st.expander("Sector rotation", expanded=False):
                 st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Sector rotation</div>""", unsafe_allow_html=True)
@@ -2673,90 +2943,6 @@ if active_page == "Main Dashboard":
                         st.warning("No constituent prices were returned for this micro sector.")
                 else:
                     st.warning("No usable micro-sector prices were returned. Refresh later; no sample values are shown.")
-        
-        
-        
-                with fear_col:
-                    fear_score = np.nan
-                    fear_components = []
-                    recent_rc = overview_rc.dropna(subset=["Close"]).copy()
-                    if len(recent_rc) >= 20:
-                        # RSI contribution: RSI 50 maps to neutral; 0..100 maps to the same scale.
-                        rsi_series = recent_rc["RSI 14"] if "RSI 14" in recent_rc.columns else pd.Series(dtype=float)
-                        rsi_series = pd.to_numeric(rsi_series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
-                        if rsi_series.empty:
-                            # Calculate RSI directly from the returned close series if the indicator frame lacks RSI.
-                            close_delta = pd.to_numeric(recent_rc["Close"], errors="coerce").diff()
-                            close_gain = close_delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                            close_loss = (-close_delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                            close_rs = close_gain / close_loss.replace(0, np.nan)
-                            fallback_rsi = (100 - 100 / (1 + close_rs)).replace([np.inf, -np.inf], np.nan).dropna()
-                            if not fallback_rsi.empty:
-                                rsi_series = fallback_rsi
-                        if not rsi_series.empty:
-                            fear_components.append((float(np.clip(rsi_series.iloc[-1], 0, 100)), 0.35))
-                        # Trend contribution: close vs EMA 20 and EMA 50, mapped around neutral.
-                        trend_parts = []
-                        for ema_col in ["EMA 20", "EMA 50"]:
-                            if ema_col in recent_rc.columns and pd.notna(recent_rc[ema_col].iloc[-1]) and recent_rc[ema_col].iloc[-1] != 0:
-                                gap_pct = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc[ema_col].iloc[-1]) - 1) * 100
-                                trend_parts.append(float(np.clip(50 + gap_pct * 12, 0, 100)))
-                        if trend_parts:
-                            # Price vs EMA 20/50 contributes 25% to the proxy score.
-                            fear_components.append((float(np.mean(trend_parts)), 0.25))
-                        # Medium-term momentum: 20-session return mapped around neutral.
-                        if len(recent_rc) >= 21 and recent_rc["Close"].iloc[-21] != 0:
-                            ret20 = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc["Close"].iloc[-21]) - 1) * 100
-                            fear_components.append((float(np.clip(50 + ret20 * 8, 0, 100)), 0.15))
-                        # India VIX: higher volatility tilts the proxy toward fear.
-                        vix_frame = market_data.get("India VIX", pd.DataFrame())
-                        vix_snap = quote_snapshot(vix_frame) if not vix_frame.empty else None
-                        if vix_snap:
-                            vix_value = float(vix_snap[0]["Close"])
-                            # India VIX contributes 25% to the proxy score.
-                            fear_components.append((float(np.clip(100 - vix_value * 3, 0, 100)), 0.25))
-                        # Keep only finite, valid components. Missing/invalid inputs must not turn into a fake 0/100 reading.
-                        fear_components = [
-                            (float(value), float(weight))
-                            for value, weight in fear_components
-                            if pd.notna(value) and np.isfinite(float(value)) and 0 <= float(value) <= 100 and weight > 0
-                        ]
-                        if fear_components:
-                            fear_weight = sum(weight for _, weight in fear_components)
-                            if fear_weight > 0:
-                                fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
-                                if not np.isfinite(fear_score):
-                                    fear_score = np.nan
-                    if pd.notna(fear_score):
-                        fear_score = int(round(float(np.clip(fear_score, 0, 100))))
-                        fear_label = "Extreme Fear" if fear_score < 20 else "Fear" if fear_score < 40 else "Neutral" if fear_score < 60 else "Greed" if fear_score < 80 else "Extreme Greed"
-                        fear_color = "#ef4444" if fear_score < 20 else "#f97316" if fear_score < 40 else "#f59e0b" if fear_score < 60 else "#84cc16" if fear_score < 80 else "#16a34a"
-                        gauge_fig = go.Figure(go.Indicator(
-                            mode="gauge+number",
-                            value=fear_score,
-                            number={"font": {"size": 30, "color": fear_color}, "suffix": "/100"},
-                            title={"text": "Fear & Greed<br><span style='font-size:11px;color:#aeb6c2'>Market proxy</span>", "font": {"size": 15}},
-                            gauge={
-                                "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 20, 40, 60, 80, 100], "ticktext": ["0", "20", "40", "60", "80", "100"], "tickfont": {"size": 9}},
-                                "bar": {"color": fear_color, "thickness": 0.22},
-                                "bgcolor": "#11151d",
-                                "borderwidth": 0,
-                                "steps": [
-                                    {"range": [0, 20], "color": "#7f1d1d"},
-                                    {"range": [20, 40], "color": "#c2410c"},
-                                    {"range": [40, 60], "color": "#b45309"},
-                                    {"range": [60, 80], "color": "#4d7c0f"},
-                                    {"range": [80, 100], "color": "#047857"},
-                                ],
-                                "threshold": {"line": {"color": "#e5e7eb", "width": 2}, "thickness": 0.8, "value": fear_score},
-                            },
-                        ))
-                        gauge_fig.update_layout(template="plotly_dark", height=250, margin=dict(l=8,r=8,t=48,b=8), paper_bgcolor="rgba(0,0,0,0)")
-                        fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
-                        fear_col.markdown(f'<div style="text-align:center;font-weight:700;color:{fear_color};font-size:16px;margin-top:-8px;">{fear_label}</div>', unsafe_allow_html=True)
-                        # Explanatory caption removed to save vertical space.
-                    else:
-                        fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
         
         
         
