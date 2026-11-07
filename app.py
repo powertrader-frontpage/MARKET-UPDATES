@@ -2081,6 +2081,57 @@ if active_page == "Main Dashboard":
             regime_cols[3].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {weekly_ema_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY · Weekly EMA 200 gap</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{weekly_ema_color};">{weekly_gap_text}</div><div style="font-size:12px;color:#aeb6c2;">Close {weekly_close_text} · EMA {weekly_ema_text}</div><div style="font-size:12px;color:{weekly_ema_color};margin-top:4px;">{weekly_subtext}</div></div>', unsafe_allow_html=True)
             nifty_pcr_text = f"{nifty_pcr:.2f}" if pd.notna(nifty_pcr) else "—"
             regime_cols[4].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {nifty_pcr_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY 50 · PCR (OI)</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{nifty_pcr_color};">{nifty_pcr_text}</div><div style="font-size:12px;color:{nifty_pcr_color};margin-top:4px;">{nifty_pcr_status}</div><div style="font-size:11px;color:#aeb6c2;margin-top:4px;">Source: FYERS · {nifty_pcr_source_time}</div></div>', unsafe_allow_html=True)
+            # Minimal NIFTY 50 pivot strip directly below Price Trend.
+            nifty_levels_df = market_data.get("NIFTY 50", pd.DataFrame()).copy()
+            if not nifty_levels_df.empty and {"Date", "High", "Low", "Close"}.issubset(nifty_levels_df.columns):
+                # Normalize source timestamps to IST and use the latest completed session
+                # strictly before today. Never use a partial current-day candle.
+                nifty_levels_df["_pivot_date_ist"] = (
+                    pd.to_datetime(nifty_levels_df["Date"], errors="coerce", utc=True)
+                    .dt.tz_convert("Asia/Kolkata")
+                )
+                for _col in ["High", "Low", "Close"]:
+                    nifty_levels_df[_col] = pd.to_numeric(nifty_levels_df[_col], errors="coerce")
+                nifty_levels_df = nifty_levels_df.dropna(subset=["_pivot_date_ist", "High", "Low", "Close"])
+                nifty_today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+                nifty_levels_df["_pivot_session"] = nifty_levels_df["_pivot_date_ist"].dt.date
+                completed_sessions = nifty_levels_df[nifty_levels_df["_pivot_session"] < nifty_today]
+                if not completed_sessions.empty:
+                    nifty_pivot_row = completed_sessions.sort_values("_pivot_date_ist").iloc[-1]
+                    nifty_pivot_date = nifty_pivot_row["_pivot_session"]
+                    nifty_pivot_age = (nifty_today - nifty_pivot_date).days
+                    if nifty_pivot_age <= 7:
+                        nifty_ph = float(nifty_pivot_row["High"])
+                        nifty_pl = float(nifty_pivot_row["Low"])
+                        nifty_pc = float(nifty_pivot_row["Close"])
+                        nifty_p = (nifty_ph + nifty_pl + nifty_pc) / 3
+                        nifty_s1, nifty_r1 = 2 * nifty_p - nifty_ph, 2 * nifty_p - nifty_pl
+                        nifty_s2, nifty_r2 = nifty_p - (nifty_ph - nifty_pl), nifty_p + (nifty_ph - nifty_pl)
+                        st.markdown(
+                            f'<div style="font-size:12px;font-weight:700;color:#cbd5e1;margin:5px 0 6px;">NIFTY 50 · QUICK SUPPORT / RESISTANCE '
+                            f'<span style="font-size:10px;font-weight:400;color:#94a3b8;">Pivot estimates · ref. {nifty_pivot_date:%d %b %Y} · previous completed session</span></div>',
+                            unsafe_allow_html=True,
+                        )
+                        nifty_level_cols = st.columns(5, gap="small")
+                        for level_col, level_name, level_value, level_color in zip(
+                            nifty_level_cols,
+                            ["S2", "S1", "Pivot", "R1", "R2"],
+                            [nifty_s2, nifty_s1, nifty_p, nifty_r1, nifty_r2],
+                            ["#4ade80", "#22c55e", "#f59e0b", "#fb7185", "#ef4444"],
+                        ):
+                            level_col.markdown(
+                                f'<div style="border:1px solid #343a46;border-top:2px solid {level_color};border-radius:7px;'
+                                f'padding:9px 4px;text-align:center;background:rgba(15,23,42,.42);min-height:62px;">'
+                                f'<div style="font-size:clamp(11px,1.2vw,13px);font-weight:650;color:#aeb6c2;margin-bottom:5px;">{level_name}</div>'
+                                f'<div style="font-size:clamp(15px,2vw,19px);font-weight:800;line-height:1.2;color:{level_color};white-space:nowrap;">{level_value:,.2f}</div></div>',
+                                unsafe_allow_html=True,
+                            )
+                        st.caption("Classic pivot estimates for information only; not guaranteed price levels.")
+                    else:
+                        st.caption(f"NIFTY 50 pivot levels hidden: latest completed-session data is stale ({nifty_pivot_date:%d %b %Y}).")
+
+
+
             # Compact Fear & Greed proxy beside the existing price trend chart.
             # EMA warm-up uses up to five years of daily history; the visible range
             # still follows the user's Historical lookback selection.
@@ -2207,55 +2258,89 @@ if active_page == "Main Dashboard":
                     + (f" · {trend_history_error}" if trend_history_error else "")
                 )
 
-            # Minimal NIFTY 50 pivot strip directly below Price Trend.
-            nifty_levels_df = market_data.get("NIFTY 50", pd.DataFrame()).copy()
-            if not nifty_levels_df.empty and {"Date", "High", "Low", "Close"}.issubset(nifty_levels_df.columns):
-                # Normalize source timestamps to IST and use the latest completed session
-                # strictly before today. Never use a partial current-day candle.
-                nifty_levels_df["_pivot_date_ist"] = (
-                    pd.to_datetime(nifty_levels_df["Date"], errors="coerce", utc=True)
-                    .dt.tz_convert("Asia/Kolkata")
-                )
-                for _col in ["High", "Low", "Close"]:
-                    nifty_levels_df[_col] = pd.to_numeric(nifty_levels_df[_col], errors="coerce")
-                nifty_levels_df = nifty_levels_df.dropna(subset=["_pivot_date_ist", "High", "Low", "Close"])
-                nifty_today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-                nifty_levels_df["_pivot_session"] = nifty_levels_df["_pivot_date_ist"].dt.date
-                completed_sessions = nifty_levels_df[nifty_levels_df["_pivot_session"] < nifty_today]
-                if not completed_sessions.empty:
-                    nifty_pivot_row = completed_sessions.sort_values("_pivot_date_ist").iloc[-1]
-                    nifty_pivot_date = nifty_pivot_row["_pivot_session"]
-                    nifty_pivot_age = (nifty_today - nifty_pivot_date).days
-                    if nifty_pivot_age <= 7:
-                        nifty_ph = float(nifty_pivot_row["High"])
-                        nifty_pl = float(nifty_pivot_row["Low"])
-                        nifty_pc = float(nifty_pivot_row["Close"])
-                        nifty_p = (nifty_ph + nifty_pl + nifty_pc) / 3
-                        nifty_s1, nifty_r1 = 2 * nifty_p - nifty_ph, 2 * nifty_p - nifty_pl
-                        nifty_s2, nifty_r2 = nifty_p - (nifty_ph - nifty_pl), nifty_p + (nifty_ph - nifty_pl)
-                        st.markdown(
-                            f'<div style="font-size:12px;font-weight:700;color:#cbd5e1;margin:5px 0 6px;">NIFTY 50 · QUICK SUPPORT / RESISTANCE '
-                            f'<span style="font-size:10px;font-weight:400;color:#94a3b8;">Pivot estimates · ref. {nifty_pivot_date:%d %b %Y} · previous completed session</span></div>',
-                            unsafe_allow_html=True,
-                        )
-                        nifty_level_cols = st.columns(5, gap="small")
-                        for level_col, level_name, level_value, level_color in zip(
-                            nifty_level_cols,
-                            ["S2", "S1", "Pivot", "R1", "R2"],
-                            [nifty_s2, nifty_s1, nifty_p, nifty_r1, nifty_r2],
-                            ["#4ade80", "#22c55e", "#f59e0b", "#fb7185", "#ef4444"],
-                        ):
-                            level_col.markdown(
-                                f'<div style="border:1px solid #343a46;border-top:2px solid {level_color};border-radius:7px;'
-                                f'padding:9px 4px;text-align:center;background:rgba(15,23,42,.42);min-height:62px;">'
-                                f'<div style="font-size:clamp(11px,1.2vw,13px);font-weight:650;color:#aeb6c2;margin-bottom:5px;">{level_name}</div>'
-                                f'<div style="font-size:clamp(15px,2vw,19px);font-weight:800;line-height:1.2;color:{level_color};white-space:nowrap;">{level_value:,.2f}</div></div>',
-                                unsafe_allow_html=True,
-                            )
-                        st.caption("Classic pivot estimates for information only; not guaranteed price levels.")
-                    else:
-                        st.caption(f"NIFTY 50 pivot levels hidden: latest completed-session data is stale ({nifty_pivot_date:%d %b %Y}).")
-
+            fear_col = st.container()
+            with fear_col:
+                st.markdown("#### Fear & Greed")
+                fear_score = np.nan
+                fear_components = []
+                recent_rc = overview_rc.dropna(subset=["Close"]).copy()
+                if len(recent_rc) >= 20:
+                    # RSI contribution: RSI 50 maps to neutral; 0..100 maps to the same scale.
+                    rsi_series = recent_rc["RSI 14"] if "RSI 14" in recent_rc.columns else pd.Series(dtype=float)
+                    rsi_series = pd.to_numeric(rsi_series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+                    if rsi_series.empty:
+                        # Calculate RSI directly from the returned close series if the indicator frame lacks RSI.
+                        close_delta = pd.to_numeric(recent_rc["Close"], errors="coerce").diff()
+                        close_gain = close_delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                        close_loss = (-close_delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                        close_rs = close_gain / close_loss.replace(0, np.nan)
+                        fallback_rsi = (100 - 100 / (1 + close_rs)).replace([np.inf, -np.inf], np.nan).dropna()
+                        if not fallback_rsi.empty:
+                            rsi_series = fallback_rsi
+                    if not rsi_series.empty:
+                        fear_components.append((float(np.clip(rsi_series.iloc[-1], 0, 100)), 0.35))
+                    # Trend contribution: close vs EMA 20 and EMA 50, mapped around neutral.
+                    trend_parts = []
+                    for ema_col in ["EMA 20", "EMA 50"]:
+                        if ema_col in recent_rc.columns and pd.notna(recent_rc[ema_col].iloc[-1]) and recent_rc[ema_col].iloc[-1] != 0:
+                            gap_pct = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc[ema_col].iloc[-1]) - 1) * 100
+                            trend_parts.append(float(np.clip(50 + gap_pct * 12, 0, 100)))
+                    if trend_parts:
+                        # Price vs EMA 20/50 contributes 25% to the proxy score.
+                        fear_components.append((float(np.mean(trend_parts)), 0.25))
+                    # Medium-term momentum: 20-session return mapped around neutral.
+                    if len(recent_rc) >= 21 and recent_rc["Close"].iloc[-21] != 0:
+                        ret20 = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc["Close"].iloc[-21]) - 1) * 100
+                        fear_components.append((float(np.clip(50 + ret20 * 8, 0, 100)), 0.15))
+                    # India VIX: higher volatility tilts the proxy toward fear.
+                    vix_frame = market_data.get("India VIX", pd.DataFrame())
+                    vix_snap = quote_snapshot(vix_frame) if not vix_frame.empty else None
+                    if vix_snap:
+                        vix_value = float(vix_snap[0]["Close"])
+                        # India VIX contributes 25% to the proxy score.
+                        fear_components.append((float(np.clip(100 - vix_value * 3, 0, 100)), 0.25))
+                    # Keep only finite, valid components. Missing/invalid inputs must not turn into a fake 0/100 reading.
+                    fear_components = [
+                        (float(value), float(weight))
+                        for value, weight in fear_components
+                        if pd.notna(value) and np.isfinite(float(value)) and 0 <= float(value) <= 100 and weight > 0
+                    ]
+                    if fear_components:
+                        fear_weight = sum(weight for _, weight in fear_components)
+                        if fear_weight > 0:
+                            fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
+                            if not np.isfinite(fear_score):
+                                fear_score = np.nan
+                if pd.notna(fear_score):
+                    fear_score = int(round(float(np.clip(fear_score, 0, 100))))
+                    fear_label = "Extreme Fear" if fear_score < 20 else "Fear" if fear_score < 40 else "Neutral" if fear_score < 60 else "Greed" if fear_score < 80 else "Extreme Greed"
+                    fear_color = "#ef4444" if fear_score < 20 else "#f97316" if fear_score < 40 else "#f59e0b" if fear_score < 60 else "#84cc16" if fear_score < 80 else "#16a34a"
+                    fear_col.markdown(
+                        f"""
+                        <div style="border:1px solid #343a46;border-radius:12px;padding:10px 14px;margin:4px 0 8px;background:#11151d;">
+                          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                            <div>
+                              <div style="font-size:12px;color:#aeb6c2;">Market proxy</div>
+                              <div style="font-size:22px;font-weight:800;color:{fear_color};">{fear_score}/100</div>
+                              <div style="font-size:13px;font-weight:700;color:{fear_color};">{fear_label}</div>
+                            </div>
+                            <div style="flex:1;max-width:420px;">
+                              <div style="height:12px;border-radius:999px;background:linear-gradient(90deg,#7f1d1d 0%,#c2410c 25%,#b45309 50%,#4d7c0f 75%,#047857 100%);position:relative;">
+                                <div style="position:absolute;left:calc({fear_score}% - 2px);top:-5px;width:4px;height:22px;border-radius:3px;background:#ffffff;box-shadow:0 0 4px #000;"></div>
+                              </div>
+                              <div style="display:flex;justify-content:space-between;color:#aeb6c2;font-size:10px;margin-top:5px;"><span>Fear</span><span>Neutral</span><span>Greed</span></div>
+                            </div>
+                          </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    # Compact horizontal Fear & Greed meter avoids a tall chart on mobile.
+                else:
+                    fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
+        
+        
+        
 
             with st.expander("Sector rotation", expanded=False):
                 st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Sector rotation</div>""", unsafe_allow_html=True)
@@ -2849,89 +2934,6 @@ if active_page == "Main Dashboard":
                         st.warning("No constituent prices were returned for this micro sector.")
                 else:
                     st.warning("No usable micro-sector prices were returned. Refresh later; no sample values are shown.")
-        
-        
-        
-            fear_col = st.container()
-            with fear_col:
-                st.markdown("#### Fear & Greed")
-                fear_score = np.nan
-                fear_components = []
-                recent_rc = overview_rc.dropna(subset=["Close"]).copy()
-                if len(recent_rc) >= 20:
-                    # RSI contribution: RSI 50 maps to neutral; 0..100 maps to the same scale.
-                    rsi_series = recent_rc["RSI 14"] if "RSI 14" in recent_rc.columns else pd.Series(dtype=float)
-                    rsi_series = pd.to_numeric(rsi_series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
-                    if rsi_series.empty:
-                        # Calculate RSI directly from the returned close series if the indicator frame lacks RSI.
-                        close_delta = pd.to_numeric(recent_rc["Close"], errors="coerce").diff()
-                        close_gain = close_delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                        close_loss = (-close_delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                        close_rs = close_gain / close_loss.replace(0, np.nan)
-                        fallback_rsi = (100 - 100 / (1 + close_rs)).replace([np.inf, -np.inf], np.nan).dropna()
-                        if not fallback_rsi.empty:
-                            rsi_series = fallback_rsi
-                    if not rsi_series.empty:
-                        fear_components.append((float(np.clip(rsi_series.iloc[-1], 0, 100)), 0.35))
-                    # Trend contribution: close vs EMA 20 and EMA 50, mapped around neutral.
-                    trend_parts = []
-                    for ema_col in ["EMA 20", "EMA 50"]:
-                        if ema_col in recent_rc.columns and pd.notna(recent_rc[ema_col].iloc[-1]) and recent_rc[ema_col].iloc[-1] != 0:
-                            gap_pct = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc[ema_col].iloc[-1]) - 1) * 100
-                            trend_parts.append(float(np.clip(50 + gap_pct * 12, 0, 100)))
-                    if trend_parts:
-                        # Price vs EMA 20/50 contributes 25% to the proxy score.
-                        fear_components.append((float(np.mean(trend_parts)), 0.25))
-                    # Medium-term momentum: 20-session return mapped around neutral.
-                    if len(recent_rc) >= 21 and recent_rc["Close"].iloc[-21] != 0:
-                        ret20 = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc["Close"].iloc[-21]) - 1) * 100
-                        fear_components.append((float(np.clip(50 + ret20 * 8, 0, 100)), 0.15))
-                    # India VIX: higher volatility tilts the proxy toward fear.
-                    vix_frame = market_data.get("India VIX", pd.DataFrame())
-                    vix_snap = quote_snapshot(vix_frame) if not vix_frame.empty else None
-                    if vix_snap:
-                        vix_value = float(vix_snap[0]["Close"])
-                        # India VIX contributes 25% to the proxy score.
-                        fear_components.append((float(np.clip(100 - vix_value * 3, 0, 100)), 0.25))
-                    # Keep only finite, valid components. Missing/invalid inputs must not turn into a fake 0/100 reading.
-                    fear_components = [
-                        (float(value), float(weight))
-                        for value, weight in fear_components
-                        if pd.notna(value) and np.isfinite(float(value)) and 0 <= float(value) <= 100 and weight > 0
-                    ]
-                    if fear_components:
-                        fear_weight = sum(weight for _, weight in fear_components)
-                        if fear_weight > 0:
-                            fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
-                            if not np.isfinite(fear_score):
-                                fear_score = np.nan
-                if pd.notna(fear_score):
-                    fear_score = int(round(float(np.clip(fear_score, 0, 100))))
-                    fear_label = "Extreme Fear" if fear_score < 20 else "Fear" if fear_score < 40 else "Neutral" if fear_score < 60 else "Greed" if fear_score < 80 else "Extreme Greed"
-                    fear_color = "#ef4444" if fear_score < 20 else "#f97316" if fear_score < 40 else "#f59e0b" if fear_score < 60 else "#84cc16" if fear_score < 80 else "#16a34a"
-                    fear_col.markdown(
-                        f"""
-                        <div style="border:1px solid #343a46;border-radius:12px;padding:10px 14px;margin:4px 0 8px;background:#11151d;">
-                          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
-                            <div>
-                              <div style="font-size:12px;color:#aeb6c2;">Market proxy</div>
-                              <div style="font-size:22px;font-weight:800;color:{fear_color};">{fear_score}/100</div>
-                              <div style="font-size:13px;font-weight:700;color:{fear_color};">{fear_label}</div>
-                            </div>
-                            <div style="flex:1;max-width:420px;">
-                              <div style="height:12px;border-radius:999px;background:linear-gradient(90deg,#7f1d1d 0%,#c2410c 25%,#b45309 50%,#4d7c0f 75%,#047857 100%);position:relative;">
-                                <div style="position:absolute;left:calc({fear_score}% - 2px);top:-5px;width:4px;height:22px;border-radius:3px;background:#ffffff;box-shadow:0 0 4px #000;"></div>
-                              </div>
-                              <div style="display:flex;justify-content:space-between;color:#aeb6c2;font-size:10px;margin-top:5px;"><span>Fear</span><span>Neutral</span><span>Greed</span></div>
-                            </div>
-                          </div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-                    # Compact horizontal Fear & Greed meter avoids a tall chart on mobile.
-                else:
-                    fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
         
         
         
