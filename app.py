@@ -1369,7 +1369,6 @@ if active_page == "Main Dashboard":
                 headline_dates.append(f"{_name}: {_date.iloc[-1]:%d %b} ({_source}){_freshness}")
         else:
             headline_dates.append(f"{_name}: unavailable")
-    st.caption("Actual source candle dates · " + "  |  ".join(headline_dates))
 
 if active_page == "Main Dashboard":
     # Daily global-cue sentiment panel is intentionally placed immediately above Market Regime.
@@ -2252,11 +2251,6 @@ if active_page == "Main Dashboard":
                     config={"displaylogo": False},
                     key=f"overview_regime_trend_chart_{trend_timeframe.lower()}",
                 )
-                st.caption(
-                    f"{trend_timeframe} line chart · Active overlays: {', '.join(selected_emas) if selected_emas else 'none'} · "
-                    f"Visible range: {period}"
-                    + (f" · {trend_history_error}" if trend_history_error else "")
-                )
 
             fear_col = st.container()
             with fear_col:
@@ -2315,11 +2309,18 @@ if active_page == "Main Dashboard":
                     fear_score = int(round(float(np.clip(fear_score, 0, 100))))
                     fear_label = "Extreme Fear" if fear_score < 20 else "Fear" if fear_score < 40 else "Neutral" if fear_score < 60 else "Greed" if fear_score < 80 else "Extreme Greed"
                     fear_color = "#ef4444" if fear_score < 20 else "#f97316" if fear_score < 40 else "#f59e0b" if fear_score < 60 else "#84cc16" if fear_score < 80 else "#16a34a"
+                    fear_col.markdown(
+                        f'<div style="display:inline-flex;align-items:center;gap:8px;margin:0 0 2px 0;'
+                        f'padding:4px 10px;border:1px solid {fear_color};border-radius:20px;'
+                        f'color:{fear_color};font-size:13px;font-weight:750;">{fear_label.upper()}'
+                        f'<span style="color:#aeb6c2;font-weight:500;">· Market proxy</span></div>',
+                        unsafe_allow_html=True,
+                    )
                     gauge_fig = go.Figure(go.Indicator(
                         mode="gauge+number",
                         value=fear_score,
-                        number={"font": {"size": 30, "color": fear_color}, "suffix": "/100"},
-                        title={"text": f"Fear & Greed<br><span style='font-size:11px;color:#aeb6c2'>Market proxy · {fear_label}</span>", "font": {"size": 15}},
+                        number={"font": {"size": 25, "color": fear_color}, "suffix": "/100"},
+                        title={"text": ""},
                         gauge={
                             "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 20, 40, 60, 80, 100], "ticktext": ["0", "20", "40", "60", "80", "100"], "tickfont": {"size": 9}},
                             "bar": {"color": fear_color, "thickness": 0.22},
@@ -2335,7 +2336,7 @@ if active_page == "Main Dashboard":
                             "threshold": {"line": {"color": "#e5e7eb", "width": 2}, "thickness": 0.8, "value": fear_score},
                         },
                     ))
-                    gauge_fig.update_layout(template="plotly_dark", height=220, margin=dict(l=8, r=8, t=42, b=4), paper_bgcolor="rgba(0,0,0,0)")
+                    gauge_fig.update_layout(template="plotly_dark", height=175, margin=dict(l=6, r=6, t=4, b=0), paper_bgcolor="rgba(0,0,0,0)")
                     fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
 
                 else:
