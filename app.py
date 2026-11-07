@@ -1308,6 +1308,127 @@ if active_page == "Main Dashboard":
     st.caption("Actual source candle dates · " + "  |  ".join(headline_dates))
 
 if active_page == "Main Dashboard":
+    # Compact market-news ticker and weekly sector leadership snapshot.
+    st.markdown("""
+    <style>
+    .mit-news-wrap{overflow:hidden;white-space:nowrap;border:1px solid #303846;border-left:4px solid #22c55e;border-radius:9px;background:#101820;padding:10px 0;margin:0 0 12px}
+    .mit-news-track{display:inline-block;padding-left:100%;animation:mit-news-scroll 85s linear infinite}
+    .mit-news-track:hover{animation-play-state:paused}
+    .mit-news-item{display:inline-block;margin-right:42px;color:#e5edf5;font-size:14px}
+    .mit-news-item b{color:#22c55e;margin-right:8px}
+    .mit-news-item a{color:#e5edf5;text-decoration:none}
+    .mit-news-item a:hover{color:#38bdf8;text-decoration:underline}
+    @keyframes mit-news-scroll{0%{transform:translateX(0)}100%{transform:translateX(-100%)}}
+    @media(prefers-reduced-motion:reduce){.mit-news-track{animation:none;padding-left:10px;white-space:normal}}
+    </style>
+    """, unsafe_allow_html=True)
+    try:
+        _market_news, _market_news_error = get_news_rss(
+            "India stock market NSE BSE Nifty Sensex stocks business", limit=15
+        )
+        if not _market_news.empty:
+            _news_items = []
+            for _, _news in _market_news.iterrows():
+                _headline = html.escape(str(_news.get("Headline", "")))
+                _publisher = html.escape(str(_news.get("Publisher", "Market news")))
+                _url = html.escape(str(_news.get("Source link", "")), quote=True)
+                if _headline and _url:
+                    _news_items.append(
+                        f'<span class="mit-news-item"><b>{_publisher}</b>'
+                        f'<a href="{_url}" target="_blank" rel="noopener">{_headline}</a></span>'
+                    )
+            if _news_items:
+                _ticker_content = "".join(_news_items)
+                st.markdown(
+                    '<div class="mit-news-wrap"><div class="mit-news-track">'
+                    + _ticker_content + _ticker_content +
+                    '</div></div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.caption("Market news ticker temporarily unavailable; headlines will appear when the news feed responds.")
+    except Exception:
+        st.caption("Market news ticker temporarily unavailable.")
+
+    # Weekly sector snapshot: use the same relative-strength rotation framework as the
+    # Sector Leadership page. "Leading" = positive 1M relative strength and momentum;
+    # "Improving" = negative 1M relative strength but positive short-term momentum.
+    @st.cache_data(ttl=900, show_spinner=False)
+    def _main_dashboard_sector_snapshot():
+        nifty_df, _ = get_history("^NSEI", "3mo", "1d")
+        if nifty_df.empty or len(nifty_df["Close"].dropna()) < 27:
+            return pd.DataFrame()
+        nifty_close = nifty_df["Close"].dropna()
+        nifty_week = (float(nifty_close.iloc[-1]) / float(nifty_close.iloc[-6]) - 1) * 100
+        nifty_month = (float(nifty_close.iloc[-1]) / float(nifty_close.iloc[-22]) - 1) * 100
+        nifty_old_week = (float(nifty_close.iloc[-6]) / float(nifty_close.iloc[-11]) - 1) * 100
+        nifty_old_month = (float(nifty_close.iloc[-6]) / float(nifty_close.iloc[-27]) - 1) * 100
+        rows = []
+        for _sector, _ticker in SECTOR_TICKERS.items():
+            _sector_df, _ = get_history(_ticker, "3mo", "1d")
+            if _sector_df.empty:
+                continue
+            _close = _sector_df["Close"].dropna()
+            if len(_close) < 27:
+                continue
+            _week = (float(_close.iloc[-1]) / float(_close.iloc[-6]) - 1) * 100
+            _month = (float(_close.iloc[-1]) / float(_close.iloc[-22]) - 1) * 100
+            _old_week = (float(_close.iloc[-6]) / float(_close.iloc[-11]) - 1) * 100
+            _old_month = (float(_close.iloc[-6]) / float(_close.iloc[-27]) - 1) * 100
+            _relative_week = _week - nifty_week
+            _relative_month = _month - nifty_month
+            _old_relative_week = _old_week - nifty_old_week
+            _old_relative_month = _old_month - nifty_old_month
+            _momentum = _relative_week - _relative_month
+            _old_momentum = _old_relative_week - _old_relative_month
+            _score = 0.30 * _relative_week + 0.40 * _relative_month
+            _zone = ("Leading" if _relative_month >= 0 and _momentum >= 0 else
+                     "Improving" if _relative_month < 0 and _momentum >= 0 else
+                     "Weakening" if _relative_month >= 0 else "Lagging")
+            rows.append({
+                "Sector": _sector, "Zone": _zone,
+                "Weekly relative strength (pp)": _relative_week,
+                "Momentum improvement (pp)": _momentum - _old_momentum,
+                "Score": _score,
+            })
+        return pd.DataFrame(rows)
+
+    try:
+        _sector_snapshot = _main_dashboard_sector_snapshot()
+        if not _sector_snapshot.empty:
+            _leading_two = (_sector_snapshot[_sector_snapshot["Zone"] == "Leading"]
+                            .sort_values("Score", ascending=False).head(2))
+            _improving_two = (_sector_snapshot[_sector_snapshot["Zone"] == "Improving"]
+                              .sort_values("Momentum improvement (pp)", ascending=False).head(2))
+            _sector_cols = st.columns(2)
+            with _sector_cols[0]:
+                st.markdown("**🏆 Top 2 leading sectors**")
+                if _leading_two.empty:
+                    st.caption("No sectors currently meet the Leading criteria.")
+                for _, _row in _leading_two.iterrows():
+                    st.markdown(
+                        f'<div style="border:1px solid #284b3c;border-left:4px solid #22c55e;border-radius:8px;padding:8px 10px;margin-bottom:6px;">'
+                        f'<b>{html.escape(str(_row["Sector"]))}</b> '
+                        f'<span style="color:#22c55e;">{_row["Weekly relative strength (pp)"]:+.2f} pp vs NIFTY</span></div>',
+                        unsafe_allow_html=True,
+                    )
+            with _sector_cols[1]:
+                st.markdown("**📈 Top 2 improving sectors this week**")
+                if _improving_two.empty:
+                    st.caption("No sectors currently meet the Improving criteria.")
+                for _, _row in _improving_two.iterrows():
+                    st.markdown(
+                        f'<div style="border:1px solid #29405d;border-left:4px solid #60a5fa;border-radius:8px;padding:8px 10px;margin-bottom:6px;">'
+                        f'<b>{html.escape(str(_row["Sector"]))}</b> '
+                        f'<span style="color:#60a5fa;">Momentum change {_row["Momentum improvement (pp)"]:+.2f} pp</span></div>',
+                        unsafe_allow_html=True,
+                    )
+            st.caption("Sector zones and weekly momentum are calculated from daily sector-index closes relative to NIFTY 50. Data may be delayed.")
+        else:
+            st.caption("Weekly sector leadership snapshot unavailable until sufficient daily history is returned.")
+    except Exception:
+        st.caption("Weekly sector leadership snapshot temporarily unavailable.")
+
     # Daily global-cue sentiment panel is intentionally placed immediately above Market Regime.
     st.subheader("Today's Market Direction · Global Sentiment")
     # Hidden sentiment explanation retained here in code; display the main heading and sentiment output.
