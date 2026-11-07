@@ -2840,89 +2840,89 @@ if active_page == "Main Dashboard":
         
         
         
-                fear_col = st.container()
-                with fear_col:
-                    st.markdown("#### Fear & Greed")
-                    fear_score = np.nan
-                    fear_components = []
-                    recent_rc = overview_rc.dropna(subset=["Close"]).copy()
-                    if len(recent_rc) >= 20:
-                        # RSI contribution: RSI 50 maps to neutral; 0..100 maps to the same scale.
-                        rsi_series = recent_rc["RSI 14"] if "RSI 14" in recent_rc.columns else pd.Series(dtype=float)
-                        rsi_series = pd.to_numeric(rsi_series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
-                        if rsi_series.empty:
-                            # Calculate RSI directly from the returned close series if the indicator frame lacks RSI.
-                            close_delta = pd.to_numeric(recent_rc["Close"], errors="coerce").diff()
-                            close_gain = close_delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                            close_loss = (-close_delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-                            close_rs = close_gain / close_loss.replace(0, np.nan)
-                            fallback_rsi = (100 - 100 / (1 + close_rs)).replace([np.inf, -np.inf], np.nan).dropna()
-                            if not fallback_rsi.empty:
-                                rsi_series = fallback_rsi
-                        if not rsi_series.empty:
-                            fear_components.append((float(np.clip(rsi_series.iloc[-1], 0, 100)), 0.35))
-                        # Trend contribution: close vs EMA 20 and EMA 50, mapped around neutral.
-                        trend_parts = []
-                        for ema_col in ["EMA 20", "EMA 50"]:
-                            if ema_col in recent_rc.columns and pd.notna(recent_rc[ema_col].iloc[-1]) and recent_rc[ema_col].iloc[-1] != 0:
-                                gap_pct = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc[ema_col].iloc[-1]) - 1) * 100
-                                trend_parts.append(float(np.clip(50 + gap_pct * 12, 0, 100)))
-                        if trend_parts:
-                            # Price vs EMA 20/50 contributes 25% to the proxy score.
-                            fear_components.append((float(np.mean(trend_parts)), 0.25))
-                        # Medium-term momentum: 20-session return mapped around neutral.
-                        if len(recent_rc) >= 21 and recent_rc["Close"].iloc[-21] != 0:
-                            ret20 = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc["Close"].iloc[-21]) - 1) * 100
-                            fear_components.append((float(np.clip(50 + ret20 * 8, 0, 100)), 0.15))
-                        # India VIX: higher volatility tilts the proxy toward fear.
-                        vix_frame = market_data.get("India VIX", pd.DataFrame())
-                        vix_snap = quote_snapshot(vix_frame) if not vix_frame.empty else None
-                        if vix_snap:
-                            vix_value = float(vix_snap[0]["Close"])
-                            # India VIX contributes 25% to the proxy score.
-                            fear_components.append((float(np.clip(100 - vix_value * 3, 0, 100)), 0.25))
-                        # Keep only finite, valid components. Missing/invalid inputs must not turn into a fake 0/100 reading.
-                        fear_components = [
-                            (float(value), float(weight))
-                            for value, weight in fear_components
-                            if pd.notna(value) and np.isfinite(float(value)) and 0 <= float(value) <= 100 and weight > 0
-                        ]
-                        if fear_components:
-                            fear_weight = sum(weight for _, weight in fear_components)
-                            if fear_weight > 0:
-                                fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
-                                if not np.isfinite(fear_score):
-                                    fear_score = np.nan
-                    if pd.notna(fear_score):
-                        fear_score = int(round(float(np.clip(fear_score, 0, 100))))
-                        fear_label = "Extreme Fear" if fear_score < 20 else "Fear" if fear_score < 40 else "Neutral" if fear_score < 60 else "Greed" if fear_score < 80 else "Extreme Greed"
-                        fear_color = "#ef4444" if fear_score < 20 else "#f97316" if fear_score < 40 else "#f59e0b" if fear_score < 60 else "#84cc16" if fear_score < 80 else "#16a34a"
-                        gauge_fig = go.Figure(go.Indicator(
-                            mode="gauge+number",
-                            value=fear_score,
-                            number={"font": {"size": 30, "color": fear_color}, "suffix": "/100"},
-                            title={"text": "Fear & Greed<br><span style='font-size:11px;color:#aeb6c2'>Market proxy</span>", "font": {"size": 15}},
-                            gauge={
-                                "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 20, 40, 60, 80, 100], "ticktext": ["0", "20", "40", "60", "80", "100"], "tickfont": {"size": 9}},
-                                "bar": {"color": fear_color, "thickness": 0.22},
-                                "bgcolor": "#11151d",
-                                "borderwidth": 0,
-                                "steps": [
-                                    {"range": [0, 20], "color": "#7f1d1d"},
-                                    {"range": [20, 40], "color": "#c2410c"},
-                                    {"range": [40, 60], "color": "#b45309"},
-                                    {"range": [60, 80], "color": "#4d7c0f"},
-                                    {"range": [80, 100], "color": "#047857"},
-                                ],
-                                "threshold": {"line": {"color": "#e5e7eb", "width": 2}, "thickness": 0.8, "value": fear_score},
-                            },
-                        ))
-                        gauge_fig.update_layout(template="plotly_dark", height=250, margin=dict(l=8,r=8,t=48,b=8), paper_bgcolor="rgba(0,0,0,0)")
-                        fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
-                        fear_col.markdown(f'<div style="text-align:center;font-weight:700;color:{fear_color};font-size:16px;margin-top:-8px;">{fear_label}</div>', unsafe_allow_html=True)
-                        # Explanatory caption removed to save vertical space.
-                    else:
-                        fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
+            fear_col = st.container()
+            with fear_col:
+                st.markdown("#### Fear & Greed")
+                fear_score = np.nan
+                fear_components = []
+                recent_rc = overview_rc.dropna(subset=["Close"]).copy()
+                if len(recent_rc) >= 20:
+                    # RSI contribution: RSI 50 maps to neutral; 0..100 maps to the same scale.
+                    rsi_series = recent_rc["RSI 14"] if "RSI 14" in recent_rc.columns else pd.Series(dtype=float)
+                    rsi_series = pd.to_numeric(rsi_series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+                    if rsi_series.empty:
+                        # Calculate RSI directly from the returned close series if the indicator frame lacks RSI.
+                        close_delta = pd.to_numeric(recent_rc["Close"], errors="coerce").diff()
+                        close_gain = close_delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                        close_loss = (-close_delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+                        close_rs = close_gain / close_loss.replace(0, np.nan)
+                        fallback_rsi = (100 - 100 / (1 + close_rs)).replace([np.inf, -np.inf], np.nan).dropna()
+                        if not fallback_rsi.empty:
+                            rsi_series = fallback_rsi
+                    if not rsi_series.empty:
+                        fear_components.append((float(np.clip(rsi_series.iloc[-1], 0, 100)), 0.35))
+                    # Trend contribution: close vs EMA 20 and EMA 50, mapped around neutral.
+                    trend_parts = []
+                    for ema_col in ["EMA 20", "EMA 50"]:
+                        if ema_col in recent_rc.columns and pd.notna(recent_rc[ema_col].iloc[-1]) and recent_rc[ema_col].iloc[-1] != 0:
+                            gap_pct = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc[ema_col].iloc[-1]) - 1) * 100
+                            trend_parts.append(float(np.clip(50 + gap_pct * 12, 0, 100)))
+                    if trend_parts:
+                        # Price vs EMA 20/50 contributes 25% to the proxy score.
+                        fear_components.append((float(np.mean(trend_parts)), 0.25))
+                    # Medium-term momentum: 20-session return mapped around neutral.
+                    if len(recent_rc) >= 21 and recent_rc["Close"].iloc[-21] != 0:
+                        ret20 = (float(recent_rc["Close"].iloc[-1]) / float(recent_rc["Close"].iloc[-21]) - 1) * 100
+                        fear_components.append((float(np.clip(50 + ret20 * 8, 0, 100)), 0.15))
+                    # India VIX: higher volatility tilts the proxy toward fear.
+                    vix_frame = market_data.get("India VIX", pd.DataFrame())
+                    vix_snap = quote_snapshot(vix_frame) if not vix_frame.empty else None
+                    if vix_snap:
+                        vix_value = float(vix_snap[0]["Close"])
+                        # India VIX contributes 25% to the proxy score.
+                        fear_components.append((float(np.clip(100 - vix_value * 3, 0, 100)), 0.25))
+                    # Keep only finite, valid components. Missing/invalid inputs must not turn into a fake 0/100 reading.
+                    fear_components = [
+                        (float(value), float(weight))
+                        for value, weight in fear_components
+                        if pd.notna(value) and np.isfinite(float(value)) and 0 <= float(value) <= 100 and weight > 0
+                    ]
+                    if fear_components:
+                        fear_weight = sum(weight for _, weight in fear_components)
+                        if fear_weight > 0:
+                            fear_score = sum(value * weight for value, weight in fear_components) / fear_weight
+                            if not np.isfinite(fear_score):
+                                fear_score = np.nan
+                if pd.notna(fear_score):
+                    fear_score = int(round(float(np.clip(fear_score, 0, 100))))
+                    fear_label = "Extreme Fear" if fear_score < 20 else "Fear" if fear_score < 40 else "Neutral" if fear_score < 60 else "Greed" if fear_score < 80 else "Extreme Greed"
+                    fear_color = "#ef4444" if fear_score < 20 else "#f97316" if fear_score < 40 else "#f59e0b" if fear_score < 60 else "#84cc16" if fear_score < 80 else "#16a34a"
+                    gauge_fig = go.Figure(go.Indicator(
+                        mode="gauge+number",
+                        value=fear_score,
+                        number={"font": {"size": 30, "color": fear_color}, "suffix": "/100"},
+                        title={"text": "Fear & Greed<br><span style='font-size:11px;color:#aeb6c2'>Market proxy</span>", "font": {"size": 15}},
+                        gauge={
+                            "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 20, 40, 60, 80, 100], "ticktext": ["0", "20", "40", "60", "80", "100"], "tickfont": {"size": 9}},
+                            "bar": {"color": fear_color, "thickness": 0.22},
+                            "bgcolor": "#11151d",
+                            "borderwidth": 0,
+                            "steps": [
+                                {"range": [0, 20], "color": "#7f1d1d"},
+                                {"range": [20, 40], "color": "#c2410c"},
+                                {"range": [40, 60], "color": "#b45309"},
+                                {"range": [60, 80], "color": "#4d7c0f"},
+                                {"range": [80, 100], "color": "#047857"},
+                            ],
+                            "threshold": {"line": {"color": "#e5e7eb", "width": 2}, "thickness": 0.8, "value": fear_score},
+                        },
+                    ))
+                    gauge_fig.update_layout(template="plotly_dark", height=250, margin=dict(l=8,r=8,t=48,b=8), paper_bgcolor="rgba(0,0,0,0)")
+                    fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
+                    fear_col.markdown(f'<div style="text-align:center;font-weight:700;color:{fear_color};font-size:16px;margin-top:-8px;">{fear_label}</div>', unsafe_allow_html=True)
+                    # Explanatory caption removed to save vertical space.
+                else:
+                    fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
         
         
         
