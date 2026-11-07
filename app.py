@@ -2137,17 +2137,15 @@ if active_page == "Main Dashboard":
                 trend_dates = trend_dates.dt.tz_convert("Asia/Kolkata")
             trend_visible = trend_frame.loc[trend_dates >= trend_cutoff.tz_localize(None) if getattr(trend_dates.dt, "tz", None) is None else trend_dates >= trend_cutoff].copy()
             ema_options = ["EMA 20", "EMA 50", "EMA 100", "EMA 200"]
-            selected_emas = []
             with trend_col:
-                ema_toggle_cols = st.columns(4)
-                for _ema_col, _ema_name in zip(ema_toggle_cols, ema_options):
-                    with _ema_col:
-                        if st.toggle(
-                            _ema_name,
-                            value=_ema_name in ["EMA 20", "EMA 50"],
-                            key=f"overview_regime_trend_{_ema_name.replace(' ', '_').lower()}_{trend_timeframe.lower()}",
-                        ):
-                            selected_emas.append(_ema_name)
+                selected_emas = st.segmented_control(
+                    "EMA overlays",
+                    options=ema_options,
+                    selection_mode="multi",
+                    default=["EMA 20", "EMA 50"],
+                    key=f"overview_regime_trend_emas_{trend_timeframe.lower()}",
+                    label_visibility="collapsed",
+                ) or []
             trend_fig = go.Figure()
             # Keep this as a clean line chart: price is visually dominant and
             # EMA 20 is active by default; additional EMA overlays are optional.
