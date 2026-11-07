@@ -2149,7 +2149,7 @@ if active_page == "Main Dashboard":
                 overview_rc["EMA 33"] = pd.to_numeric(overview_rc["Close"], errors="coerce").ewm(span=33, adjust=False, min_periods=33).mean()
             trend_ema_choices = st.multiselect(
                 "Moving averages",
-                options=["EMA 20", "EMA 33", "EMA 50"],
+                options=["EMA 20", "EMA 33", "EMA 50", "EMA 100", "EMA 200"],
                 default=["EMA 20", "EMA 50"],
                 key="overview_price_trend_ema_options",
                 help="Choose which EMA lines to display on the Price Trend chart."
@@ -2158,6 +2158,8 @@ if active_page == "Main Dashboard":
                 "EMA 20": {"color": "#f59e0b", "width": 1.5},
                 "EMA 33": {"color": "#22c55e", "width": 1.8},
                 "EMA 50": {"color": "#a78bfa", "width": 1.5},
+                "EMA 100": {"color": "#f97316", "width": 1.5},
+                "EMA 200": {"color": "#ec4899", "width": 1.8},
             }
             for _ema_name in trend_ema_choices:
                 if _ema_name in overview_rc.columns:
