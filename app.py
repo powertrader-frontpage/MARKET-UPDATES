@@ -2325,7 +2325,7 @@ if active_page == "Main Dashboard":
                     gauge_fig = go.Figure(go.Indicator(
                         mode="gauge+number",
                         value=fear_score,
-                        domain={"x": [0, 1], "y": [0.16, 1]},
+                        domain={"x": [0, 1], "y": [0.08, 0.86]},
                         number={"font": {"size": 34, "color": fear_color}, "suffix": "/100"},
                         title={"text": ""},
                         gauge={
@@ -2343,7 +2343,7 @@ if active_page == "Main Dashboard":
                             "threshold": {"line": {"color": "#e5e7eb", "width": 2}, "thickness": 0.8, "value": fear_score},
                         },
                     ))
-                    gauge_fig.update_layout(template="plotly_dark", height=205, margin=dict(l=6, r=6, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)")
+                    gauge_fig.update_layout(template="plotly_dark", height=225, margin=dict(l=6, r=6, t=18, b=0), paper_bgcolor="rgba(0,0,0,0)")
                     fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
 
                 else:
