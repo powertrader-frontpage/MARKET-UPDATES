@@ -2247,9 +2247,9 @@ if active_page == "Main Dashboard":
                         ):
                             level_col.markdown(
                                 f'<div style="border:1px solid #343a46;border-top:2px solid {level_color};border-radius:7px;'
-                                f'padding:6px 5px;text-align:center;background:rgba(15,23,42,.42);">'
-                                f'<div style="font-size:10px;color:#aeb6c2;">{level_name}</div>'
-                                f'<div style="font-size:13px;font-weight:750;color:{level_color};">{level_value:,.2f}</div></div>',
+                                f'padding:9px 4px;text-align:center;background:rgba(15,23,42,.42);min-height:62px;">'
+                                f'<div style="font-size:clamp(11px,1.2vw,13px);font-weight:650;color:#aeb6c2;margin-bottom:5px;">{level_name}</div>'
+                                f'<div style="font-size:clamp(15px,2vw,19px);font-weight:800;line-height:1.2;color:{level_color};white-space:nowrap;">{level_value:,.2f}</div></div>',
                                 unsafe_allow_html=True,
                             )
                         st.caption("Classic pivot estimates for information only; not guaranteed price levels.")
