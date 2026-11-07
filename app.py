@@ -2136,22 +2136,33 @@ if active_page == "Main Dashboard":
             if getattr(trend_dates.dt, "tz", None) is not None:
                 trend_dates = trend_dates.dt.tz_convert("Asia/Kolkata")
             trend_visible = trend_frame.loc[trend_dates >= trend_cutoff.tz_localize(None) if getattr(trend_dates.dt, "tz", None) is None else trend_dates >= trend_cutoff].copy()
+            ema_options = ["EMA 20", "EMA 50", "EMA 100", "EMA 200"]
+            selected_emas = st.multiselect(
+                "EMA overlays",
+                options=ema_options,
+                default=["EMA 20"],
+                key=f"overview_regime_trend_emas_{trend_timeframe.lower()}",
+                label_visibility="collapsed",
+                placeholder="Select additional EMA lines",
+            )
             trend_fig = go.Figure()
             # Keep this as a clean line chart: price is visually dominant and
-            # each EMA is a thinner overlay. No candlesticks or point markers.
+            # EMA 20 is active by default; additional EMA overlays are optional.
             trend_fig.add_trace(go.Scatter(
                 x=trend_visible["Date"], y=trend_visible["Close"],
                 name="Close", mode="lines",
                 line=dict(color="#60a5fa", width=2.7),
                 hovertemplate="%{x|%d %b %Y}<br>Close: %{y:,.2f}<extra></extra>",
             ))
-            trend_colors = {20: "#f59e0b", 50: "#a78bfa", 100: "#22c55e", 200: "#f87171"}
-            for _ema_period in [20, 50, 100, 200]:
-                _ema_name = f"EMA {_ema_period}"
+            trend_colors = {"EMA 20": "#f59e0b", "EMA 50": "#a78bfa", "EMA 100": "#22c55e", "EMA 200": "#f87171"}
+            for _ema_name in ema_options:
+                if _ema_name not in selected_emas:
+                    continue
+                _ema_period = int(_ema_name.split()[-1])
                 trend_fig.add_trace(go.Scatter(
                     x=trend_visible["Date"], y=trend_visible[_ema_name],
                     name=_ema_name, mode="lines",
-                    line=dict(color=trend_colors[_ema_period], width=1.55),
+                    line=dict(color=trend_colors[_ema_name], width=1.55),
                     hovertemplate=f"%{{x|%d %b %Y}}<br>{_ema_name}: %{{y:,.2f}}<extra></extra>",
                 ))
             trend_fig.update_layout(
@@ -2190,7 +2201,7 @@ if active_page == "Main Dashboard":
                     key=f"overview_regime_trend_chart_{trend_timeframe.lower()}",
                 )
                 st.caption(
-                    f"{trend_timeframe} line chart · EMA 20 / 50 / 100 / 200 · "
+                    f"{trend_timeframe} line chart · Active overlays: {', '.join(selected_emas) if selected_emas else 'none'} · "
                     f"Visible range: {period}"
                     + (f" · {trend_history_error}" if trend_history_error else "")
                 )
