@@ -2917,7 +2917,7 @@ if active_page == "Main Dashboard":
                             "threshold": {"line": {"color": "#e5e7eb", "width": 2}, "thickness": 0.8, "value": fear_score},
                         },
                     ))
-                    gauge_fig.update_layout(template="plotly_dark", height=250, margin=dict(l=8,r=8,t=48,b=8), paper_bgcolor="rgba(0,0,0,0)")
+                    gauge_fig.update_layout(template="plotly_dark", height=190, margin=dict(l=4,r=4,t=34,b=2), paper_bgcolor="rgba(0,0,0,0)")
                     fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
                     fear_col.markdown(f'<div style="text-align:center;font-weight:700;color:{fear_color};font-size:16px;margin-top:-8px;">{fear_label}</div>', unsafe_allow_html=True)
                     # Explanatory caption removed to save vertical space.
