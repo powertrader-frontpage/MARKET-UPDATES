@@ -646,13 +646,15 @@ if "auth_code" in st.query_params:
         st.error("FYERS returned without an authorization code. Please retry the connection.")
         st.query_params.clear()
 
-if "fyers_access_token" in st.session_state and fyers_credentials():
-    fyers_app_id = fyers_credentials()[0]
-    # Keep the optional live-quote tool available without taking space on the main dashboard.
-    with st.expander("FYERS live market snapshot · optional", expanded=False):
+# Keep the FYERS snapshot panel visible even while disconnected or reconnecting.
+with st.expander("FYERS live market snapshot · optional", expanded=False):
+    fyers_config = fyers_credentials()
+    fyers_active_token = st.session_state.get("fyers_access_token")
+    if fyers_config and fyers_active_token:
+        fyers_app_id = fyers_config[0]
         fyers_symbols = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:INFY-EQ"]
         if st.button("Fetch FYERS live quotes", key="fyers_fetch_quotes"):
-            quote_rows, quote_error = fyers_live_quotes(fyers_app_id, st.session_state["fyers_access_token"], fyers_symbols)
+            quote_rows, quote_error = fyers_live_quotes(fyers_app_id, fyers_active_token, fyers_symbols)
             if quote_error:
                 st.warning(f"FYERS quote data unavailable: {quote_error}")
             elif not quote_rows:
@@ -674,6 +676,10 @@ if "fyers_access_token" in st.session_state and fyers_credentials():
                     })
                 st.dataframe(pd.DataFrame(normalized), use_container_width=True, hide_index=True)
                 st.caption("Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
+    elif not fyers_config:
+        st.info("Configure FYERS_APP_ID, FYERS_APP_SECRET and FYERS_REDIRECT_URI in Streamlit Secrets to enable live quotes.")
+    else:
+        st.info("FYERS is not connected in this app session. Connect or reconnect FYERS, then reopen this panel to fetch live quotes.")
 
 
 
