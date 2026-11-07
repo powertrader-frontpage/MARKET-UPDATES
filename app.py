@@ -1723,7 +1723,7 @@ if active_page == "Main Dashboard":
         return {}
 
     fii_dii_flows = _nse_fii_dii_latest()
-    for flow_name, flow_weight in [("FII/FPI", 0.025), ("DII", 0.025)]:
+    for flow_name, flow_weight in [("FII/FPI", 0.025), ("DII", 0.0)]:
         flow = fii_dii_flows.get(flow_name)
         if flow is None:
             sentiment_errors.append(f"{flow_name} cash-market flow: unavailable from configured sources")
@@ -1743,7 +1743,7 @@ if active_page == "Main Dashboard":
     _sentiment_change("Wipro ADR", "WIT", 0.00, inverse=False)
     _sentiment_change("HDFC Bank ADR", "HDB", 0.10, inverse=False)
     _sentiment_change("ICICI Bank ADR", "IBN", 0.00, inverse=False)
-    _sentiment_change("Reliance Industries GDR", "RIGD.L", 0.00, inverse=False)
+    _sentiment_change("Reliance Industries GDR", "RIGD.L", 0.025, inverse=False)
     # Do not publish a confident full-market direction when the highest-weight GIFT Nifty cue is missing.
     # Partial score remains visible for transparency, but the headline is explicitly marked incomplete.
     # Only a quote successfully parsed during this run counts as live/usable GIFT Nifty.
