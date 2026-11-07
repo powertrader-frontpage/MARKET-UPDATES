@@ -2144,10 +2144,28 @@ if active_page == "Main Dashboard":
             trend_col, fear_col = st.columns([2, 1], gap="small")
             trend_fig = go.Figure()
             trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["Close"], name="Close", mode="lines", line=dict(color="#60a5fa", width=2)))
-            if "EMA 20" in overview_rc:
-                trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 20"], name="EMA 20", mode="lines", line=dict(color="#f59e0b", width=1.5)))
-            if "EMA 50" in overview_rc:
-                trend_fig.add_trace(go.Scatter(x=overview_rc["Date"], y=overview_rc["EMA 50"], name="EMA 50", mode="lines", line=dict(color="#a78bfa", width=1.5)))
+            # EMA 33 is calculated from the same price series, independent of the other indicators.
+            if "EMA 33" not in overview_rc.columns:
+                overview_rc["EMA 33"] = pd.to_numeric(overview_rc["Close"], errors="coerce").ewm(span=33, adjust=False, min_periods=33).mean()
+            trend_ema_choices = st.multiselect(
+                "Moving averages",
+                options=["EMA 20", "EMA 33", "EMA 50"],
+                default=["EMA 20", "EMA 50"],
+                key="overview_price_trend_ema_options",
+                help="Choose which EMA lines to display on the Price Trend chart."
+            )
+            trend_ema_styles = {
+                "EMA 20": {"color": "#f59e0b", "width": 1.5},
+                "EMA 33": {"color": "#22c55e", "width": 1.8},
+                "EMA 50": {"color": "#a78bfa", "width": 1.5},
+            }
+            for _ema_name in trend_ema_choices:
+                if _ema_name in overview_rc.columns:
+                    trend_fig.add_trace(go.Scatter(
+                        x=overview_rc["Date"], y=overview_rc[_ema_name],
+                        name=_ema_name, mode="lines",
+                        line=trend_ema_styles[_ema_name]
+                    ))
             trend_fig.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified", xaxis_title="Source candle date", yaxis_title="Price", legend=dict(orientation="h", y=1.02, x=0))
             with trend_col:
                 st.plotly_chart(trend_fig, use_container_width=True, config={"displaylogo": False}, key="overview_regime_trend_chart")
