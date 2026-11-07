@@ -2315,27 +2315,29 @@ if active_page == "Main Dashboard":
                     fear_score = int(round(float(np.clip(fear_score, 0, 100))))
                     fear_label = "Extreme Fear" if fear_score < 20 else "Fear" if fear_score < 40 else "Neutral" if fear_score < 60 else "Greed" if fear_score < 80 else "Extreme Greed"
                     fear_color = "#ef4444" if fear_score < 20 else "#f97316" if fear_score < 40 else "#f59e0b" if fear_score < 60 else "#84cc16" if fear_score < 80 else "#16a34a"
-                    fear_col.markdown(
-                        f"""
-                        <div style="border:1px solid #343a46;border-radius:12px;padding:10px 14px;margin:4px 0 8px;background:#11151d;">
-                          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
-                            <div>
-                              <div style="font-size:12px;color:#aeb6c2;">Market proxy</div>
-                              <div style="font-size:22px;font-weight:800;color:{fear_color};">{fear_score}/100</div>
-                              <div style="font-size:13px;font-weight:700;color:{fear_color};">{fear_label}</div>
-                            </div>
-                            <div style="flex:1;max-width:420px;">
-                              <div style="height:12px;border-radius:999px;background:linear-gradient(90deg,#7f1d1d 0%,#c2410c 25%,#b45309 50%,#4d7c0f 75%,#047857 100%);position:relative;">
-                                <div style="position:absolute;left:calc({fear_score}% - 2px);top:-5px;width:4px;height:22px;border-radius:3px;background:#ffffff;box-shadow:0 0 4px #000;"></div>
-                              </div>
-                              <div style="display:flex;justify-content:space-between;color:#aeb6c2;font-size:10px;margin-top:5px;"><span>Fear</span><span>Neutral</span><span>Greed</span></div>
-                            </div>
-                          </div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-                    # Compact horizontal Fear & Greed meter avoids a tall chart on mobile.
+                    gauge_fig = go.Figure(go.Indicator(
+                        mode="gauge+number",
+                        value=fear_score,
+                        number={"font": {"size": 30, "color": fear_color}, "suffix": "/100"},
+                        title={"text": f"Fear & Greed<br><span style='font-size:11px;color:#aeb6c2'>Market proxy · {fear_label}</span>", "font": {"size": 15}},
+                        gauge={
+                            "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 20, 40, 60, 80, 100], "ticktext": ["0", "20", "40", "60", "80", "100"], "tickfont": {"size": 9}},
+                            "bar": {"color": fear_color, "thickness": 0.22},
+                            "bgcolor": "#11151d",
+                            "borderwidth": 0,
+                            "steps": [
+                                {"range": [0, 20], "color": "#7f1d1d"},
+                                {"range": [20, 40], "color": "#c2410c"},
+                                {"range": [40, 60], "color": "#b45309"},
+                                {"range": [60, 80], "color": "#4d7c0f"},
+                                {"range": [80, 100], "color": "#047857"},
+                            ],
+                            "threshold": {"line": {"color": "#e5e7eb", "width": 2}, "thickness": 0.8, "value": fear_score},
+                        },
+                    ))
+                    gauge_fig.update_layout(template="plotly_dark", height=220, margin=dict(l=8, r=8, t=42, b=4), paper_bgcolor="rgba(0,0,0,0)")
+                    fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
+
                 else:
                     fear_col.info("Fear & Greed proxy unavailable: insufficient indicator data.")
         
