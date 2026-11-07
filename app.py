@@ -2325,10 +2325,11 @@ if active_page == "Main Dashboard":
                     gauge_fig = go.Figure(go.Indicator(
                         mode="gauge+number",
                         value=fear_score,
-                        number={"font": {"size": 25, "color": fear_color}, "suffix": "/100"},
+                        domain={"x": [0, 1], "y": [0.16, 1]},
+                        number={"font": {"size": 34, "color": fear_color}, "suffix": "/100"},
                         title={"text": ""},
                         gauge={
-                            "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 20, 40, 60, 80, 100], "ticktext": ["0", "20", "40", "60", "80", "100"], "tickfont": {"size": 9}},
+                            "axis": {"range": [0, 100], "tickmode": "array", "tickvals": [0, 20, 40, 60, 80, 100], "ticktext": ["0", "20", "40", "60", "80", "100"], "tickfont": {"size": 13}},
                             "bar": {"color": fear_color, "thickness": 0.22},
                             "bgcolor": "#11151d",
                             "borderwidth": 0,
@@ -2342,7 +2343,7 @@ if active_page == "Main Dashboard":
                             "threshold": {"line": {"color": "#e5e7eb", "width": 2}, "thickness": 0.8, "value": fear_score},
                         },
                     ))
-                    gauge_fig.update_layout(template="plotly_dark", height=175, margin=dict(l=6, r=6, t=4, b=0), paper_bgcolor="rgba(0,0,0,0)")
+                    gauge_fig.update_layout(template="plotly_dark", height=205, margin=dict(l=6, r=6, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)")
                     fear_col.plotly_chart(gauge_fig, use_container_width=True, config={"displaylogo": False}, key="overview_fear_greed_gauge")
 
                 else:
