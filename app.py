@@ -2081,7 +2081,7 @@ if active_page == "Main Dashboard":
             regime_cols[3].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {weekly_ema_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY · Weekly EMA 200 gap</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{weekly_ema_color};">{weekly_gap_text}</div><div style="font-size:12px;color:#aeb6c2;">Close {weekly_close_text} · EMA {weekly_ema_text}</div><div style="font-size:12px;color:{weekly_ema_color};margin-top:4px;">{weekly_subtext}</div></div>', unsafe_allow_html=True)
             nifty_pcr_text = f"{nifty_pcr:.2f}" if pd.notna(nifty_pcr) else "—"
             regime_cols[4].markdown(f'<div style="border:1px solid #343a46;border-left:4px solid {nifty_pcr_color};border-radius:12px;padding:12px 14px;min-height:92px;"><div style="font-size:13px;color:#aeb6c2;margin-bottom:8px;">NIFTY 50 · PCR (OI)</div><div style="font-size:clamp(20px,2.8vw,27px);font-weight:700;color:{nifty_pcr_color};">{nifty_pcr_text}</div><div style="font-size:12px;color:{nifty_pcr_color};margin-top:4px;">{nifty_pcr_status}</div><div style="font-size:11px;color:#aeb6c2;margin-top:4px;">Source: FYERS · {nifty_pcr_source_time}</div></div>', unsafe_allow_html=True)
-            # Minimal NIFTY 50 pivot strip directly below Price Trend.
+            # NIFTY 50 support and resistance levels above the Price Trend chart.
             nifty_levels_df = market_data.get("NIFTY 50", pd.DataFrame()).copy()
             if not nifty_levels_df.empty and {"Date", "High", "Low", "Close"}.issubset(nifty_levels_df.columns):
                 # Normalize source timestamps to IST and use the latest completed session
@@ -2132,7 +2132,7 @@ if active_page == "Main Dashboard":
 
 
 
-            # Compact Fear & Greed proxy beside the existing price trend chart.
+            # Compact Fear & Greed proxy below Price Trend and above the rotation sections.
             # EMA warm-up uses up to five years of daily history; the visible range
             # still follows the user's Historical lookback selection.
             st.markdown("#### Price trend")
