@@ -2198,13 +2198,13 @@ if active_page == "Main Dashboard":
                     "EMA overlays",
                     options=ema_options,
                     selection_mode="multi",
-                    default=["EMA 20", "EMA 50"],
-                    key=f"overview_regime_trend_emas_{trend_timeframe.lower()}",
+                    default=[],
+                    key=f"overview_regime_trend_emas_v2_{trend_timeframe.lower()}",
                     label_visibility="collapsed",
                 ) or []
             trend_fig = go.Figure()
             # Keep this as a clean line chart: price is visually dominant and
-            # EMA 20 is active by default; additional EMA overlays are optional.
+            # All EMA overlays, including EMA 20 and EMA 50, are optional and off by default.
             trend_fig.add_trace(go.Scatter(
                 x=trend_visible["Date"], y=trend_visible["Close"],
                 name="Close", mode="lines",
