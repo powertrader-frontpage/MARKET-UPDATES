@@ -2723,21 +2723,53 @@ if active_page == "Main Dashboard":
                 if sector_rows:
                     sec = pd.DataFrame(sector_rows).sort_values("Relative return vs NIFTY (pp)", ascending=False)
                     st.dataframe(sec, use_container_width=True, hide_index=True)
+                    fpi_frame, fpi_period, fpi_url, fpi_error = fetch_latest_fpi_sector_report()
+                    # Explicit crosswalk from NSDL/BSE industry categories to the dashboard's
+                    # existing broad sector baskets. This is a separate confirmation overlay;
+                    # it never contributes to the existing rotation score or zone.
+                    fpi_sector_crosswalk = {
+                        "IT": ["Information Technology"],
+                        "Auto": ["Automobile and Auto Components"],
+                        "Realty": ["Realty"],
+                        "Consumption": ["Consumer Durables", "Consumer Services", "Fast Moving Consumer Goods"],
+                        "Infrastructure": ["Capital Goods", "Construction", "Construction Materials"],
+                        "Financial Services": ["Financial Services"],
+                        "Pharma": ["Healthcare"],
+                        "Metal": ["Metals & Mining"],
+                        "FMCG": ["Fast Moving Consumer Goods"],
+                        "Energy": ["Oil, Gas & Consumable Fuels", "Power", "Utilities"],
+                        "Media": ["Media, Entertainment & Publication"],
+                    }
+                    fpi_by_industry = {}
+                    if not fpi_frame.empty and {"NSDL sector", "FPI net equity investment (₹ crore)"}.issubset(fpi_frame.columns):
+                        fpi_by_industry = dict(zip(fpi_frame["NSDL sector"].astype(str), pd.to_numeric(fpi_frame["FPI net equity investment (₹ crore)"], errors="coerce")))
+                    mapped_rows = []
+                    for terminal_sector, nsdl_names in fpi_sector_crosswalk.items():
+                        found = [(name, fpi_by_industry[name]) for name in nsdl_names if name in fpi_by_industry and pd.notna(fpi_by_industry[name])]
+                        mapped_rows.append({
+                            "Sector": terminal_sector,
+                            "Mapped NSDL industries": ", ".join(name for name, _ in found) if found else "No direct mapping",
+                            "FPI net flow (₹ Cr)": sum(float(value) for _, value in found) if found else np.nan,
+                            "FPI flow signal": ("Net inflow" if sum(float(value) for _, value in found) > 0 else "Net outflow" if sum(float(value) for _, value in found) < 0 else "Flat") if found else "Unavailable",
+                        })
+                    fpi_mapped = pd.DataFrame(mapped_rows)
                     st.markdown("### Confirmation layer · MFI, volume and institutional activity")
-                    st.caption("MFI uses sector-index OHLCV where supplied. Volume compares the latest bar with the prior 20-session average. Sector-level FII/DII flows are unavailable from the current verified feed. These fields do not change the existing ranking.")
-                    confirmation_view = sec[["Sector", "MFI 14", "Volume vs 20D avg", "Flow signal", "Volume signal", "Institutional sector flow", "Last source bar"]].copy()
-                    confirmation_cols = ["Sector", "MFI 14", "Volume vs 20D avg", "Flow signal", "Volume signal", "Institutional sector flow", "Last source bar"]
+                    st.caption("MFI uses sector-index OHLCV where supplied. Volume compares the latest bar with the prior 20-session average. NSDL FPI is fortnightly equity net investment, mapped to broad dashboard sectors as a separate confirmation only. No DII sector flow is inferred. None of these fields changes the existing rotation ranking.")
+                    confirmation_view = sec[["Sector", "MFI 14", "Volume vs 20D avg", "Flow signal", "Volume signal", "Last source bar"]].copy()
+                    confirmation_view = confirmation_view.merge(fpi_mapped[["Sector", "FPI net flow (₹ Cr)", "FPI flow signal"]], on="Sector", how="left")
+                    confirmation_cols = ["Sector", "MFI 14", "Volume vs 20D avg", "Flow signal", "Volume signal", "FPI net flow (₹ Cr)", "FPI flow signal", "Last source bar"]
                     st.dataframe(confirmation_view[confirmation_cols].sort_values("MFI 14", ascending=False, na_position="last"), use_container_width=True, hide_index=True)
                     with st.expander("Official FPI sector investment · NSDL", expanded=True):
-                        fpi_frame, fpi_period, fpi_url, fpi_error = fetch_latest_fpi_sector_report()
                         if not fpi_frame.empty:
                             st.caption(f"Official fortnightly FPI equity net investment · report period: {fpi_period} · source: NSDL. Values are ₹ crore; positive = net investment, negative = net withdrawal.")
                             st.dataframe(fpi_frame.sort_values("FPI net equity investment (₹ crore)", ascending=False), use_container_width=True, hide_index=True)
                             st.markdown(f"[Open original NSDL report]({fpi_url})")
+                            st.markdown("**Mapped dashboard-sector view**")
+                            st.dataframe(fpi_mapped, use_container_width=True, hide_index=True)
                         else:
                             st.warning(f"Official FPI sector report could not be parsed: {fpi_error or 'No report data returned'}. Existing rotation scores are unaffected.")
                             st.markdown(f"[Open NSDL official FPI report archive]({fpi_url})")
-                        st.caption("This is FPI equity flow at NSDL/BSE industry-classification level, not DII flow and not a daily figure. It is displayed separately until a reviewed sector-name crosswalk is established.")
+                        st.caption("Crosswalk note: broad baskets may combine several NSDL industries. PSU Bank is not separately disclosed by NSDL, and DII sector flows are not present in this FPI report. Unmapped micro-industries must remain unavailable rather than inherit a misleading parent value.")
                     with st.expander("Institutional flow data sources · official reports", expanded=False):
                         st.caption("These are separate source feeds with different reporting frequencies. They are not combined into a single daily sector-flow figure.")
                         st.markdown("- **FPI sector allocation · fortnightly:** [NSDL sector-wise FPI report](https://www.fpi.nsdl.co.in/web/Reports/FPI_Fortnightly_Selection.aspx) · [CDSL FPI reports](https://www.cdslindia.com/Publications/ForeignPortInvestor.html)")
