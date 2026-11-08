@@ -2498,9 +2498,47 @@ if active_page == "Main Dashboard":
         
         
 
+            @st.cache_data(ttl=21600, show_spinner=False)
+            def _weekly_200_download(symbols):
+                """Fetch five years of weekly prices for a meaningful 200-week EMA."""
+                try:
+                    return yf.download(list(symbols), period="5y", interval="1wk", group_by="ticker",
+                                       auto_adjust=True, progress=False, threads=False)
+                except Exception:
+                    return pd.DataFrame()
+
+            def _weekly_200_metrics(raw, symbol):
+                try:
+                    if isinstance(raw.columns, pd.MultiIndex):
+                        if (symbol, "Close") in raw.columns:
+                            close = raw[(symbol, "Close")].dropna()
+                        elif ("Close", symbol) in raw.columns:
+                            close = raw[("Close", symbol)].dropna()
+                        else:
+                            return np.nan
+                    elif "Close" in raw.columns:
+                        close = raw["Close"].dropna()
+                    else:
+                        return np.nan
+                    close = close.sort_index()
+                    if len(close) < 200:
+                        return np.nan
+                    ema = close.ewm(span=200, adjust=False, min_periods=200).mean().iloc[-1]
+                    return ((float(close.iloc[-1]) / float(ema)) - 1) * 100 if pd.notna(ema) and float(ema) else np.nan
+                except Exception:
+                    return np.nan
+
+            def _weekly_200_status(distance):
+                if pd.isna(distance): return "Unavailable · need 200 weekly bars"
+                if distance < 0: return "Below weekly 200 EMA"
+                if distance < 3: return "Near · 0–3%"
+                if distance <= 8: return "Preferred · 3–8%"
+                if distance <= 12: return "Acceptable · 8–12%"
+                return "Extended · >12%"
+
             with st.expander("Sector rotation", expanded=False):
                 st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Sector rotation</div>""", unsafe_allow_html=True)
-                st.caption("Only sectors that return usable source rows are plotted. Relative strength is computed against NIFTY 50 over the selected lookback; it is not institutional money-flow data.")
+                st.caption("Only sectors that return usable source rows are plotted. Relative strength is computed against NIFTY 50 over the selected lookback; it is not institutional money-flow data. Weekly 200 EMA distance is a separate confirmation using the sector index; Micro Sector Rotation aggregates constituent stocks.")
                 sector_rows = []
                 rotation_rows = []
                 base_df = market_data["NIFTY 50"].copy()
@@ -2508,6 +2546,7 @@ if active_page == "Main Dashboard":
                     base_df = base_df.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last").copy()
                     base_df["_day"] = pd.to_datetime(base_df["Date"]).dt.date
                     base_df = base_df.set_index("_day")["Close"]
+                sector_weekly_raw = _weekly_200_download(tuple(SECTOR_TICKERS.values()))
                 for sector, ticker in SECTOR_TICKERS.items():
                     sdf, err = get_history(ticker, "6mo", "1d")
                     if sdf.empty or len(sdf) < 12 or len(base_df) < 12:
@@ -2545,6 +2584,7 @@ if active_page == "Main Dashboard":
                     last_date = pd.to_datetime(aligned.index[-1]).strftime("%d %b %Y")
                     relative_pp = perf - base_perf
                     confirmation = _mfi_volume_confirmation(sdf)
+                    sector_weekly_gap = _weekly_200_metrics(sector_weekly_raw, ticker)
                     def _relative_window(window):
                         sample = aligned.iloc[-min(window, len(aligned)):]
                         if len(sample) < 2:
@@ -2562,6 +2602,8 @@ if active_page == "Main Dashboard":
                         "Volume vs 20D avg": confirmation["Volume vs 20D avg"],
                         "Flow signal": confirmation["Flow signal"],
                         "Volume signal": confirmation["Volume signal"],
+                        "Sector index vs Weekly 200 EMA (%)": sector_weekly_gap,
+                        "Weekly 200 EMA status": _weekly_200_status(sector_weekly_gap),
                         "Institutional sector flow": "Unavailable · no verified sector-level feed",
                         "Last source bar": last_date
                     })
@@ -2810,7 +2852,7 @@ if active_page == "Main Dashboard":
             with st.expander("Micro Sector Rotation", expanded=False):
                 st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#a78bfa,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Micro Sector Rotation</div>""", unsafe_allow_html=True)
                 st.caption("Explore leading, improving, weakening and lagging micro industries, compare their strength against NIFTY 500, and drill down to constituent stocks.")
-                st.caption("Custom equal-weight stock baskets · ranks combine 1M/3M/6M returns and 50-EMA breadth. Public prices may be delayed. This is a research tool, not investment advice.")
+                st.caption("Custom equal-weight stock baskets · ranks combine 1M/3M/6M returns and 50-EMA breadth. Weekly 200 EMA proximity is a separate confirmation layer and does not change the existing Score or Zone. Uses five years of weekly prices; unavailable if fewer than 200 weekly bars exist. Public prices may be delayed. This is a research tool, not investment advice.")
                 MICRO_SECTORS = {
                     "API & CDMO": ("Pharma", ["DIVISLAB.NS","LAURUSLABS.NS","NEULANDLAB.NS","SHILPAMED.NS","SUVENPHAR.NS"]),
                     "Gaming": ("Niche", ["NAZARA.NS","ZENTEC.NS","DREAMFOLKS.NS"]),
@@ -2908,6 +2950,7 @@ if active_page == "Main Dashboard":
                     _micro_sector_download.clear()
                 with st.spinner(f"Fetching daily prices for {len(micro_tickers)-1} listed constituents…"):
                     micro_raw = _micro_sector_download(tuple(micro_tickers))
+                micro_weekly_raw = _weekly_200_download(tuple(micro_tickers))
                 def _micro_close(symbol):
                     try:
                         if isinstance(micro_raw.columns, pd.MultiIndex):
@@ -2933,6 +2976,7 @@ if active_page == "Main Dashboard":
                         constituent_series = []
                         constituent_mfi = []
                         constituent_volume_ratio = []
+                        weekly_200_distances = []
                         for symbol in symbols:
                             close = _micro_close(symbol)
                             if len(close) < 60:
@@ -2960,6 +3004,9 @@ if active_page == "Main Dashboard":
                                     constituent_volume_ratio.append(stock_confirmation["Volume vs 20D avg"])
                             except Exception:
                                 pass
+                            weekly_200_gap = _weekly_200_metrics(micro_weekly_raw, symbol)
+                            if pd.notna(weekly_200_gap):
+                                weekly_200_distances.append(float(weekly_200_gap))
                             constituent_returns.append((ret1d, ret1w, ret1, ret3, ret6, ret1y))
                             constituent_breadth.append(float(last > float(ema50.iloc[-1])))
                             constituent_series.append(close / float(close.iloc[-min(127, len(close))]) * 100)
@@ -2973,7 +3020,11 @@ if active_page == "Main Dashboard":
                         avg_volume_ratio = float(np.mean(constituent_volume_ratio)) if constituent_volume_ratio else np.nan
                         mfi_signal = ("Strong inflow" if avg_mfi >= 60 else "Positive" if avg_mfi >= 50 else "Distribution risk" if avg_mfi < 40 else "Neutral") if pd.notna(avg_mfi) else "Unavailable"
                         volume_signal = ("Expansion" if avg_volume_ratio >= 1.5 else "Elevated" if avg_volume_ratio >= 1.2 else "Normal") if pd.notna(avg_volume_ratio) else "Unavailable"
-                        micro_rows.append({"Micro sector": micro_name, "Group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1D %": avg1d, "1W %": avg1w, "1M %": avg1, "3M %": avg3, "6M %": avg6, "1Y %": avg1y, "50 EMA breadth %": breadth, "Average MFI 14": avg_mfi, "Average volume vs 20D": avg_volume_ratio, "Flow confirmation": mfi_signal, "Volume confirmation": volume_signal, "Institutional sector flow": "Unavailable · no verified sector-level feed", "_raw_score": composite})
+                        avg_weekly_200_gap = float(np.mean(weekly_200_distances)) if weekly_200_distances else np.nan
+                        weekly_200_preferred_pct = (sum(3 <= x <= 8 for x in weekly_200_distances) / len(weekly_200_distances) * 100) if weekly_200_distances else np.nan
+                        weekly_200_above_pct = (sum(x > 0 for x in weekly_200_distances) / len(weekly_200_distances) * 100) if weekly_200_distances else np.nan
+                        weekly_200_status = _weekly_200_status(avg_weekly_200_gap)
+                        micro_rows.append({"Micro sector": micro_name, "Group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1D %": avg1d, "1W %": avg1w, "1M %": avg1, "3M %": avg3, "6M %": avg6, "1Y %": avg1y, "50 EMA breadth %": breadth, "Average MFI 14": avg_mfi, "Average volume vs 20D": avg_volume_ratio, "Flow confirmation": mfi_signal, "Volume confirmation": volume_signal, "Institutional sector flow": "Unavailable · no verified sector-level feed", "Avg. distance from Weekly 200 EMA (%)": avg_weekly_200_gap, "Stocks in preferred 3–8% zone (%)": weekly_200_preferred_pct, "Stocks above Weekly 200 EMA (%)": weekly_200_above_pct, "Weekly 200 EMA status": weekly_200_status, "_raw_score": composite})
                         if constituent_series:
                             aligned = pd.concat(constituent_series, axis=1).sort_index()
                             micro_histories[micro_name] = aligned.mean(axis=1)
@@ -3089,11 +3140,11 @@ if active_page == "Main Dashboard":
                     st.subheader("All micro sectors · current rotation status")
                     zone_filter = st.selectbox("Filter micro sectors by rotation zone", ["All zones", "Leading", "Improving", "Weakening", "Lagging"], key="micro_zone_filter")
                     zone_view = micro_df if zone_filter == "All zones" else micro_df[micro_df["Zone"] == zone_filter]
-                    display_cols = ["Micro sector", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Stocks available"]
+                    display_cols = ["Micro sector", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Avg. distance from Weekly 200 EMA (%)", "Stocks in preferred 3–8% zone (%)", "Stocks above Weekly 200 EMA (%)", "Weekly 200 EMA status", "Stocks available"]
                     st.dataframe(zone_view[display_cols].sort_values("Score", ascending=False), use_container_width=True, hide_index=True)
                     st.subheader("Confirmation layer · micro-sector money flow and volume")
                     st.caption("Average constituent MFI 14 and latest volume versus each stock's prior 20-session average. NSDL FPI is shown only as parent-industry context where an explicit mapping exists; it is not represented as direct micro-sector flow. These fields do not change the existing composite Score or Zone.")
-                    micro_confirmation_cols = ["Micro sector", "Group", "Zone", "Average MFI 14", "Average volume vs 20D", "Flow confirmation", "Volume confirmation", "FPI parent industry context (₹ Cr)", "FPI context mapping"]
+                    micro_confirmation_cols = ["Micro sector", "Group", "Zone", "Avg. distance from Weekly 200 EMA (%)", "Stocks in preferred 3–8% zone (%)", "Stocks above Weekly 200 EMA (%)", "Weekly 200 EMA status", "Average MFI 14", "Average volume vs 20D", "Flow confirmation", "Volume confirmation", "FPI parent industry context (₹ Cr)", "FPI context mapping"]
                     st.dataframe(micro_df[micro_confirmation_cols].sort_values("Average MFI 14", ascending=False, na_position="last"), use_container_width=True, hide_index=True)
                     st.caption("This list shows every available micro sector in each rotation zone—not only the top six cards.")
         
