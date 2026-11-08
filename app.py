@@ -2605,8 +2605,9 @@ if active_page == "Main Dashboard":
                     st.dataframe(sec, use_container_width=True, hide_index=True)
                     st.markdown("### Confirmation layer · MFI, volume and institutional activity")
                     st.caption("MFI uses sector-index OHLCV where supplied. Volume compares the latest bar with the prior 20-session average. Sector-level FII/DII flows are unavailable from the current verified feed. These fields do not change the existing ranking.")
-                    confirmation_cols = ["Sector", "MFI 14", "Volume vs 20D avg", "Institutional sector flow", "Last source bar"]
-                    st.dataframe(sec[confirmation_cols].sort_values("MFI 14", ascending=False, na_position="last"), use_container_width=True, hide_index=True)
+                    confirmation_view = sec[["Sector", "MFI 14", "Volume vs 20D avg", "Institutional sector flow", "Last source bar"]].merge(pd.DataFrame(rotation_rows)[["Sector", "Current zone"]], on="Sector", how="left")
+                    confirmation_cols = ["Sector", "Current zone", "MFI 14", "Volume vs 20D avg", "Institutional sector flow", "Last source bar"]
+                    st.dataframe(confirmation_view[confirmation_cols].sort_values("MFI 14", ascending=False, na_position="last"), use_container_width=True, hide_index=True)
                     # Follow the same period selected for the climbers/fallers board above.
                     chart_metric = sector_metric
                     chart_period_label = {"1D": "1-day", "1W": "1-week", "3W": "3-week", "6W": "6-week"}[sector_period]
