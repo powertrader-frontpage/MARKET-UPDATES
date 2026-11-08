@@ -173,9 +173,9 @@ def fetch_latest_fpi_sector_report():
             valid_candidates = []
             for cidx in flow_candidates:
                 sector_values = []
-                for ridx in range(header_depth, len(raw)):
+                for ridx in range(header_depth, grand_total_row):
                     sector_name = _cell_text(raw.iat[ridx, sector_col])
-                    if not sector_name or sector_name.lower().replace(" ", "") == "grandtotal":
+                    if not sector_name:
                         continue
                     value = _number(raw.iat[ridx, cidx])
                     if pd.notna(value):
