@@ -103,7 +103,9 @@ def _mfi_volume_confirmation(frame: pd.DataFrame, period: int = 14):
     mfi_value = float(mfi.iloc[-1]) if pd.notna(mfi.iloc[-1]) else np.nan
     prior_avg = data["Volume"].shift(1).rolling(20, min_periods=20).mean().iloc[-1]
     volume_ratio = float(data["Volume"].iloc[-1] / prior_avg) if pd.notna(prior_avg) and prior_avg > 0 else np.nan
-    return {"MFI 14": mfi_value, "Volume vs 20D avg": volume_ratio}
+    mfi_signal = ("Strong inflow" if mfi_value >= 60 else "Positive" if mfi_value >= 50 else "Distribution risk" if mfi_value < 40 else "Neutral") if pd.notna(mfi_value) else "Unavailable"
+    volume_signal = ("Expansion" if volume_ratio >= 1.5 else "Elevated" if volume_ratio >= 1.2 else "Normal") if pd.notna(volume_ratio) else "Unavailable"
+    return {"MFI 14": mfi_value, "Volume vs 20D avg": volume_ratio, "Flow signal": mfi_signal, "Volume signal": volume_signal}
 
 # Upstox read-only OAuth integration. Secrets stay in Streamlit Cloud Secrets.
 def upstox_oauth_credentials():
@@ -2435,6 +2437,8 @@ if active_page == "Main Dashboard":
                         "6W vs NIFTY (pp)": _relative_window(31),
                         "MFI 14": confirmation["MFI 14"],
                         "Volume vs 20D avg": confirmation["Volume vs 20D avg"],
+                        "Flow signal": confirmation["Flow signal"],
+                        "Volume signal": confirmation["Volume signal"],
                         "Institutional sector flow": "Unavailable · no verified sector-level feed",
                         "Last source bar": last_date
                     })
@@ -2605,8 +2609,8 @@ if active_page == "Main Dashboard":
                     st.dataframe(sec, use_container_width=True, hide_index=True)
                     st.markdown("### Confirmation layer · MFI, volume and institutional activity")
                     st.caption("MFI uses sector-index OHLCV where supplied. Volume compares the latest bar with the prior 20-session average. Sector-level FII/DII flows are unavailable from the current verified feed. These fields do not change the existing ranking.")
-                    confirmation_view = sec[["Sector", "MFI 14", "Volume vs 20D avg", "Institutional sector flow", "Last source bar"]].merge(pd.DataFrame(rotation_rows)[["Sector", "Current zone"]], on="Sector", how="left")
-                    confirmation_cols = ["Sector", "Current zone", "MFI 14", "Volume vs 20D avg", "Institutional sector flow", "Last source bar"]
+                    confirmation_view = sec[["Sector", "MFI 14", "Volume vs 20D avg", "Flow signal", "Volume signal", "Institutional sector flow", "Last source bar"]].merge(pd.DataFrame(rotation_rows)[["Sector", "Current zone"]], on="Sector", how="left")
+                    confirmation_cols = ["Sector", "Current zone", "MFI 14", "Volume vs 20D avg", "Flow signal", "Volume signal", "Institutional sector flow", "Last source bar"]
                     st.dataframe(confirmation_view[confirmation_cols].sort_values("MFI 14", ascending=False, na_position="last"), use_container_width=True, hide_index=True)
                     # Follow the same period selected for the climbers/fallers board above.
                     chart_metric = sector_metric
@@ -2796,7 +2800,9 @@ if active_page == "Main Dashboard":
                         composite = 0.25 * avg1 + 0.40 * avg3 + 0.25 * avg6 + 0.10 * ((breadth - 50) / 5)
                         avg_mfi = float(np.mean(constituent_mfi)) if constituent_mfi else np.nan
                         avg_volume_ratio = float(np.mean(constituent_volume_ratio)) if constituent_volume_ratio else np.nan
-                        micro_rows.append({"Micro sector": micro_name, "Group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1D %": avg1d, "1W %": avg1w, "1M %": avg1, "3M %": avg3, "6M %": avg6, "1Y %": avg1y, "50 EMA breadth %": breadth, "Average MFI 14": avg_mfi, "Average volume vs 20D": avg_volume_ratio, "Institutional sector flow": "Unavailable · no verified sector-level feed", "_raw_score": composite})
+                        mfi_signal = ("Strong inflow" if avg_mfi >= 60 else "Positive" if avg_mfi >= 50 else "Distribution risk" if avg_mfi < 40 else "Neutral") if pd.notna(avg_mfi) else "Unavailable"
+                        volume_signal = ("Expansion" if avg_volume_ratio >= 1.5 else "Elevated" if avg_volume_ratio >= 1.2 else "Normal") if pd.notna(avg_volume_ratio) else "Unavailable"
+                        micro_rows.append({"Micro sector": micro_name, "Group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1D %": avg1d, "1W %": avg1w, "1M %": avg1, "3M %": avg3, "6M %": avg6, "1Y %": avg1y, "50 EMA breadth %": breadth, "Average MFI 14": avg_mfi, "Average volume vs 20D": avg_volume_ratio, "Flow confirmation": mfi_signal, "Volume confirmation": volume_signal, "Institutional sector flow": "Unavailable · no verified sector-level feed", "_raw_score": composite})
                         if constituent_series:
                             aligned = pd.concat(constituent_series, axis=1).sort_index()
                             micro_histories[micro_name] = aligned.mean(axis=1)
@@ -2881,7 +2887,7 @@ if active_page == "Main Dashboard":
                     st.dataframe(zone_view[display_cols].sort_values("Score", ascending=False), use_container_width=True, hide_index=True)
                     st.subheader("Confirmation layer · micro-sector money flow and volume")
                     st.caption("Average constituent MFI 14 and latest volume versus each stock's prior 20-session average. These fields do not change the existing composite Score or Zone. Sector-level institutional flows remain unavailable until a verified feed is connected.")
-                    micro_confirmation_cols = ["Micro sector", "Group", "Zone", "Average MFI 14", "Average volume vs 20D", "Institutional sector flow"]
+                    micro_confirmation_cols = ["Micro sector", "Group", "Zone", "Average MFI 14", "Average volume vs 20D", "Flow confirmation", "Volume confirmation", "Institutional sector flow"]
                     st.dataframe(micro_df[micro_confirmation_cols].sort_values("Average MFI 14", ascending=False, na_position="last"), use_container_width=True, hide_index=True)
                     st.caption("This list shows every available micro sector in each rotation zone—not only the top six cards.")
         
