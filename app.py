@@ -119,34 +119,61 @@ def fetch_latest_fpi_sector_report():
             if response.status_code == 404:
                 continue
             response.raise_for_status()
-            tables = pd.read_html(StringIO(response.text), header=[0, 1, 2])
+            # NSDL's HTML report has several separate heading rows. Read the table
+            # without forcing a fixed header depth; some report pages expose merged
+            # headings differently to pandas/read_html.
+            tables = pd.read_html(StringIO(response.text), header=None, displayed_only=False)
             if not tables:
                 raise ValueError("NSDL page contained no report table")
-            table = tables[0].copy()
-            if not isinstance(table.columns, pd.MultiIndex):
-                raise ValueError("Unexpected NSDL report header structure")
+            raw = tables[0].copy().fillna("")
+            if raw.empty or raw.shape[1] < 3:
+                raise ValueError("NSDL report table is empty or has too few columns")
 
-            def _header_parts(column):
-                return [str(part).replace("\\n", " ").strip() for part in column]
+            def _cell_text(value):
+                return re.sub(r"\\s+", " ", str(value)).strip()
 
+            # Locate the actual sector label column from the row containing 'Sectors'.
+            sector_col = None
+            for ridx in range(min(12, len(raw))):
+                for cidx in range(raw.shape[1]):
+                    if _cell_text(raw.iat[ridx, cidx]).lower() == "sectors":
+                        sector_col = cidx
+                        break
+                if sector_col is not None:
+                    break
+            if sector_col is None:
+                raise ValueError("Could not identify the NSDL Sectors column")
+
+            # Combine the first heading rows vertically. The current fortnight's
+            # Equity / INR Cr column is the last matching Net Investment column.
+            header_depth = min(8, len(raw))
             flow_candidates = []
-            for idx, column in enumerate(table.columns):
-                joined = " | ".join(_header_parts(column)).lower()
+            for cidx in range(raw.shape[1]):
+                parts = [_cell_text(raw.iat[ridx, cidx]).lower() for ridx in range(header_depth)]
+                joined = " | ".join(part for part in parts if part)
                 if "net investment" in joined and "equity" in joined and "in inr cr" in joined:
-                    flow_candidates.append(idx)
+                    flow_candidates.append(cidx)
+            if not flow_candidates:
+                # NSDL sometimes renders the top-level heading in a neighbouring
+                # merged cell. Identify the equity/INR-Cr columns and select the
+                # one under the final Net Investment heading.
+                net_rows = [ridx for ridx in range(header_depth)
+                            if any("net investment" in _cell_text(raw.iat[ridx, cidx]).lower()
+                                   for cidx in range(raw.shape[1]))]
+                if net_rows:
+                    last_net_row = net_rows[-1]
+                    for cidx in range(raw.shape[1]):
+                        parts = [_cell_text(raw.iat[ridx, cidx]).lower() for ridx in range(header_depth)]
+                        if "equity" in " | ".join(parts) and "in inr cr" in " | ".join(parts):
+                            flow_candidates.append(cidx)
             if not flow_candidates:
                 raise ValueError("Could not identify the INR-crore equity net-investment column")
 
-            # Latest fortnight is the last Net Investment / Equity / INR Cr column in the report.
-            flow_col = table.columns[flow_candidates[-1]]
-            sector_col = next(
-                (column for column in table.columns
-                 if any("sector" in str(part).lower() for part in column)),
-                table.columns[1] if len(table.columns) > 1 else table.columns[0]
-            )
-            values = table[flow_col].astype(str).str.replace(",", "", regex=False).str.replace("—", "", regex=False)
+            flow_col = flow_candidates[-1]
+            values = raw.iloc[:, flow_col].astype(str).str.replace(",", "", regex=False).str.replace("—", "", regex=False)
+            sectors = raw.iloc[:, sector_col].astype(str).str.strip()
             result = pd.DataFrame({
-                "NSDL sector": table[sector_col].astype(str).str.strip(),
+                "NSDL sector": sectors,
                 "FPI net equity investment (₹ crore)": pd.to_numeric(values, errors="coerce")
             })
             result = result[
