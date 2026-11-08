@@ -144,8 +144,9 @@ def fetch_latest_fpi_sector_report():
             if sector_col is None:
                 raise ValueError("Could not identify the NSDL Sectors column")
 
-            # Combine the first heading rows vertically. The current fortnight's
-            # Equity / INR Cr column is the last matching Net Investment column.
+            # Identify candidate Equity / INR Cr columns under Net Investment headings.
+            # Validate each candidate against NSDL's Grand Total row before accepting it;
+            # this prevents a similarly labelled AUC/debt column from being mistaken for equity flow.
             header_depth = min(8, len(raw))
             flow_candidates = []
             for cidx in range(raw.shape[1]):
@@ -153,38 +154,51 @@ def fetch_latest_fpi_sector_report():
                 joined = " | ".join(part for part in parts if part)
                 if "net investment" in joined and "equity" in joined and "in inr cr" in joined:
                     flow_candidates.append(cidx)
-            if not flow_candidates:
-                # NSDL sometimes renders the top-level heading in a neighbouring
-                # merged cell. Identify the equity/INR-Cr columns and select the
-                # one under the final Net Investment heading.
-                net_rows = [ridx for ridx in range(header_depth)
-                            if any("net investment" in _cell_text(raw.iat[ridx, cidx]).lower()
-                                   for cidx in range(raw.shape[1]))]
-                if net_rows:
-                    last_net_row = net_rows[-1]
-                    for cidx in range(raw.shape[1]):
-                        parts = [_cell_text(raw.iat[ridx, cidx]).lower() for ridx in range(header_depth)]
-                        if "equity" in " | ".join(parts) and "in inr cr" in " | ".join(parts):
-                            flow_candidates.append(cidx)
-            if not flow_candidates:
-                raise ValueError("Could not identify the INR-crore equity net-investment column")
 
-            flow_col = flow_candidates[-1]
-            values = raw.iloc[:, flow_col].astype(str).str.replace(",", "", regex=False).str.replace("—", "", regex=False)
-            sectors = raw.iloc[:, sector_col].astype(str).str.strip()
-            result = pd.DataFrame({
-                "NSDL sector": sectors,
-                "FPI net equity investment (₹ crore)": pd.to_numeric(values, errors="coerce")
-            })
-            result = result[
-                result["NSDL sector"].ne("") &
-                result["NSDL sector"].ne("nan") &
-                result["NSDL sector"].str.lower().ne("grand total") &
-                result["FPI net equity investment (₹ crore)"].notna()
-            ]
+            # Find the official Grand Total row so the selected sector values can be reconciled.
+            grand_total_row = None
+            for ridx in range(header_depth, len(raw)):
+                if _cell_text(raw.iat[ridx, sector_col]).lower().replace(" ", "") == "grandtotal":
+                    grand_total_row = ridx
+                    break
+            if grand_total_row is None:
+                raise ValueError("NSDL Grand Total row not found; refusing unverified sector values")
+
+            def _number(value):
+                text_value = _cell_text(value).replace(",", "").replace("−", "-").replace("—", "")
+                if text_value in {"", "-", "nan", "None"}:
+                    return np.nan
+                return pd.to_numeric(text_value, errors="coerce")
+
+            valid_candidates = []
+            for cidx in flow_candidates:
+                sector_values = []
+                for ridx in range(header_depth, len(raw)):
+                    sector_name = _cell_text(raw.iat[ridx, sector_col])
+                    if not sector_name or sector_name.lower().replace(" ", "") == "grandtotal":
+                        continue
+                    value = _number(raw.iat[ridx, cidx])
+                    if pd.notna(value):
+                        sector_values.append((sector_name, float(value)))
+                reported_total = _number(raw.iat[grand_total_row, cidx])
+                if len(sector_values) < 10 or pd.isna(reported_total):
+                    continue
+                calculated_total = sum(value for _, value in sector_values)
+                if abs(calculated_total - float(reported_total)) <= max(2.0, abs(float(reported_total)) * 0.0005):
+                    valid_candidates.append((cidx, sector_values, float(reported_total)))
+
+            if not valid_candidates:
+                raise ValueError("No Equity / INR Cr Net Investment column reconciled with NSDL Grand Total; refusing to display zero or incorrect flows")
+
+            # Latest fortnight is the right-most candidate that reconciles exactly to NSDL's total.
+            flow_col, sector_values, reported_total = valid_candidates[-1]
+            result = pd.DataFrame(sector_values, columns=[
+                "NSDL sector", "FPI net equity investment (₹ crore)"
+            ])
             if result.empty:
-                raise ValueError("NSDL report returned no usable sector rows")
-
+                raise ValueError("NSDL report returned no validated sector rows")
+            if abs(result["FPI net equity investment (₹ crore)"].sum() - reported_total) > max(2.0, abs(reported_total) * 0.0005):
+                raise ValueError("NSDL sector-flow total validation failed")
             report_label = report_date.strftime("%d %b %Y")
             return result, report_label, report_url, None
         except Exception as exc:
