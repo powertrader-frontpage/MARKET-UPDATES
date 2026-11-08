@@ -2461,6 +2461,13 @@ if active_page == "Main Dashboard":
                         f'<span style="color:#aeb6c2;font-weight:500;">· Market proxy</span></div>',
                         unsafe_allow_html=True,
                     )
+                    # Compact centered sentiment word above the gauge, retaining the
+                    # original dynamic fear_color rather than the oversized white sample.
+                    fear_col.markdown(
+                        f'<div style="text-align:center;color:{fear_color};font-size:30px;'
+                        f'font-weight:700;line-height:1.1;margin:2px 0 0 0;">{fear_label.upper()}</div>',
+                        unsafe_allow_html=True,
+                    )
                     gauge_fig = go.Figure(go.Indicator(
                         mode="gauge+number",
                         value=fear_score,
