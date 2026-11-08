@@ -88,18 +88,16 @@ SECTOR_TICKERS = {
 
 @st.cache_data(ttl=21600, show_spinner=False)
 def fetch_latest_fpi_sector_report():
-    """Fetch the latest published fortnightly sector-wise FPI equity flow report from NSDL."""
-    from datetime import date, timedelta
-    from io import StringIO
+    """Fetch and validate the latest NSDL fortnightly sector-wise FPI equity net-investment data."""
+    from datetime import date
     from calendar import monthrange
+    from bs4 import BeautifulSoup
 
     base_url = "https://pilot.fpi.nsdl.co.in/StaticReports/Fortnightly_Sector_wise_FII_Investment_Data/"
-    selection_url = "https://pilot.fpi.nsdl.co.in/Reports/FPI_Fortnightly_Selection.aspx"
+    selection_url = "https://www.fpi.nsdl.co.in/web/Reports/FPI_Fortnightly_Selection.aspx"
     headers = {"User-Agent": "Mozilla/5.0 (compatible; MarketTerminal/1.0)", "Accept": "text/html,application/xhtml+xml"}
     today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
 
-    # NSDL publishes static report pages named FIIInvestSector_MonDDYYYY.html.
-    # Probe the most recent fortnight-end dates; do not assume the newest date is already published.
     candidate_dates = []
     for offset in range(0, 5):
         month_start = (today.replace(day=1) - pd.DateOffset(months=offset)).date()
@@ -110,107 +108,92 @@ def fetch_latest_fpi_sector_report():
                 candidate_dates.append(candidate)
     candidate_dates.sort(reverse=True)
 
+    def _clean(value):
+        return re.sub(r"\\s+", " ", str(value or "")).strip()
+
+    def _expand_row(tr):
+        expanded = []
+        for cell in tr.find_all(["td", "th"], recursive=False):
+            value = _clean(cell.get_text(" ", strip=True))
+            try:
+                span = max(1, int(cell.get("colspan", 1)))
+            except (TypeError, ValueError):
+                span = 1
+            expanded.extend([value] * span)
+        return expanded
+
+    def _number(value):
+        text_value = _clean(value).replace(",", "").replace("−", "-").replace("—", "")
+        if text_value in {"", "-", "nan", "None"}:
+            return np.nan
+        return pd.to_numeric(text_value, errors="coerce")
+
     errors = []
     for report_date in candidate_dates:
-        suffix = report_date.strftime("%b%d%Y")
-        report_url = f"{base_url}FIIInvestSector_{suffix}.html"
+        report_url = f"{base_url}FIIInvestSector_{report_date.strftime('%b%d%Y')}.html"
         try:
-            response = requests.get(report_url, headers=headers, timeout=18)
+            response = requests.get(report_url, headers=headers, timeout=20)
             if response.status_code == 404:
                 continue
             response.raise_for_status()
-            # NSDL's HTML report has several separate heading rows. Read the table
-            # without forcing a fixed header depth; some report pages expose merged
-            # headings differently to pandas/read_html.
-            tables = pd.read_html(StringIO(response.text), header=None, displayed_only=False)
-            if not tables:
-                raise ValueError("NSDL page contained no HTML tables")
+            soup = BeautifulSoup(response.text, "html.parser")
+            report_table = soup.select_one("#dvFortnightly table")
+            if report_table is None:
+                raise ValueError("NSDL report table #dvFortnightly was not found")
+            rows = [_expand_row(tr) for tr in report_table.find_all("tr")]
+            if len(rows) < 8:
+                raise ValueError("NSDL report table has too few rows")
+            width = max(len(row) for row in rows)
+            rows = [row + [""] * (width - len(row)) for row in rows]
 
-            def _cell_text(value):
-                return re.sub(r"\\s+", " ", str(value)).strip()
+            # Find the actual Equity / INR Cr column for the latest Net Investment fortnight.
+            flow_col = None
+            report_period_label = None
+            for cidx in range(width):
+                top = next((rows[r][cidx] for r in range(min(3, len(rows))) if rows[r][cidx]), "")
+                unit = rows[1][cidx].lower() if len(rows) > 1 else ""
+                asset = rows[2][cidx].lower() if len(rows) > 2 else ""
+                if top.lower().startswith("net investment") and "in inr cr" in unit and asset == "equity":
+                    flow_col = cidx
+                    report_period_label = top.replace("Net Investment", "").strip()
+            if flow_col is None:
+                raise ValueError("Could not identify a Net Investment / IN INR Cr. / Equity column")
 
-            # NSDL pages contain several small navigation/summary tables before the
-            # actual sector report. Select the table that contains BOTH the Sectors
-            # header and Grand Total row; never assume tables[0] is the report.
-            raw = None
-            sector_col = None
-            for candidate_table in tables:
-                candidate = candidate_table.copy().fillna("")
-                if candidate.empty or candidate.shape[1] < 3:
-                    continue
-                candidate_sector_col = None
-                has_grand_total = False
-                for ridx in range(min(16, len(candidate))):
-                    for cidx in range(candidate.shape[1]):
-                        cell = _cell_text(candidate.iat[ridx, cidx]).lower().replace(" ", "")
-                        if cell == "sectors":
-                            candidate_sector_col = cidx
-                        if cell == "grandtotal":
-                            has_grand_total = True
-                if candidate_sector_col is not None and has_grand_total:
-                    raw = candidate
-                    sector_col = candidate_sector_col
-                    break
-            if raw is None or sector_col is None:
-                raise ValueError("Could not locate NSDL's full sector table with Sectors and Grand Total rows")
+            sector_col = next((i for i, value in enumerate(rows[3]) if value.lower() == "sectors"), None)
+            if sector_col is None:
+                raise ValueError("Could not identify the Sectors column")
+            data_start = 4
+            grand_total_idx = next(
+                (i for i in range(data_start, len(rows))
+                 if rows[i][sector_col].lower().replace(" ", "") == "grandtotal"),
+                None
+            )
+            if grand_total_idx is None:
+                raise ValueError("NSDL Grand Total row not found")
 
-            # Identify candidate Equity / INR Cr columns under Net Investment headings.
-            # Validate each candidate against NSDL's Grand Total row before accepting it;
-            # this prevents a similarly labelled AUC/debt column from being mistaken for equity flow.
-            header_depth = min(8, len(raw))
-            flow_candidates = []
-            for cidx in range(raw.shape[1]):
-                parts = [_cell_text(raw.iat[ridx, cidx]).lower() for ridx in range(header_depth)]
-                joined = " | ".join(part for part in parts if part)
-                if "net investment" in joined and "equity" in joined and "in inr cr" in joined:
-                    flow_candidates.append(cidx)
+            sector_values = []
+            for row in rows[data_start:grand_total_idx]:
+                sector_name = row[sector_col].strip()
+                value = _number(row[flow_col])
+                if sector_name and pd.notna(value):
+                    sector_values.append((sector_name, float(value)))
+            reported_total = _number(rows[grand_total_idx][flow_col])
+            if len(sector_values) < 20 or pd.isna(reported_total):
+                raise ValueError("NSDL Equity net-investment column is incomplete")
+            calculated_total = sum(value for _, value in sector_values)
+            tolerance = max(2.0, abs(float(reported_total)) * 0.0005)
+            if abs(calculated_total - float(reported_total)) > tolerance:
+                raise ValueError(
+                    f"Equity sector rows do not reconcile: calculated {calculated_total:,.0f}, "
+                    f"NSDL Grand Total {float(reported_total):,.0f} ₹ crore"
+                )
 
-            # Find the official Grand Total row so the selected sector values can be reconciled.
-            grand_total_row = None
-            for ridx in range(header_depth, len(raw)):
-                if _cell_text(raw.iat[ridx, sector_col]).lower().replace(" ", "") == "grandtotal":
-                    grand_total_row = ridx
-                    break
-            if grand_total_row is None:
-                raise ValueError("NSDL Grand Total row not found; refusing unverified sector values")
-
-            def _number(value):
-                text_value = _cell_text(value).replace(",", "").replace("−", "-").replace("—", "")
-                if text_value in {"", "-", "nan", "None"}:
-                    return np.nan
-                return pd.to_numeric(text_value, errors="coerce")
-
-            valid_candidates = []
-            for cidx in flow_candidates:
-                sector_values = []
-                for ridx in range(header_depth, grand_total_row):
-                    sector_name = _cell_text(raw.iat[ridx, sector_col])
-                    if not sector_name:
-                        continue
-                    value = _number(raw.iat[ridx, cidx])
-                    if pd.notna(value):
-                        sector_values.append((sector_name, float(value)))
-                reported_total = _number(raw.iat[grand_total_row, cidx])
-                if len(sector_values) < 10 or pd.isna(reported_total):
-                    continue
-                calculated_total = sum(value for _, value in sector_values)
-                if abs(calculated_total - float(reported_total)) <= max(2.0, abs(float(reported_total)) * 0.0005):
-                    valid_candidates.append((cidx, sector_values, float(reported_total)))
-
-            if not valid_candidates:
-                raise ValueError("No Equity / INR Cr Net Investment column reconciled with NSDL Grand Total; refusing to display zero or incorrect flows")
-
-            # Latest fortnight is the right-most candidate that reconciles exactly to NSDL's total.
-            flow_col, sector_values, reported_total = valid_candidates[-1]
             result = pd.DataFrame(sector_values, columns=[
                 "NSDL sector", "FPI net equity investment (₹ crore)"
             ])
-            if result.empty:
-                raise ValueError("NSDL report returned no validated sector rows")
-            if abs(result["FPI net equity investment (₹ crore)"].sum() - reported_total) > max(2.0, abs(reported_total) * 0.0005):
-                raise ValueError("NSDL sector-flow total validation failed")
-            report_label = report_date.strftime("%d %b %Y")
-            return result, report_label, report_url, None
+            result.attrs["validated_total"] = float(reported_total)
+            label = f"{report_date:%d %b %Y} · {report_period_label}"
+            return result, label, report_url, None
         except Exception as exc:
             errors.append(f"{report_date:%d %b %Y}: {exc}")
 
