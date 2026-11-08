@@ -2986,6 +2986,41 @@ if active_page == "Main Dashboard":
                         rising = pd.notna(row["1M vs NIFTY 500 (pp)"]) and row["1M vs NIFTY 500 (pp)"] >= 0
                         return "Leading" if ahead and rising else "Weakening" if ahead else "Improving" if rising else "Lagging"
                     micro_df["Zone"] = micro_df.apply(_micro_zone, axis=1)
+                    # Micro-sector institutional context is inherited only from an explicitly
+                    # mapped NSDL parent industry. It is labelled as parent context, never as
+                    # a direct micro-sector transaction figure.
+                    micro_fpi_group_crosswalk = {
+                        "Pharma": ["Healthcare"], "Healthcare": ["Healthcare"],
+                        "Technology": ["Information Technology"],
+                        "Telecom": ["Telecommunication"],
+                        "Financials": ["Financial Services"],
+                        "Chemicals": ["Chemicals"],
+                        "Consumer Durables": ["Consumer Durables"],
+                        "Consumer": ["Consumer Durables", "Consumer Services", "Fast Moving Consumer Goods"],
+                        "Auto": ["Automobile and Auto Components"],
+                        "Power": ["Power"],
+                        "Textiles": ["Textiles"],
+                        "Construction": ["Construction", "Construction Materials"],
+                        "Real Estate": ["Realty"],
+                        "Energy": ["Oil, Gas & Consumable Fuels"],
+                        "Utilities": ["Utilities"],
+                        "Services": ["Services"],
+                        "Media & Services": ["Media, Entertainment & Publication"],
+                    }
+                    micro_fpi_values = {}
+                    if "fpi_frame" in locals() and isinstance(fpi_frame, pd.DataFrame) and not fpi_frame.empty:
+                        micro_fpi_values = dict(zip(fpi_frame["NSDL sector"].astype(str), pd.to_numeric(fpi_frame["FPI net equity investment (₹ crore)"], errors="coerce")))
+                    micro_df["FPI parent industry context (₹ Cr)"] = micro_df["Group"].apply(
+                        lambda group: sum(float(micro_fpi_values[name]) for name in micro_fpi_group_crosswalk.get(str(group), [])
+                                          if name in micro_fpi_values and pd.notna(micro_fpi_values[name]))
+                        if any(name in micro_fpi_values and pd.notna(micro_fpi_values[name]) for name in micro_fpi_group_crosswalk.get(str(group), []))
+                        else np.nan
+                    )
+                    micro_df["FPI context mapping"] = micro_df["Group"].apply(
+                        lambda group: "Parent-industry context · not micro-sector flow"
+                        if any(name in micro_fpi_values and pd.notna(micro_fpi_values[name]) for name in micro_fpi_group_crosswalk.get(str(group), []))
+                        else "No direct NSDL parent mapping"
+                    )
                     micro_df = micro_df.sort_values("Score", ascending=False).reset_index(drop=True)
                     latest_dates = [s.index[-1] for s in [bench] if not s.empty]
                     asof = pd.Timestamp(latest_dates[0]).strftime("%d %b %Y") if latest_dates else "date unavailable"
@@ -3050,8 +3085,8 @@ if active_page == "Main Dashboard":
                     display_cols = ["Micro sector", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Stocks available"]
                     st.dataframe(zone_view[display_cols].sort_values("Score", ascending=False), use_container_width=True, hide_index=True)
                     st.subheader("Confirmation layer · micro-sector money flow and volume")
-                    st.caption("Average constituent MFI 14 and latest volume versus each stock's prior 20-session average. These fields do not change the existing composite Score or Zone. Sector-level institutional flows remain unavailable until a verified feed is connected.")
-                    micro_confirmation_cols = ["Micro sector", "Group", "Zone", "Average MFI 14", "Average volume vs 20D", "Flow confirmation", "Volume confirmation", "Institutional sector flow"]
+                    st.caption("Average constituent MFI 14 and latest volume versus each stock's prior 20-session average. NSDL FPI is shown only as parent-industry context where an explicit mapping exists; it is not represented as direct micro-sector flow. These fields do not change the existing composite Score or Zone.")
+                    micro_confirmation_cols = ["Micro sector", "Group", "Zone", "Average MFI 14", "Average volume vs 20D", "Flow confirmation", "Volume confirmation", "FPI parent industry context (₹ Cr)", "FPI context mapping"]
                     st.dataframe(micro_df[micro_confirmation_cols].sort_values("Average MFI 14", ascending=False, na_position="last"), use_container_width=True, hide_index=True)
                     st.caption("This list shows every available micro sector in each rotation zone—not only the top six cards.")
         
