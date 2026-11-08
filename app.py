@@ -2612,6 +2612,12 @@ if active_page == "Main Dashboard":
                     confirmation_view = sec[["Sector", "MFI 14", "Volume vs 20D avg", "Flow signal", "Volume signal", "Institutional sector flow", "Last source bar"]].copy()
                     confirmation_cols = ["Sector", "MFI 14", "Volume vs 20D avg", "Flow signal", "Volume signal", "Institutional sector flow", "Last source bar"]
                     st.dataframe(confirmation_view[confirmation_cols].sort_values("MFI 14", ascending=False, na_position="last"), use_container_width=True, hide_index=True)
+                    with st.expander("Institutional flow data sources · official reports", expanded=False):
+                        st.caption("These are separate source feeds with different reporting frequencies. They are not combined into a single daily sector-flow figure.")
+                        st.markdown("- **FPI sector allocation · fortnightly:** [NSDL sector-wise FPI report](https://www.fpi.nsdl.co.in/web/Reports/FPI_Fortnightly_Selection.aspx) · [CDSL FPI reports](https://www.cdslindia.com/Publications/ForeignPortInvestor.html)")
+                        st.markdown("- **Domestic mutual-fund holdings · monthly/periodic:** [AMFI portfolio disclosures](https://www.amfiindia.com/online-center/portfolio-disclosure) · changes in holdings are an allocation proxy, not direct DII net purchases.")
+                        st.markdown("- **Daily aggregate FII/FPI and DII activity:** [NSE FII/DII reports](https://www.nseindia.com/reports/fii-dii) · market-wide totals only, not sector-wise flows.")
+                        st.info("Next integration step: import and validate the official NSDL/CDSL sector report and AMFI portfolio files. Until their formats and dates are verified, sector-level institutional flow remains Unavailable rather than being estimated or fabricated.")
                     # Follow the same period selected for the climbers/fallers board above.
                     chart_metric = sector_metric
                     chart_period_label = {"1D": "1-day", "1W": "1-week", "3W": "3-week", "6W": "6-week"}[sector_period]
