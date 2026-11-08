@@ -124,25 +124,35 @@ def fetch_latest_fpi_sector_report():
             # headings differently to pandas/read_html.
             tables = pd.read_html(StringIO(response.text), header=None, displayed_only=False)
             if not tables:
-                raise ValueError("NSDL page contained no report table")
-            raw = tables[0].copy().fillna("")
-            if raw.empty or raw.shape[1] < 3:
-                raise ValueError("NSDL report table is empty or has too few columns")
+                raise ValueError("NSDL page contained no HTML tables")
 
             def _cell_text(value):
                 return re.sub(r"\\s+", " ", str(value)).strip()
 
-            # Locate the actual sector label column from the row containing 'Sectors'.
+            # NSDL pages contain several small navigation/summary tables before the
+            # actual sector report. Select the table that contains BOTH the Sectors
+            # header and Grand Total row; never assume tables[0] is the report.
+            raw = None
             sector_col = None
-            for ridx in range(min(12, len(raw))):
-                for cidx in range(raw.shape[1]):
-                    if _cell_text(raw.iat[ridx, cidx]).lower() == "sectors":
-                        sector_col = cidx
-                        break
-                if sector_col is not None:
+            for candidate_table in tables:
+                candidate = candidate_table.copy().fillna("")
+                if candidate.empty or candidate.shape[1] < 3:
+                    continue
+                candidate_sector_col = None
+                has_grand_total = False
+                for ridx in range(min(16, len(candidate))):
+                    for cidx in range(candidate.shape[1]):
+                        cell = _cell_text(candidate.iat[ridx, cidx]).lower().replace(" ", "")
+                        if cell == "sectors":
+                            candidate_sector_col = cidx
+                        if cell == "grandtotal":
+                            has_grand_total = True
+                if candidate_sector_col is not None and has_grand_total:
+                    raw = candidate
+                    sector_col = candidate_sector_col
                     break
-            if sector_col is None:
-                raise ValueError("Could not identify the NSDL Sectors column")
+            if raw is None or sector_col is None:
+                raise ValueError("Could not locate NSDL's full sector table with Sectors and Grand Total rows")
 
             # Identify candidate Equity / INR Cr columns under Net Investment headings.
             # Validate each candidate against NSDL's Grand Total row before accepting it;
