@@ -88,58 +88,83 @@ SECTOR_TICKERS = {
 
 @st.cache_data(ttl=21600, show_spinner=False)
 def fetch_latest_fpi_sector_report():
-    """Fetch latest fortnightly FPI sector investment from the official CDSL archive."""
-    listing_url = "https://www.cdslindia.com/Publications/ForeignPortInvestor.html"
-    headers = {"User-Agent": "Mozilla/5.0 MarketTerminal/1.0"}
-    try:
-        response = requests.get(listing_url, headers=headers, timeout=20)
-        response.raise_for_status()
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(response.text, "html.parser")
-        section = None
-        for heading in soup.find_all(["h3", "h4", "h5"]):
-            if "Fortnightly Sector-wise" in heading.get_text(" ", strip=True):
-                section = heading
-                break
-        if section is None:
-            raise ValueError("CDSL fortnightly sector report section was not found")
-        link = section.find_next("a", href=True)
-        if link is None:
-            raise ValueError("No latest CDSL sector report link was found")
-        report_url = requests.compat.urljoin(listing_url, link["href"])
-        report_label = link.get_text(" ", strip=True)
-        tables = pd.read_html(report_url, header=[0, 1, 2])
-        if not tables:
-            raise ValueError("No data table found in the CDSL report")
-        table = tables[0].copy()
-        if not isinstance(table.columns, pd.MultiIndex):
-            raise ValueError("Unexpected CDSL report column structure")
-        def _parts(column):
-            return [str(x).replace("\\n", " ").strip() for x in column]
-        candidates = []
-        for idx, col in enumerate(table.columns):
-            parts = _parts(col)
-            joined = " | ".join(parts).lower()
-            if "net investment" in joined and "equity" in joined and "in inr cr" in joined:
-                candidates.append(idx)
-        if not candidates:
-            raise ValueError("Could not identify the INR-crore equity net-investment column")
-        # CDSL lists the older fortnight before the latest fortnight; the final matching column is latest.
-        flow_col = table.columns[candidates[-1]]
-        sector_col = next((col for col in table.columns if any("sector" in str(x).lower() for x in col)), None)
-        if sector_col is None:
-            sector_col = table.columns[1]
-        result = pd.DataFrame({
-            "NSDL sector": table[sector_col].astype(str).str.strip(),
-            "FPI net equity investment (₹ crore)": pd.to_numeric(table[flow_col].astype(str).str.replace(",", "", regex=False).str.replace("—", "", regex=False), errors="coerce")
-        })
-        result = result[result["NSDL sector"].ne("") & result["NSDL sector"].ne("nan")]
-        result = result[result["FPI net equity investment (₹ crore)"].notna()]
-        if result.empty:
-            raise ValueError("The CDSL report returned no usable sector rows")
-        return result, report_label, report_url, None
-    except Exception as exc:
-        return pd.DataFrame(), "Unavailable", listing_url, str(exc)
+    """Fetch the latest published fortnightly sector-wise FPI equity flow report from NSDL."""
+    from datetime import date, timedelta
+    from io import StringIO
+    from calendar import monthrange
+
+    base_url = "https://pilot.fpi.nsdl.co.in/StaticReports/Fortnightly_Sector_wise_FII_Investment_Data/"
+    selection_url = "https://pilot.fpi.nsdl.co.in/Reports/FPI_Fortnightly_Selection.aspx"
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; MarketTerminal/1.0)", "Accept": "text/html,application/xhtml+xml"}
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+
+    # NSDL publishes static report pages named FIIInvestSector_MonDDYYYY.html.
+    # Probe the most recent fortnight-end dates; do not assume the newest date is already published.
+    candidate_dates = []
+    for offset in range(0, 5):
+        month_start = (today.replace(day=1) - pd.DateOffset(months=offset)).date()
+        last_day = monthrange(month_start.year, month_start.month)[1]
+        for day in (last_day, 15):
+            candidate = date(month_start.year, month_start.month, day)
+            if candidate <= today and candidate not in candidate_dates:
+                candidate_dates.append(candidate)
+    candidate_dates.sort(reverse=True)
+
+    errors = []
+    for report_date in candidate_dates:
+        suffix = report_date.strftime("%b%d%Y")
+        report_url = f"{base_url}FIIInvestSector_{suffix}.html"
+        try:
+            response = requests.get(report_url, headers=headers, timeout=18)
+            if response.status_code == 404:
+                continue
+            response.raise_for_status()
+            tables = pd.read_html(StringIO(response.text), header=[0, 1, 2])
+            if not tables:
+                raise ValueError("NSDL page contained no report table")
+            table = tables[0].copy()
+            if not isinstance(table.columns, pd.MultiIndex):
+                raise ValueError("Unexpected NSDL report header structure")
+
+            def _header_parts(column):
+                return [str(part).replace("\\n", " ").strip() for part in column]
+
+            flow_candidates = []
+            for idx, column in enumerate(table.columns):
+                joined = " | ".join(_header_parts(column)).lower()
+                if "net investment" in joined and "equity" in joined and "in inr cr" in joined:
+                    flow_candidates.append(idx)
+            if not flow_candidates:
+                raise ValueError("Could not identify the INR-crore equity net-investment column")
+
+            # Latest fortnight is the last Net Investment / Equity / INR Cr column in the report.
+            flow_col = table.columns[flow_candidates[-1]]
+            sector_col = next(
+                (column for column in table.columns
+                 if any("sector" in str(part).lower() for part in column)),
+                table.columns[1] if len(table.columns) > 1 else table.columns[0]
+            )
+            values = table[flow_col].astype(str).str.replace(",", "", regex=False).str.replace("—", "", regex=False).str.replace("-", "", regex=False)
+            result = pd.DataFrame({
+                "NSDL sector": table[sector_col].astype(str).str.strip(),
+                "FPI net equity investment (₹ crore)": pd.to_numeric(values, errors="coerce")
+            })
+            result = result[
+                result["NSDL sector"].ne("") &
+                result["NSDL sector"].ne("nan") &
+                result["NSDL sector"].str.lower().ne("grand total") &
+                result["FPI net equity investment (₹ crore)"].notna()
+            ]
+            if result.empty:
+                raise ValueError("NSDL report returned no usable sector rows")
+
+            report_label = report_date.strftime("%d %b %Y")
+            return result, report_label, report_url, None
+        except Exception as exc:
+            errors.append(f"{report_date:%d %b %Y}: {exc}")
+
+    detail = "; ".join(errors[-3:]) if errors else "No published report found in the latest five months"
+    return pd.DataFrame(), "Unavailable", selection_url, detail
 
 def _mfi_volume_confirmation(frame: pd.DataFrame, period: int = 14):
     """Calculate MFI and latest volume versus prior 20-session average from OHLCV."""
@@ -2669,15 +2694,15 @@ if active_page == "Main Dashboard":
                     confirmation_view = sec[["Sector", "MFI 14", "Volume vs 20D avg", "Flow signal", "Volume signal", "Institutional sector flow", "Last source bar"]].copy()
                     confirmation_cols = ["Sector", "MFI 14", "Volume vs 20D avg", "Flow signal", "Volume signal", "Institutional sector flow", "Last source bar"]
                     st.dataframe(confirmation_view[confirmation_cols].sort_values("MFI 14", ascending=False, na_position="last"), use_container_width=True, hide_index=True)
-                    with st.expander("Official FPI sector investment · CDSL / NSDL", expanded=True):
+                    with st.expander("Official FPI sector investment · NSDL", expanded=True):
                         fpi_frame, fpi_period, fpi_url, fpi_error = fetch_latest_fpi_sector_report()
                         if not fpi_frame.empty:
-                            st.caption(f"Official fortnightly FPI equity net investment · report period: {fpi_period} · source: CDSL / NSDL. Values are ₹ crore; positive = net investment, negative = net withdrawal.")
+                            st.caption(f"Official fortnightly FPI equity net investment · report period: {fpi_period} · source: NSDL. Values are ₹ crore; positive = net investment, negative = net withdrawal.")
                             st.dataframe(fpi_frame.sort_values("FPI net equity investment (₹ crore)", ascending=False), use_container_width=True, hide_index=True)
-                            st.markdown(f"[Open original CDSL report]({fpi_url})")
+                            st.markdown(f"[Open original NSDL report]({fpi_url})")
                         else:
                             st.warning(f"Official FPI sector report could not be parsed: {fpi_error or 'No report data returned'}. Existing rotation scores are unaffected.")
-                            st.markdown(f"[Open CDSL official FPI report archive]({fpi_url})")
+                            st.markdown(f"[Open NSDL official FPI report archive]({fpi_url})")
                         st.caption("This is FPI equity flow at NSDL/BSE industry-classification level, not DII flow and not a daily figure. It is displayed separately until a reviewed sector-name crosswalk is established.")
                     with st.expander("Institutional flow data sources · official reports", expanded=False):
                         st.caption("These are separate source feeds with different reporting frequencies. They are not combined into a single daily sector-flow figure.")
