@@ -144,7 +144,7 @@ def fetch_latest_fpi_sector_report():
                  if any("sector" in str(part).lower() for part in column)),
                 table.columns[1] if len(table.columns) > 1 else table.columns[0]
             )
-            values = table[flow_col].astype(str).str.replace(",", "", regex=False).str.replace("—", "", regex=False).str.replace("-", "", regex=False)
+            values = table[flow_col].astype(str).str.replace(",", "", regex=False).str.replace("—", "", regex=False)
             result = pd.DataFrame({
                 "NSDL sector": table[sector_col].astype(str).str.strip(),
                 "FPI net equity investment (₹ crore)": pd.to_numeric(values, errors="coerce")
