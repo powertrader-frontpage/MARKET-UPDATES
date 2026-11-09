@@ -1557,7 +1557,9 @@ if active_page == "Main Dashboard":
                     last, change, pct = snap
                     adr_date = pd.to_datetime(last["Date"], errors="coerce")
                     adr_age_days = (now_ist.date() - adr_date.date()).days if pd.notna(adr_date) else 999
-                    if pd.notna(pct) and 0 <= adr_age_days <= 2:
+                    # A Friday US ADR daily bar is normally three calendar days old on Monday.
+                    # Allow the weekend gap while still rejecting genuinely stale quotes.
+                    if pd.notna(pct) and 0 <= adr_age_days <= 3:
                         pct = float(pct)
                         score = 1 if pct > 0 else -1 if pct < 0 else 0
                         sentiment_parts.append((score, weight))
