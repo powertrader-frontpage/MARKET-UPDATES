@@ -3211,6 +3211,28 @@ if active_page == "Main Dashboard":
                     zone_view = micro_df if zone_filter == "All zones" else micro_df[micro_df["Zone"] == zone_filter]
                     display_cols = ["Micro sector", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Weekly positive breadth %", "Weekly strong breadth %", "Above 20 DMA %", "Above 50 DMA %", "20 DMA breadth change (pp)", "50 DMA breadth change (pp)", "Avg. distance from Weekly 200 EMA (%)", "Stocks in preferred 3–8% zone (%)", "Stocks above Weekly 200 EMA (%)", "Weekly 200 EMA status", "Stocks available"]
                     st.dataframe(zone_view[display_cols].sort_values("Score", ascending=False), use_container_width=True, hide_index=True)
+                    st.subheader("Visual ranking · micro-sectors with improving breadth")
+                    micro_breadth_rank = micro_df.copy()
+                    micro_breadth_rank["Breadth improvement score (pp)"] = micro_breadth_rank[["20 DMA breadth change (pp)", "50 DMA breadth change (pp)"]].mean(axis=1)
+                    micro_breadth_rank = micro_breadth_rank.dropna(subset=["Breadth improvement score (pp)"]).sort_values("Breadth improvement score (pp)", ascending=False).head(10)
+                    if not micro_breadth_rank.empty:
+                        micro_breadth_chart = px.bar(
+                            micro_breadth_rank.sort_values("Breadth improvement score (pp)", ascending=True),
+                            x=["20 DMA breadth change (pp)", "50 DMA breadth change (pp)"],
+                            y="Micro sector", orientation="h", barmode="group",
+                            title="Micro-sector constituent participation · latest session vs five sessions earlier",
+                            labels={"value":"Breadth change (percentage points)", "variable":"Breadth measure"},
+                            template="plotly_white",
+                            color_discrete_sequence=["#16a085", "#3b82f6"],
+                        )
+                        micro_breadth_chart.add_vline(x=0, line_color="#64748b", line_dash="dash")
+                        micro_breadth_chart.update_layout(height=max(360, 42 * len(micro_breadth_rank)), margin=dict(l=8,r=12,t=55,b=35), legend_title_text="", yaxis_title="", xaxis_title="Change in breadth (percentage points)")
+                        st.plotly_chart(micro_breadth_chart, use_container_width=True, config={"displaylogo":False}, key="micro_sector_breadth_improvement_ranking")
+                        st.caption("Top 10 micro-sectors ranked by average 20 DMA and 50 DMA breadth improvement. Positive bars indicate broader participation than five sessions earlier. This is a separate confirmation layer and does not alter the micro-sector Score or Zone.")
+                    else:
+                        st.info("Insufficient constituent history to rank micro-sector breadth improvement.")
+                    st.markdown("**Top micro-sectors · improving breadth detail**")
+                    st.dataframe(micro_breadth_rank.sort_values("Breadth improvement score (pp)", ascending=False), use_container_width=True, hide_index=True)
                     st.subheader("Confirmation layer · micro-sector money flow and volume")
                     st.caption("Average constituent MFI 14 and latest volume versus each stock's prior 20-session average. NSDL FPI is shown only as parent-industry context where an explicit mapping exists; it is not represented as direct micro-sector flow. These fields do not change the existing composite Score or Zone.")
                     micro_confirmation_cols = ["Micro sector", "Group", "Zone", "Weekly positive breadth %", "Weekly strong breadth %", "Above 20 DMA %", "Above 50 DMA %", "20 DMA breadth change (pp)", "50 DMA breadth change (pp)", "Avg. distance from Weekly 200 EMA (%)", "Stocks in preferred 3–8% zone (%)", "Stocks above Weekly 200 EMA (%)", "Weekly 200 EMA status", "Average MFI 14", "Average volume vs 20D", "Flow confirmation", "Volume confirmation", "FPI parent industry context (₹ Cr)", "FPI context mapping"]
