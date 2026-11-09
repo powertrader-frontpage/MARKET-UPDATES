@@ -2838,6 +2838,14 @@ if active_page == "Main Dashboard":
                 if sector_rows:
                     sec = pd.DataFrame(sector_rows).sort_values("Relative return vs NIFTY (pp)", ascending=False)
                     st.dataframe(sec, use_container_width=True, hide_index=True)
+                    sector_export = sec.copy()
+                    if "sector_breadth_df" in locals() and not sector_breadth_df.empty:
+                        sector_export = sector_export.merge(sector_breadth_df, on="Sector", how="left")
+                    st.download_button(
+                        "⬇ Download Sector Rotation CSV",
+                        sector_export.to_csv(index=False).encode("utf-8-sig"),
+                        file_name="sector_rotation_dashboard.csv", mime="text/csv", key="download_sector_rotation_csv"
+                    )
                     fpi_frame, fpi_period, fpi_url, fpi_error = fetch_latest_fpi_sector_report()
                     # Explicit crosswalk from NSDL/BSE industry categories to the dashboard's
                     # existing broad sector baskets. This is a separate confirmation overlay;
@@ -3034,6 +3042,7 @@ if active_page == "Main Dashboard":
                 if bench.empty:
                     st.warning("NIFTY 500 benchmark history is unavailable. Relative rotation scores are withheld until benchmark data is available.")
                 micro_rows = []
+                micro_stock_export_rows = []
                 micro_histories = {}
                 if not micro_raw.empty:
                     for micro_name, (micro_group, symbols) in MICRO_SECTORS.items():
@@ -3075,6 +3084,20 @@ if active_page == "Main Dashboard":
                             weekly_200_gap = _weekly_200_metrics(micro_weekly_raw, symbol)
                             if pd.notna(weekly_200_gap):
                                 weekly_200_distances.append(float(weekly_200_gap))
+                            stock_aligned_export = pd.concat([close.rename("stock"), bench.rename("bench")], axis=1).dropna() if not bench.empty else pd.DataFrame()
+                            rel1_export = ((stock_aligned_export["stock"].iloc[-1] / stock_aligned_export["stock"].iloc[-min(22, len(stock_aligned_export))] - 1) - (stock_aligned_export["bench"].iloc[-1] / stock_aligned_export["bench"].iloc[-min(22, len(stock_aligned_export))] - 1)) * 100 if len(stock_aligned_export) >= 22 else np.nan
+                            rel3_export = ((stock_aligned_export["stock"].iloc[-1] / stock_aligned_export["stock"].iloc[-min(64, len(stock_aligned_export))] - 1) - (stock_aligned_export["bench"].iloc[-1] / stock_aligned_export["bench"].iloc[-min(64, len(stock_aligned_export))] - 1)) * 100 if len(stock_aligned_export) >= 64 else np.nan
+                            micro_stock_export_rows.append({
+                                "Micro sector": micro_name, "Group": micro_group, "Stock": symbol.replace(".NS", ""),
+                                "Latest close": last, "1D %": ret1d, "1W %": ret1w, "1M %": ret1,
+                                "3M %": ret3, "6M %": ret6, "1Y %": ret1y,
+                                "1M vs NIFTY 500 (pp)": rel1_export, "3M vs NIFTY 500 (pp)": rel3_export,
+                                "Above 50 EMA": bool(last > ema50.iloc[-1]) if pd.notna(ema50.iloc[-1]) else None,
+                                "Weekly 200 EMA distance (%)": weekly_200_gap,
+                                "Weekly 200 EMA status": _weekly_200_status(weekly_200_gap),
+                                "MFI 14": stock_confirmation.get("MFI 14", np.nan),
+                                "Volume vs 20D avg": stock_confirmation.get("Volume vs 20D avg", np.nan),
+                            })
                             constituent_returns.append((ret1d, ret1w, ret1, ret3, ret6, ret1y))
                             constituent_breadth.append(float(last > float(ema50.iloc[-1])))
                             constituent_series.append(close / float(close.iloc[-min(127, len(close))]) * 100)
@@ -3149,6 +3172,25 @@ if active_page == "Main Dashboard":
                         else "No direct NSDL parent mapping"
                     )
                     micro_df = micro_df.sort_values("Score", ascending=False).reset_index(drop=True)
+                    micro_export = micro_df.drop(columns=["_raw_score"], errors="ignore").copy()
+                    micro_stock_export = pd.DataFrame(micro_stock_export_rows)
+                    download_cols = st.columns(3)
+                    with download_cols[0]:
+                        st.download_button(
+                            "⬇ Sector Rotation CSV",
+                            sector_export.to_csv(index=False).encode("utf-8-sig") if "sector_export" in locals() else pd.DataFrame(sector_rows).to_csv(index=False).encode("utf-8-sig"),
+                            file_name="sector_rotation_dashboard.csv", mime="text/csv", key="download_sector_rotation_csv_micro"
+                        )
+                    with download_cols[1]:
+                        st.download_button(
+                            "⬇ Micro Sector Rotation CSV", micro_export.to_csv(index=False).encode("utf-8-sig"),
+                            file_name="micro_sector_rotation_dashboard.csv", mime="text/csv", key="download_micro_sector_rotation_csv"
+                        )
+                    with download_cols[2]:
+                        st.download_button(
+                            "⬇ Micro-sector Stocks CSV", micro_stock_export.to_csv(index=False).encode("utf-8-sig"),
+                            file_name="micro_sector_constituent_stocks.csv", mime="text/csv", key="download_micro_sector_stocks_csv"
+                        )
                     latest_dates = [s.index[-1] for s in [bench] if not s.empty]
                     asof = pd.Timestamp(latest_dates[0]).strftime("%d %b %Y") if latest_dates else "date unavailable"
                     st.markdown(f"**Data date:** {asof} · **Micro sectors available:** {len(micro_df)} · **Constituent prices fetched:** {len(micro_tickers)-1}")
