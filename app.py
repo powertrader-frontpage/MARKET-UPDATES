@@ -3067,6 +3067,7 @@ if active_page == "Main Dashboard":
                             ret6 = (last / float(close.iloc[-min(127, len(close))]) - 1) * 100
                             ret1y = (last / float(close.iloc[0]) - 1) * 100
                             ema50 = close.ewm(span=50, adjust=False, min_periods=50).mean()
+                            stock_confirmation = {}
                             try:
                                 if isinstance(micro_raw.columns, pd.MultiIndex) and (symbol, "High") in micro_raw.columns:
                                     stock_ohlcv = micro_raw[symbol].rename_axis("Date").reset_index()
@@ -3174,19 +3175,13 @@ if active_page == "Main Dashboard":
                     micro_df = micro_df.sort_values("Score", ascending=False).reset_index(drop=True)
                     micro_export = micro_df.drop(columns=["_raw_score"], errors="ignore").copy()
                     micro_stock_export = pd.DataFrame(micro_stock_export_rows)
-                    download_cols = st.columns(3)
+                    download_cols = st.columns(2)
                     with download_cols[0]:
-                        st.download_button(
-                            "⬇ Sector Rotation CSV",
-                            sector_export.to_csv(index=False).encode("utf-8-sig") if "sector_export" in locals() else pd.DataFrame(sector_rows).to_csv(index=False).encode("utf-8-sig"),
-                            file_name="sector_rotation_dashboard.csv", mime="text/csv", key="download_sector_rotation_csv_micro"
-                        )
-                    with download_cols[1]:
                         st.download_button(
                             "⬇ Micro Sector Rotation CSV", micro_export.to_csv(index=False).encode("utf-8-sig"),
                             file_name="micro_sector_rotation_dashboard.csv", mime="text/csv", key="download_micro_sector_rotation_csv"
                         )
-                    with download_cols[2]:
+                    with download_cols[1]:
                         st.download_button(
                             "⬇ Micro-sector Stocks CSV", micro_stock_export.to_csv(index=False).encode("utf-8-sig"),
                             file_name="micro_sector_constituent_stocks.csv", mime="text/csv", key="download_micro_sector_stocks_csv"
