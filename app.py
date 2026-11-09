@@ -2694,6 +2694,34 @@ if active_page == "Main Dashboard":
                     "Infrastructure": ["LT.NS","ADANIPORTS.NS","ADANIENT.NS","SIEMENS.NS","ABB.NS","BHEL.NS","IRB.NS","KEC.NS","KALPATPOWR.NS","NBCC.NS"],
                     "Consumption": ["TITAN.NS","TRENT.NS","DMART.NS","ETERNAL.NS","NYKAA.NS","INDIGO.NS","JUBLFOOD.NS","PAGEIND.NS","ASIANPAINT.NS","HAVELLS.NS"],
                 }
+                all_sector_constituents = tuple(sorted({symbol for basket in SECTOR_STOCKS.values() for symbol in basket}))
+                @st.cache_data(ttl=900, show_spinner=False)
+                def _sector_breadth_download(symbols):
+                    try:
+                        return yf.download(list(symbols), period="1y", interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=False)
+                    except Exception:
+                        return pd.DataFrame()
+                sector_breadth_raw = _sector_breadth_download(all_sector_constituents)
+                def _sector_breadth_close(symbol):
+                    try:
+                        if isinstance(sector_breadth_raw.columns, pd.MultiIndex):
+                            if (symbol, "Close") in sector_breadth_raw.columns: return sector_breadth_raw[(symbol, "Close")].dropna()
+                            if ("Close", symbol) in sector_breadth_raw.columns: return sector_breadth_raw[("Close", symbol)].dropna()
+                        elif "Close" in sector_breadth_raw.columns: return sector_breadth_raw["Close"].dropna()
+                    except Exception: pass
+                    return pd.Series(dtype=float)
+                sector_breadth_rows = []
+                for broad_name, basket in SECTOR_STOCKS.items():
+                    breadth_data = _breadth_metrics_from_closes({sym: _sector_breadth_close(sym) for sym in basket})
+                    sector_breadth_rows.append({"Sector": broad_name, **breadth_data})
+                sector_breadth_df = pd.DataFrame(sector_breadth_rows)
+                if not sector_breadth_df.empty:
+                    st.subheader("Sector participation breadth · weekly improvement")
+                    st.caption("Equal-weight mapped constituents. Weekly positive = return above 0%; weekly strong = return at least +1%. DMA breadth changes compare the latest session with five sessions earlier. These are confirmation metrics, not changes to rotation scores.")
+                    st.markdown("**Sectors with improving breadth**")
+                    st.dataframe(sector_breadth_df.sort_values(["20 DMA breadth change (pp)", "50 DMA breadth change (pp)"], ascending=False).head(5), use_container_width=True, hide_index=True)
+                    st.markdown("**All sectors · participation snapshot**")
+                    st.dataframe(sector_breadth_df.sort_values("Weekly positive breadth %", ascending=False), use_container_width=True, hide_index=True)
                 with st.expander("Sector constituent stocks · stock-level rotation and transitions", expanded=True):
                     sector_choice = st.selectbox("Choose sector to inspect its stocks", sorted(SECTOR_STOCKS.keys()), key="sector_stock_rotation_choice")
                     sector_symbols = SECTOR_STOCKS[sector_choice]
@@ -2977,11 +3005,13 @@ if active_page == "Main Dashboard":
                         constituent_mfi = []
                         constituent_volume_ratio = []
                         weekly_200_distances = []
+                        micro_breadth_closes = {}
                         for symbol in symbols:
                             close = _micro_close(symbol)
                             if len(close) < 60:
                                 continue
                             close = close.sort_index()
+                            micro_breadth_closes[symbol] = close
                             last = float(close.iloc[-1])
                             ret1d = (last / float(close.iloc[-2]) - 1) * 100 if len(close) >= 2 else np.nan
                             ret1w = (last / float(close.iloc[-min(6, len(close))]) - 1) * 100
@@ -3024,7 +3054,8 @@ if active_page == "Main Dashboard":
                         weekly_200_preferred_pct = (sum(3 <= x <= 8 for x in weekly_200_distances) / len(weekly_200_distances) * 100) if weekly_200_distances else np.nan
                         weekly_200_above_pct = (sum(x > 0 for x in weekly_200_distances) / len(weekly_200_distances) * 100) if weekly_200_distances else np.nan
                         weekly_200_status = _weekly_200_status(avg_weekly_200_gap)
-                        micro_rows.append({"Micro sector": micro_name, "Group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1D %": avg1d, "1W %": avg1w, "1M %": avg1, "3M %": avg3, "6M %": avg6, "1Y %": avg1y, "50 EMA breadth %": breadth, "Average MFI 14": avg_mfi, "Average volume vs 20D": avg_volume_ratio, "Flow confirmation": mfi_signal, "Volume confirmation": volume_signal, "Institutional sector flow": "Unavailable · no verified sector-level feed", "Avg. distance from Weekly 200 EMA (%)": avg_weekly_200_gap, "Stocks in preferred 3–8% zone (%)": weekly_200_preferred_pct, "Stocks above Weekly 200 EMA (%)": weekly_200_above_pct, "Weekly 200 EMA status": weekly_200_status, "_raw_score": composite})
+                        micro_breadth = _breadth_metrics_from_closes(micro_breadth_closes)
+                        micro_rows.append({"Micro sector": micro_name, "Group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1D %": avg1d, "1W %": avg1w, "1M %": avg1, "3M %": avg3, "6M %": avg6, "1Y %": avg1y, "50 EMA breadth %": breadth, "Average MFI 14": avg_mfi, "Average volume vs 20D": avg_volume_ratio, "Flow confirmation": mfi_signal, "Volume confirmation": volume_signal, "Institutional sector flow": "Unavailable · no verified sector-level feed", "Avg. distance from Weekly 200 EMA (%)": avg_weekly_200_gap, "Stocks in preferred 3–8% zone (%)": weekly_200_preferred_pct, "Stocks above Weekly 200 EMA (%)": weekly_200_above_pct, "Weekly 200 EMA status": weekly_200_status, **micro_breadth, "_raw_score": composite})
                         if constituent_series:
                             aligned = pd.concat(constituent_series, axis=1).sort_index()
                             micro_histories[micro_name] = aligned.mean(axis=1)
@@ -3140,11 +3171,11 @@ if active_page == "Main Dashboard":
                     st.subheader("All micro sectors · current rotation status")
                     zone_filter = st.selectbox("Filter micro sectors by rotation zone", ["All zones", "Leading", "Improving", "Weakening", "Lagging"], key="micro_zone_filter")
                     zone_view = micro_df if zone_filter == "All zones" else micro_df[micro_df["Zone"] == zone_filter]
-                    display_cols = ["Micro sector", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Avg. distance from Weekly 200 EMA (%)", "Stocks in preferred 3–8% zone (%)", "Stocks above Weekly 200 EMA (%)", "Weekly 200 EMA status", "Stocks available"]
+                    display_cols = ["Micro sector", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Weekly positive breadth %", "Weekly strong breadth %", "Above 20 DMA %", "Above 50 DMA %", "20 DMA breadth change (pp)", "50 DMA breadth change (pp)", "Avg. distance from Weekly 200 EMA (%)", "Stocks in preferred 3–8% zone (%)", "Stocks above Weekly 200 EMA (%)", "Weekly 200 EMA status", "Stocks available"]
                     st.dataframe(zone_view[display_cols].sort_values("Score", ascending=False), use_container_width=True, hide_index=True)
                     st.subheader("Confirmation layer · micro-sector money flow and volume")
                     st.caption("Average constituent MFI 14 and latest volume versus each stock's prior 20-session average. NSDL FPI is shown only as parent-industry context where an explicit mapping exists; it is not represented as direct micro-sector flow. These fields do not change the existing composite Score or Zone.")
-                    micro_confirmation_cols = ["Micro sector", "Group", "Zone", "Avg. distance from Weekly 200 EMA (%)", "Stocks in preferred 3–8% zone (%)", "Stocks above Weekly 200 EMA (%)", "Weekly 200 EMA status", "Average MFI 14", "Average volume vs 20D", "Flow confirmation", "Volume confirmation", "FPI parent industry context (₹ Cr)", "FPI context mapping"]
+                    micro_confirmation_cols = ["Micro sector", "Group", "Zone", "Weekly positive breadth %", "Weekly strong breadth %", "Above 20 DMA %", "Above 50 DMA %", "20 DMA breadth change (pp)", "50 DMA breadth change (pp)", "Avg. distance from Weekly 200 EMA (%)", "Stocks in preferred 3–8% zone (%)", "Stocks above Weekly 200 EMA (%)", "Weekly 200 EMA status", "Average MFI 14", "Average volume vs 20D", "Flow confirmation", "Volume confirmation", "FPI parent industry context (₹ Cr)", "FPI context mapping"]
                     st.dataframe(micro_df[micro_confirmation_cols].sort_values("Average MFI 14", ascending=False, na_position="last"), use_container_width=True, hide_index=True)
                     st.caption("This list shows every available micro sector in each rotation zone—not only the top six cards.")
         
