@@ -2536,6 +2536,24 @@ if active_page == "Main Dashboard":
                 if distance <= 12: return "Acceptable · 8–12%"
                 return "Extended · >12%"
 
+            def _breadth_metrics_from_closes(close_map):
+                """Equal-weight constituent breadth; latest session vs five sessions earlier."""
+                a20, a50, p20, p50, positive, strong = [], [], [], [], [], []
+                for series in close_map.values():
+                    try:
+                        c = pd.to_numeric(series, errors="coerce").dropna().sort_index()
+                        if len(c) < 55: continue
+                        e20 = c.ewm(span=20, adjust=False, min_periods=20).mean()
+                        e50 = c.ewm(span=50, adjust=False, min_periods=50).mean()
+                        a20.append(float(c.iloc[-1] > e20.iloc[-1])); a50.append(float(c.iloc[-1] > e50.iloc[-1]))
+                        p20.append(float(c.iloc[-6] > e20.iloc[-6])); p50.append(float(c.iloc[-6] > e50.iloc[-6]))
+                        wr = (float(c.iloc[-1]) / float(c.iloc[-6]) - 1) * 100
+                        positive.append(float(wr > 0)); strong.append(float(wr >= 1))
+                    except Exception: continue
+                n = len(a20)
+                if not n: return {"Stocks measured":0,"Weekly positive breadth %":np.nan,"Weekly strong breadth %":np.nan,"Above 20 DMA %":np.nan,"Above 50 DMA %":np.nan,"20 DMA breadth change (pp)":np.nan,"50 DMA breadth change (pp)":np.nan}
+                return {"Stocks measured":n,"Weekly positive breadth %":float(np.mean(positive)*100),"Weekly strong breadth %":float(np.mean(strong)*100),"Above 20 DMA %":float(np.mean(a20)*100),"Above 50 DMA %":float(np.mean(a50)*100),"20 DMA breadth change (pp)":float((np.mean(a20)-np.mean(p20))*100),"50 DMA breadth change (pp)":float((np.mean(a50)-np.mean(p50))*100)}
+
             with st.expander("Sector rotation", expanded=False):
                 st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Sector rotation</div>""", unsafe_allow_html=True)
                 st.caption("Only sectors that return usable source rows are plotted. Relative strength is computed against NIFTY 50 over the selected lookback; it is not institutional money-flow data. Weekly 200 EMA distance is a separate confirmation using the sector index; Micro Sector Rotation aggregates constituent stocks.")
