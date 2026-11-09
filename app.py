@@ -2736,8 +2736,28 @@ if active_page == "Main Dashboard":
                 if not sector_breadth_df.empty:
                     st.subheader("Sector participation breadth · weekly improvement")
                     st.caption("Equal-weight mapped constituents. Weekly positive = return above 0%; weekly strong = return at least +1%. DMA breadth changes compare the latest session with five sessions earlier. These are confirmation metrics, not changes to rotation scores.")
-                    st.markdown("**Sectors with improving breadth**")
-                    st.dataframe(sector_breadth_df.sort_values(["20 DMA breadth change (pp)", "50 DMA breadth change (pp)"], ascending=False).head(5), use_container_width=True, hide_index=True)
+                    st.markdown("**Visual ranking · sectors with improving breadth**")
+                    breadth_rank = sector_breadth_df.copy()
+                    breadth_rank["Breadth improvement score (pp)"] = breadth_rank[["20 DMA breadth change (pp)", "50 DMA breadth change (pp)"]].mean(axis=1)
+                    breadth_rank = breadth_rank.dropna(subset=["Breadth improvement score (pp)"]).sort_values("Breadth improvement score (pp)", ascending=False).head(8)
+                    if not breadth_rank.empty:
+                        breadth_chart = px.bar(
+                            breadth_rank.sort_values("Breadth improvement score (pp)", ascending=True),
+                            x=["20 DMA breadth change (pp)", "50 DMA breadth change (pp)"],
+                            y="Sector", orientation="h", barmode="group",
+                            title="Change in constituent participation · latest session vs five sessions earlier",
+                            labels={"value":"Breadth change (percentage points)", "variable":"Breadth measure"},
+                            template="plotly_white",
+                            color_discrete_sequence=["#16a085", "#3b82f6"],
+                        )
+                        breadth_chart.add_vline(x=0, line_color="#64748b", line_dash="dash")
+                        breadth_chart.update_layout(height=max(340, 48 * len(breadth_rank)), margin=dict(l=8,r=12,t=55,b=35), legend_title_text="", yaxis_title="", xaxis_title="Change in breadth (percentage points)")
+                        st.plotly_chart(breadth_chart, use_container_width=True, config={"displaylogo":False}, key="sector_breadth_improvement_ranking")
+                        st.caption("Ranked by the average of 20 DMA and 50 DMA breadth changes. Positive bars indicate more constituents above the moving average than five sessions earlier; negative bars indicate deterioration. This ranking is a separate confirmation, not part of the existing sector score.")
+                    else:
+                        st.info("Insufficient constituent history to rank breadth improvement.")
+                    st.markdown("**Top five · improving breadth detail**")
+                    st.dataframe(breadth_rank.sort_values("Breadth improvement score (pp)", ascending=False).head(5), use_container_width=True, hide_index=True)
                     st.markdown("**All sectors · participation snapshot**")
                     st.dataframe(sector_breadth_df.sort_values("Weekly positive breadth %", ascending=False), use_container_width=True, hide_index=True)
                 with st.expander("Sector constituent stocks · stock-level rotation and transitions", expanded=True):
