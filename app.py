@@ -3292,6 +3292,51 @@ if active_page == "Main Dashboard":
                         st.warning(history_error)
                     elif history_data and history_data.get("snapshots"):
                         st.caption(f"Weekly archive: {len(history_data['snapshots'])} saved week(s) · latest {history_data['snapshots'][-1].get('week', 'unknown')}")
+                        if len(history_data["snapshots"]) >= 2:
+                            previous_snapshot, latest_snapshot = history_data["snapshots"][-2:]
+                            st.subheader("Week-on-week rotation transitions")
+                            st.caption(f"Comparing {previous_snapshot.get('week')} → {latest_snapshot.get('week')}. Zone rules are unchanged; transitions are calculated from archived weekly snapshots.")
+                            old_micro = pd.DataFrame(previous_snapshot.get("micro_sector_rotation", []))
+                            new_micro = pd.DataFrame(latest_snapshot.get("micro_sector_rotation", []))
+                            if not old_micro.empty and not new_micro.empty and {"Micro sector", "Zone"}.issubset(old_micro.columns) and {"Micro sector", "Zone"}.issubset(new_micro.columns):
+                                micro_changes = old_micro[["Micro sector", "Zone"]].merge(
+                                    new_micro[["Micro sector", "Zone"]], on="Micro sector", suffixes=(" previous", " current")
+                                )
+                                micro_changes = micro_changes[micro_changes["Zone previous"] != micro_changes["Zone current"]].copy()
+                                micro_changes["Transition"] = micro_changes["Zone previous"] + " → " + micro_changes["Zone current"]
+                                priority_changes = micro_changes[micro_changes["Transition"].isin(["Improving → Leading", "Lagging → Improving"])]
+                                if not priority_changes.empty:
+                                    st.dataframe(priority_changes[["Micro sector", "Transition"]], use_container_width=True, hide_index=True)
+                                else:
+                                    st.info("No Improving → Leading or Lagging → Improving micro-sector transitions between these two archived weeks.")
+                                with st.expander("All micro-sector zone changes", expanded=False):
+                                    st.dataframe(micro_changes[["Micro sector", "Transition"]], use_container_width=True, hide_index=True)
+                            old_stocks = pd.DataFrame(previous_snapshot.get("micro_sector_stocks", []))
+                            new_stocks = pd.DataFrame(latest_snapshot.get("micro_sector_stocks", []))
+                            stock_keys = {"Stock", "1M vs NIFTY 500 (pp)", "3M vs NIFTY 500 (pp)"}
+                            if not old_stocks.empty and not new_stocks.empty and stock_keys.issubset(old_stocks.columns) and stock_keys.issubset(new_stocks.columns):
+                                def _archived_stock_zone(frame):
+                                    out = frame.copy()
+                                    r1 = pd.to_numeric(out["1M vs NIFTY 500 (pp)"], errors="coerce")
+                                    r3 = pd.to_numeric(out["3M vs NIFTY 500 (pp)"], errors="coerce")
+                                    out["Archived stock zone"] = np.select(
+                                        [(r3 >= 0) & (r1 >= 0), (r3 >= 0) & (r1 < 0), (r3 < 0) & (r1 >= 0)],
+                                        ["Leading", "Weakening", "Improving"], default="Lagging"
+                                    )
+                                    return out
+                                old_s = _archived_stock_zone(old_stocks)[["Stock", "Micro sector", "Archived stock zone"]]
+                                new_s = _archived_stock_zone(new_stocks)[["Stock", "Micro sector", "Archived stock zone"]]
+                                stock_changes = old_s.merge(new_s, on=["Stock", "Micro sector"], suffixes=(" previous", " current"))
+                                stock_changes = stock_changes[stock_changes["Archived stock zone previous"] != stock_changes["Archived stock zone current"]].copy()
+                                stock_changes["Transition"] = stock_changes["Archived stock zone previous"] + " → " + stock_changes["Archived stock zone current"]
+                                priority_stocks = stock_changes[stock_changes["Transition"].isin(["Improving → Leading", "Lagging → Improving"])]
+                                st.markdown("**Stocks entering Leading or Improving**")
+                                if priority_stocks.empty:
+                                    st.info("No constituent stocks made either priority transition between these two archived weeks.")
+                                else:
+                                    st.dataframe(priority_stocks[["Micro sector", "Stock", "Transition"]], use_container_width=True, hide_index=True)
+                                with st.expander("All constituent stock zone changes", expanded=False):
+                                    st.dataframe(stock_changes[["Micro sector", "Stock", "Transition"]], use_container_width=True, hide_index=True)
                     download_cols = st.columns(2)
                     with download_cols[0]:
                         st.download_button(
