@@ -26,6 +26,93 @@ import re
 from urllib.parse import urlencode
 
 st.set_page_config(page_title="Market Intelligence Terminal", page_icon="📈", layout="wide")
+
+# Weekly rotation history is stored in the repository; the token is read only from Streamlit Secrets.
+ROTATION_HISTORY_PATH = "data/weekly_rotation_history.json"
+ROTATION_HISTORY_REPO = "powertrader-frontpage/MARKET-UPDATES"
+ROTATION_HISTORY_BRANCH = "phase1-fyers-main-dashboard-data"
+
+def _rotation_history_headers():
+    try:
+        token = str(st.secrets["MARKET_HISTORY_GITHUB_TOKEN"]).strip()
+    except Exception:
+        token = ""
+    if not token:
+        return None
+    return {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28"}
+
+def _rotation_history_read():
+    headers = _rotation_history_headers()
+    if not headers:
+        return None, None, "Add MARKET_HISTORY_GITHUB_TOKEN to Streamlit Secrets."
+    url = f"https://api.github.com/repos/{ROTATION_HISTORY_REPO}/contents/{ROTATION_HISTORY_PATH}"
+    try:
+        response = requests.get(url, headers=headers, params={"ref": ROTATION_HISTORY_BRANCH}, timeout=15)
+        if response.status_code == 404:
+            return {"snapshots": []}, None, None
+        response.raise_for_status()
+        payload = response.json()
+        raw = __import__("base64").b64decode(payload["content"]).decode("utf-8")
+        data = json.loads(raw)
+        if not isinstance(data, dict) or not isinstance(data.get("snapshots"), list):
+            raise ValueError("History file has an unexpected format.")
+        return data, payload.get("sha"), None
+    except Exception as exc:
+        return None, None, f"History read failed ({exc.__class__.__name__})."
+
+def _rotation_json_records(frame):
+    if frame is None or not isinstance(frame, pd.DataFrame) or frame.empty:
+        return []
+    safe = frame.copy().replace({np.nan: None})
+    return json.loads(safe.to_json(orient="records", date_format="iso"))
+
+def save_weekly_rotation_snapshot(sector_frame, micro_frame, stock_frame, force=False):
+    headers = _rotation_history_headers()
+    if not headers:
+        return False, "Configure MARKET_HISTORY_GITHUB_TOKEN in Streamlit Secrets to enable GitHub history."
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    iso = now.isocalendar()
+    week_key = f"{iso.year}-W{iso.week:02d}"
+    data, sha, error = _rotation_history_read()
+    if error:
+        return False, error
+    snapshots = data.get("snapshots", [])
+    existing = next((x for x in snapshots if x.get("week") == week_key), None)
+    # Keep one snapshot per week. A later Friday capture may replace an earlier manual baseline.
+    if existing and existing.get("captured_date") == now.strftime("%Y-%m-%d"):
+        return True, f"This week's snapshot is already saved ({week_key})."
+    if existing and not force and now.weekday() != 4:
+        return True, f"This week's snapshot already exists ({week_key}); Friday's automatic capture can refresh it."
+    snapshot = {
+        "week": week_key, "captured_at": now.isoformat(), "captured_date": now.strftime("%Y-%m-%d"),
+        "data_date": now.strftime("%Y-%m-%d"),
+        "sector_rotation": _rotation_json_records(sector_frame),
+        "micro_sector_rotation": _rotation_json_records(micro_frame),
+        "micro_sector_stocks": _rotation_json_records(stock_frame),
+    }
+    snapshots = [x for x in snapshots if x.get("week") != week_key]
+    snapshots.append(snapshot)
+    snapshots = sorted(snapshots, key=lambda x: x.get("week", ""))[-60:]
+    body = json.dumps({"schema_version": 1, "updated_at": now.isoformat(), "snapshots": snapshots},
+                      ensure_ascii=False, separators=(",", ":"))
+    import base64
+    payload = {"message": f"Archive weekly market rotation snapshot {week_key}",
+               "content": base64.b64encode(body.encode("utf-8")).decode("ascii"),
+               "branch": ROTATION_HISTORY_BRANCH}
+    if sha:
+        payload["sha"] = sha
+    try:
+        response = requests.put(
+            f"https://api.github.com/repos/{ROTATION_HISTORY_REPO}/contents/{ROTATION_HISTORY_PATH}",
+            headers=headers, json=payload, timeout=25
+        )
+        response.raise_for_status()
+        return True, f"Saved weekly rotation snapshot {week_key} to GitHub."
+    except Exception as exc:
+        return False, f"GitHub archive write failed ({exc.__class__.__name__})."
+
+
 st.markdown("""
 <style>
 .block-container{max-width:1600px;padding-top:2rem;padding-bottom:1.25rem;padding-left:clamp(.8rem,2vw,1.6rem);padding-right:clamp(.8rem,2vw,1.6rem)}
@@ -3177,6 +3264,34 @@ if active_page == "Main Dashboard":
                     micro_df = micro_df.sort_values("Score", ascending=False).reset_index(drop=True)
                     micro_export = micro_df.drop(columns=["_raw_score"], errors="ignore").copy()
                     micro_stock_export = pd.DataFrame(micro_stock_export_rows)
+
+                    # Capture one dated snapshot per ISO week. Friday after market close is automatic;
+                    # the button also allows an initial baseline to be saved immediately.
+                    sector_history_frame = sector_export.copy() if "sector_export" in locals() else pd.DataFrame(sector_rows)
+                    ist_now = datetime.now(ZoneInfo("Asia/Kolkata"))
+                    history_configured = _rotation_history_headers() is not None
+                    manual_history_save = st.button(
+                        "Save weekly history snapshot now",
+                        key="save_weekly_rotation_history",
+                        help="Saves the current sector, micro-sector and constituent-stock tables to the repository."
+                    )
+                    auto_history_due = ist_now.weekday() == 4 and (ist_now.hour, ist_now.minute) >= (15, 45)
+                    if manual_history_save or auto_history_due:
+                        ok, history_message = save_weekly_rotation_snapshot(
+                            sector_history_frame, micro_export, micro_stock_export,
+                            force=manual_history_save or auto_history_due
+                        )
+                        if ok:
+                            st.success(history_message)
+                        else:
+                            st.warning(history_message)
+                    elif not history_configured:
+                        st.info("Weekly history is ready to enable. Add MARKET_HISTORY_GITHUB_TOKEN to Streamlit Secrets; the dashboard will continue working without it.")
+                    history_data, history_sha, history_error = _rotation_history_read() if history_configured else (None, None, None)
+                    if history_error:
+                        st.warning(history_error)
+                    elif history_data and history_data.get("snapshots"):
+                        st.caption(f"Weekly archive: {len(history_data['snapshots'])} saved week(s) · latest {history_data['snapshots'][-1].get('week', 'unknown')}")
                     download_cols = st.columns(2)
                     with download_cols[0]:
                         st.download_button(
