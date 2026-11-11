@@ -3206,6 +3206,18 @@ if active_page == "Main Dashboard":
                             weekly_200_gap = _weekly_200_metrics(micro_weekly_raw, symbol)
                             if pd.notna(weekly_200_gap):
                                 weekly_200_distances.append(float(weekly_200_gap))
+                            daily_200_ema = close.ewm(span=200, adjust=False, min_periods=200).mean()
+                            daily_200_gap = ((last / float(daily_200_ema.iloc[-1])) - 1) * 100 if len(daily_200_ema) and pd.notna(daily_200_ema.iloc[-1]) else np.nan
+                            daily_200_cross = bool(len(close) >= 201 and pd.notna(daily_200_ema.iloc[-2]) and close.iloc[-2] <= daily_200_ema.iloc[-2] and last > daily_200_ema.iloc[-1])
+                            daily_200_signal = "Fresh cross above" if daily_200_cross else "Above 200 EMA · 0–3%" if pd.notna(daily_200_gap) and 0 < daily_200_gap <= 3 else "Outside scan"
+                            weekly_200_cross = False
+                            try:
+                                weekly_close = micro_weekly_raw[(symbol, "Close")].dropna() if isinstance(micro_weekly_raw.columns, pd.MultiIndex) and (symbol, "Close") in micro_weekly_raw.columns else micro_weekly_raw[("Close", symbol)].dropna() if isinstance(micro_weekly_raw.columns, pd.MultiIndex) and ("Close", symbol) in micro_weekly_raw.columns else pd.Series(dtype=float)
+                                weekly_ema200 = weekly_close.ewm(span=200, adjust=False, min_periods=200).mean()
+                                weekly_200_cross = bool(len(weekly_close) >= 201 and pd.notna(weekly_ema200.iloc[-2]) and weekly_close.iloc[-2] <= weekly_ema200.iloc[-2] and weekly_close.iloc[-1] > weekly_ema200.iloc[-1])
+                            except Exception:
+                                pass
+                            weekly_200_signal = "Fresh cross above" if weekly_200_cross else "Above 200 EMA · 0–3%" if pd.notna(weekly_200_gap) and 0 < weekly_200_gap <= 3 else "Outside scan"
                             stock_aligned_export = pd.concat([close.rename("stock"), bench.rename("bench")], axis=1).dropna() if not bench.empty else pd.DataFrame()
                             rel1_export = ((stock_aligned_export["stock"].iloc[-1] / stock_aligned_export["stock"].iloc[-min(22, len(stock_aligned_export))] - 1) - (stock_aligned_export["bench"].iloc[-1] / stock_aligned_export["bench"].iloc[-min(22, len(stock_aligned_export))] - 1)) * 100 if len(stock_aligned_export) >= 22 else np.nan
                             rel3_export = ((stock_aligned_export["stock"].iloc[-1] / stock_aligned_export["stock"].iloc[-min(64, len(stock_aligned_export))] - 1) - (stock_aligned_export["bench"].iloc[-1] / stock_aligned_export["bench"].iloc[-min(64, len(stock_aligned_export))] - 1)) * 100 if len(stock_aligned_export) >= 64 else np.nan
@@ -3215,8 +3227,11 @@ if active_page == "Main Dashboard":
                                 "3M %": ret3, "6M %": ret6, "1Y %": ret1y,
                                 "1M vs NIFTY 500 (pp)": rel1_export, "3M vs NIFTY 500 (pp)": rel3_export,
                                 "Above 50 EMA": bool(last > ema50.iloc[-1]) if pd.notna(ema50.iloc[-1]) else None,
+                                "Daily 200 EMA distance (%)": daily_200_gap,
+                                "Daily 200 EMA signal": daily_200_signal,
                                 "Weekly 200 EMA distance (%)": weekly_200_gap,
                                 "Weekly 200 EMA status": _weekly_200_status(weekly_200_gap),
+                                "Weekly 200 EMA signal": weekly_200_signal,
                                 "MFI 14": stock_confirmation.get("MFI 14", np.nan),
                                 "Volume vs 20D avg": stock_confirmation.get("Volume vs 20D avg", np.nan),
                             })
@@ -3258,6 +3273,36 @@ if active_page == "Main Dashboard":
                         rising = pd.notna(row["1M vs NIFTY 500 (pp)"]) and row["1M vs NIFTY 500 (pp)"] >= 0
                         return "Leading" if ahead and rising else "Weakening" if ahead else "Improving" if rising else "Lagging"
                     micro_df["Zone"] = micro_df.apply(_micro_zone, axis=1)
+                    # Stock-strength scan: constituents only from currently Leading/Improving micro sectors.
+                    eligible_micro_sectors = set(micro_df.loc[micro_df["Zone"].isin(["Leading", "Improving"]), "Micro sector"])
+                    strength_scan = pd.DataFrame(micro_stock_export_rows)
+                    if not strength_scan.empty and eligible_micro_sectors:
+                        strength_scan = strength_scan[strength_scan["Micro sector"].isin(eligible_micro_sectors)].copy()
+                        strength_scan["Daily 200 EMA distance (%)"] = pd.to_numeric(strength_scan["Daily 200 EMA distance (%)"], errors="coerce")
+                        strength_scan["Weekly 200 EMA distance (%)"] = pd.to_numeric(strength_scan["Weekly 200 EMA distance (%)"], errors="coerce")
+                        daily_qualifies = strength_scan["Daily 200 EMA signal"].isin(["Fresh cross above", "Above 200 EMA · 0–3%"])
+                        weekly_qualifies = strength_scan["Weekly 200 EMA signal"].isin(["Fresh cross above", "Above 200 EMA · 0–3%"])
+                        strength_scan = strength_scan[daily_qualifies | weekly_qualifies].copy()
+                        strength_scan["EMA setup"] = strength_scan.apply(
+                            lambda row: "Daily + Weekly" if row["Daily 200 EMA signal"] in ["Fresh cross above", "Above 200 EMA · 0–3%"] and row["Weekly 200 EMA signal"] in ["Fresh cross above", "Above 200 EMA · 0–3%"]
+                            else "Daily only" if row["Daily 200 EMA signal"] in ["Fresh cross above", "Above 200 EMA · 0–3%"] else "Weekly only", axis=1
+                        )
+                        strength_scan["Fresh crossover"] = strength_scan.apply(
+                            lambda row: "Yes" if row["Daily 200 EMA signal"] == "Fresh cross above" or row["Weekly 200 EMA signal"] == "Fresh cross above" else "No", axis=1
+                        )
+                        strength_scan = strength_scan.sort_values(
+                            ["Fresh crossover", "EMA setup", "Daily 200 EMA distance (%)", "Weekly 200 EMA distance (%)"],
+                            ascending=[False, True, True, True], na_position="last"
+                        )
+                    st.subheader("Stock strength scanner · Leading & Improving sectors")
+                    st.caption("Shows constituents of currently Leading or Improving micro sectors when either Daily or Weekly 200 EMA has a fresh upward crossover, or price is 0–3% above that EMA. Daily and Weekly signals are shown separately. Requires sufficient 200-period EMA history; public price data may be delayed.")
+                    if not strength_scan.empty:
+                        strength_cols = ["Micro sector", "Group", "Stock", "Latest close", "EMA setup", "Fresh crossover", "Daily 200 EMA distance (%)", "Daily 200 EMA signal", "Weekly 200 EMA distance (%)", "Weekly 200 EMA signal", "1D %", "1W %", "1M %", "3M %", "MFI 14", "Volume vs 20D avg"]
+                        strength_display = strength_scan[strength_cols].reset_index(drop=True)
+                        st.dataframe(_style_rotation_table(strength_display, transition_columns=("Daily 200 EMA signal", "Weekly 200 EMA signal")), use_container_width=True, hide_index=True)
+                        st.download_button("⬇ Download stock strength scanner CSV", strength_display.to_csv(index=False).encode("utf-8-sig"), file_name="leading_improving_200ema_strength.csv", mime="text/csv", key="download_leading_improving_200ema_strength")
+                    else:
+                        st.info("No qualifying stocks found in the current Leading/Improving micro sectors. This can also occur when 200-period EMA history is unavailable.")
                     # Micro-sector institutional context is inherited only from an explicitly
                     # mapped NSDL parent industry. It is labelled as parent context, never as
                     # a direct micro-sector transaction figure.
