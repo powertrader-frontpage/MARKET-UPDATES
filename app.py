@@ -441,7 +441,6 @@ with st.sidebar:
         "Navigate",
         [
             "Main Dashboard",
-            "NSE 500 Stage Screener",
             "Breakout Scanners",
             "Stage 2 B1 Fundamentals",
             "Sector Leadership & Heatmap",
@@ -2676,6 +2675,11 @@ if active_page == "Main Dashboard":
                 if not n: return {"Stocks measured":0,"Weekly positive breadth %":np.nan,"Weekly strong breadth %":np.nan,"Above 20 DMA %":np.nan,"Above 50 DMA %":np.nan,"20 DMA breadth change (pp)":np.nan,"50 DMA breadth change (pp)":np.nan}
                 return {"Stocks measured":n,"Weekly positive breadth %":float(np.mean(positive)*100),"Weekly strong breadth %":float(np.mean(strong)*100),"Above 20 DMA %":float(np.mean(a20)*100),"Above 50 DMA %":float(np.mean(a50)*100),"20 DMA breadth change (pp)":float((np.mean(a20)-np.mean(p20))*100),"50 DMA breadth change (pp)":float((np.mean(a50)-np.mean(p50))*100)}
 
+            st.markdown("---")
+            st.markdown("## NSE 500 · Relative Strength & Weinstein Stage Screener")
+            st.caption("NSE 500 Weinstein stages, Stage 2 quality, and confirmed daily breakout watch.")
+            render_nse500_screener()
+
             with st.expander("Sector rotation", expanded=False):
                 st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Sector rotation</div>""", unsafe_allow_html=True)
                 st.caption("Only sectors that return usable source rows are plotted. Relative strength is computed against NIFTY 50 over the selected lookback; it is not institutional money-flow data. Weekly 200 EMA distance is a separate confirmation using the sector index; Micro Sector Rotation aggregates constituent stocks.")
@@ -3669,11 +3673,6 @@ if active_page == "Main Dashboard":
         
         
         
-if active_page == "NSE 500 Stage Screener":
-    st.subheader("NSE 500 · Relative Strength & Weinstein Stage Screener")
-    render_nse500_screener()
-
-
 if active_page == "Breakout Scanners":
     from explosive_breakout_scanner import render_explosive_breakout_scanner
 
