@@ -327,6 +327,13 @@ def _calculate():
         gap_vs_10w = (price / float(avg10) - 1) * 100 if float(avg10) else np.nan
         base_count = int(base_frame[ticker].iloc[-1]) if ticker in base_frame.columns else 0
         fresh_b2 = bool(fresh_b2_frame[ticker].iloc[-1]) if ticker in fresh_b2_frame.columns else False
+        # Base phase is shown as context inside Stage 2, not as a standalone buy signal.
+        base_setup = (
+            "B1 · First base phase" if stage == STAGE_2 and base_count == 1 else
+            "B2 · Second base phase" if stage == STAGE_2 and base_count == 2 else
+            "B3+ · Later base phase" if stage == STAGE_2 and base_count >= 3 else
+            "—"
+        )
 
         extension = (
             "Extended" if gap >= 10 else
@@ -344,7 +351,8 @@ def _calculate():
             "5W / Prior 10W Volume": volume_contraction, "4W Range %": range4_pct,
             "Reclaimed 10W": reclaimed_10w,
             "Gap vs 10W %": gap_vs_10w, "Base Count": base_count,
-            "Fresh B2": fresh_b2, "Volume vs 10W Avg": volume_ratio,
+            "Base Setup": base_setup, "Fresh B2": fresh_b2,
+            "Volume vs 10W Avg": volume_ratio,
             "30W Avg": avg30,
             "Gap vs 30W %": gap, "52W High Gap %": high_gap,
             "Extension": extension, "30W Slope %": float(ma_slope), "Daily Change %": day_change,
@@ -545,7 +553,7 @@ def render_nse500_screener():
             st.caption("A ranking aid, not a prediction. Strict mode applies hard confirmation filters and shows up to 20 strongest candidates; Broad mode ranks every current Stage 2 stock.")
             quality_mode = st.radio("Stage 2 view", ["Strict · Top 20", "Broad · All Stage 2"], horizontal=True, key="nse500_quality_mode")
             quality_frame = strict_stage2 if quality_mode == "Strict · Top 20" else ranked_stage2
-            quality_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Breakout Quality", "Volume vs 10W Avg", "Sector Median RS", "30W Slope %", "Gap vs 30W %", "Base Count"]
+            quality_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Breakout Quality", "Base Setup", "Fresh B2", "Volume vs 10W Avg", "Sector Median RS", "30W Slope %", "Gap vs 30W %", "Base Count"]
             if quality_frame.empty:
                 st.info("No stocks currently meet all strict breakout-quality filters. Switch to Broad mode to inspect all Stage 2 stocks.")
             else:
@@ -555,7 +563,7 @@ def render_nse500_screener():
             st.markdown("#### v8 · Current Stage 2 Winner-Profile Watchlist")
             st.caption("All current Stage 2 stocks ranked by historical winner-profile resemblance. Uses 12W momentum, 13W excess vs NIFTY 500, 30W position/slope, prior 52W high and a current Stage 2 duration proxy (not historical B1 base duration). Research ranking only; not a probability or buy signal. Missing benchmark data earns no relative-strength points.")
             v8_frame = current_stage2.sort_values(["v8 Setup Score", "RS Rank"], ascending=[False, False])
-            v8_cols = ["Symbol", "Company", "Sector", "Price", "v8 Setup Score", "Prior 12W %", "13W Excess vs NIFTY500 (pp)", "RS Rank", "30W Slope %", "Gap vs 30W %", "Base Count", "New Stage 2"]
+            v8_cols = ["Symbol", "Company", "Sector", "Price", "v8 Setup Score", "Prior 12W %", "13W Excess vs NIFTY500 (pp)", "RS Rank", "30W Slope %", "Gap vs 30W %", "Base Setup", "Fresh B2", "Base Count", "New Stage 2"]
             st.dataframe(v8_frame[v8_cols], use_container_width=True, hide_index=True, height=400)
             st.download_button("Download v8 Stage 2 watchlist (CSV)", v8_frame[v8_cols].to_csv(index=False).encode("utf-8"), "nse500_v8_current_stage2.csv", "text/csv", key="download_nse500_v8_stage2")
 
@@ -762,7 +770,7 @@ def render_nse500_screener():
 
             st.markdown("#### Current Stage 2 watchlist · all confirmed uptrends")
             st.caption(f"{len(current_stage2)} NSE 500 stocks currently meet the Stage 2 rules; fresh entries are flagged separately above.")
-            stage2_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Gap vs 30W %", "Extension", "New Stage 2"]
+            stage2_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Base Setup", "Fresh B2", "Gap vs 30W %", "Extension", "New Stage 2"]
             st.dataframe(current_stage2[stage2_cols], use_container_width=True, hide_index=True, height=360)
             st.download_button(
                 "Download all Stage 2 stocks (CSV)",
