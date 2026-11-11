@@ -3290,11 +3290,19 @@ if active_page == "Main Dashboard":
                     }
                     eligible_micro_sectors = set(micro_df.loc[micro_df["Zone"].isin(["Leading", "Improving"]), "Micro sector"])
                     strength_scan = pd.DataFrame(micro_stock_export_rows)
-                    if not strength_scan.empty and eligible_micro_sectors and eligible_main_sectors:
+                    if not strength_scan.empty and eligible_micro_sectors:
                         strength_scan = strength_scan[strength_scan["Micro sector"].isin(eligible_micro_sectors)].copy()
                         strength_scan["Main sector"] = strength_scan["Group"].map(micro_group_to_main_sector)
-                        strength_scan = strength_scan[strength_scan["Main sector"].isin(eligible_main_sectors)].copy()
+                        # Where a broad-sector mapping exists, require its zone to be Leading/Improving.
+                        # Where no reliable mapping exists, retain the stock on its qualifying micro-sector
+                        # zone and label the broad-sector check as unavailable instead of excluding it.
                         strength_scan["Main sector zone"] = strength_scan["Main sector"].map(current_main_zones)
+                        mapped_rows = strength_scan["Main sector"].notna()
+                        strength_scan = strength_scan[
+                            (~mapped_rows) | strength_scan["Main sector zone"].isin(["Leading", "Improving"])
+                        ].copy()
+                        strength_scan["Main sector"] = strength_scan["Main sector"].fillna("Not mapped")
+                        strength_scan["Main sector zone"] = strength_scan["Main sector zone"].fillna("Not mapped · micro-sector only")
                         strength_scan["Micro sector zone"] = strength_scan["Micro sector"].map(
                             micro_df.set_index("Micro sector")["Zone"].to_dict()
                         )
@@ -3326,7 +3334,7 @@ if active_page == "Main Dashboard":
                                     aggregations[column] = "first"
                             strength_scan = strength_scan.groupby("Stock", as_index=False).agg(aggregations)
                     st.subheader("Stock strength scanner · Broad + Micro sectors")
-                    st.caption("A stock is eligible only when BOTH its mapped broad sector and its micro sector are currently Leading or Improving. Within that dual-qualified universe, either Daily or Weekly 200 EMA must show a fresh upward crossover or price 0–3% above the EMA. Unmapped micro groups are excluded. One row per stock; all qualifying micro-sector memberships are retained.")
+                    st.caption("A stock is eligible when its micro sector is Leading or Improving and, where a reliable broad-sector mapping exists, its broad sector is also Leading or Improving. Unmapped groups are retained and labelled "Not mapped · micro-sector only" rather than excluded. Within the eligible universe, either Daily or Weekly 200 EMA must show a fresh upward crossover or price 0–3% above the EMA. One row per stock; all qualifying micro-sector memberships are retained.")
                     if not strength_scan.empty:
                         strength_cols = ["Main sector", "Main sector zone", "Micro sector", "Micro sector zone", "Group", "Stock", "Latest close", "EMA setup", "Fresh crossover", "Daily 200 EMA distance (%)", "Daily 200 EMA signal", "Weekly 200 EMA distance (%)", "Weekly 200 EMA signal", "1D %", "1W %", "1M %", "3M %", "MFI 14", "Volume vs 20D avg"]
                         strength_display = strength_scan[strength_cols].reset_index(drop=True)
