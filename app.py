@@ -3273,11 +3273,31 @@ if active_page == "Main Dashboard":
                         rising = pd.notna(row["1M vs NIFTY 500 (pp)"]) and row["1M vs NIFTY 500 (pp)"] >= 0
                         return "Leading" if ahead and rising else "Weakening" if ahead else "Improving" if rising else "Lagging"
                     micro_df["Zone"] = micro_df.apply(_micro_zone, axis=1)
-                    # Stock-strength scan: constituents only from currently Leading/Improving micro sectors.
+                    # Dual-confirmation stock-strength scan: BOTH the mapped broad sector and
+                    # the micro sector must currently be Leading or Improving. Unmapped groups
+                    # are deliberately excluded rather than assigned an assumed parent sector.
+                    micro_group_to_main_sector = {
+                        "Pharma": "Pharma", "Technology": "IT", "Industrials": "Infrastructure",
+                        "Media & Services": "Media", "Financials": "Financial Services",
+                        "Consumer": "Consumption", "Consumer Durables": "Consumption",
+                        "Power": "Energy", "Auto": "Auto", "Construction": "Infrastructure",
+                        "Real Estate": "Realty",
+                    }
+                    current_main_zones = {item["Sector"]: item["Current zone"] for item in rotation_rows}
+                    eligible_main_sectors = {
+                        sector for sector, zone in current_main_zones.items()
+                        if zone in ["Leading", "Improving"]
+                    }
                     eligible_micro_sectors = set(micro_df.loc[micro_df["Zone"].isin(["Leading", "Improving"]), "Micro sector"])
                     strength_scan = pd.DataFrame(micro_stock_export_rows)
-                    if not strength_scan.empty and eligible_micro_sectors:
+                    if not strength_scan.empty and eligible_micro_sectors and eligible_main_sectors:
                         strength_scan = strength_scan[strength_scan["Micro sector"].isin(eligible_micro_sectors)].copy()
+                        strength_scan["Main sector"] = strength_scan["Group"].map(micro_group_to_main_sector)
+                        strength_scan = strength_scan[strength_scan["Main sector"].isin(eligible_main_sectors)].copy()
+                        strength_scan["Main sector zone"] = strength_scan["Main sector"].map(current_main_zones)
+                        strength_scan["Micro sector zone"] = strength_scan["Micro sector"].map(
+                            micro_df.set_index("Micro sector")["Zone"].to_dict()
+                        )
                         strength_scan["Daily 200 EMA distance (%)"] = pd.to_numeric(strength_scan["Daily 200 EMA distance (%)"], errors="coerce")
                         strength_scan["Weekly 200 EMA distance (%)"] = pd.to_numeric(strength_scan["Weekly 200 EMA distance (%)"], errors="coerce")
                         daily_qualifies = strength_scan["Daily 200 EMA signal"].isin(["Fresh cross above", "Above 200 EMA · 0–3%"])
@@ -3290,19 +3310,30 @@ if active_page == "Main Dashboard":
                         strength_scan["Fresh crossover"] = strength_scan.apply(
                             lambda row: "Yes" if row["Daily 200 EMA signal"] == "Fresh cross above" or row["Weekly 200 EMA signal"] == "Fresh cross above" else "No", axis=1
                         )
-                        strength_scan = strength_scan.sort_values(
-                            ["Fresh crossover", "EMA setup", "Daily 200 EMA distance (%)", "Weekly 200 EMA distance (%)"],
-                            ascending=[False, True, True, True], na_position="last"
-                        )
-                    st.subheader("Stock strength scanner · Leading & Improving sectors")
-                    st.caption("Shows constituents of currently Leading or Improving micro sectors when either Daily or Weekly 200 EMA has a fresh upward crossover, or price is 0–3% above that EMA. Daily and Weekly signals are shown separately. Requires sufficient 200-period EMA history; public price data may be delayed.")
+                        # One row per stock; retain all qualifying micro-sector memberships.
+                        if not strength_scan.empty:
+                            strength_scan = strength_scan.sort_values(
+                                ["Fresh crossover", "EMA setup", "Daily 200 EMA distance (%)", "Weekly 200 EMA distance (%)"],
+                                ascending=[False, True, True, True], na_position="last"
+                            )
+                            aggregations = {
+                                "Micro sector": lambda values: ", ".join(sorted(set(map(str, values)))),
+                                "Group": "first", "Main sector": "first",
+                                "Main sector zone": "first", "Micro sector zone": lambda values: ", ".join(sorted(set(map(str, values)))),
+                            }
+                            for column in strength_scan.columns:
+                                if column not in ["Stock"] and column not in aggregations:
+                                    aggregations[column] = "first"
+                            strength_scan = strength_scan.groupby("Stock", as_index=False).agg(aggregations)
+                    st.subheader("Stock strength scanner · Broad + Micro sectors")
+                    st.caption("A stock is eligible only when BOTH its mapped broad sector and its micro sector are currently Leading or Improving. Within that dual-qualified universe, either Daily or Weekly 200 EMA must show a fresh upward crossover or price 0–3% above the EMA. Unmapped micro groups are excluded. One row per stock; all qualifying micro-sector memberships are retained.")
                     if not strength_scan.empty:
-                        strength_cols = ["Micro sector", "Group", "Stock", "Latest close", "EMA setup", "Fresh crossover", "Daily 200 EMA distance (%)", "Daily 200 EMA signal", "Weekly 200 EMA distance (%)", "Weekly 200 EMA signal", "1D %", "1W %", "1M %", "3M %", "MFI 14", "Volume vs 20D avg"]
+                        strength_cols = ["Main sector", "Main sector zone", "Micro sector", "Micro sector zone", "Group", "Stock", "Latest close", "EMA setup", "Fresh crossover", "Daily 200 EMA distance (%)", "Daily 200 EMA signal", "Weekly 200 EMA distance (%)", "Weekly 200 EMA signal", "1D %", "1W %", "1M %", "3M %", "MFI 14", "Volume vs 20D avg"]
                         strength_display = strength_scan[strength_cols].reset_index(drop=True)
-                        st.dataframe(_style_rotation_table(strength_display, transition_columns=("Daily 200 EMA signal", "Weekly 200 EMA signal")), use_container_width=True, hide_index=True)
+                        st.dataframe(_style_rotation_table(strength_display, zone_columns=("Main sector zone", "Micro sector zone"), transition_columns=("Daily 200 EMA signal", "Weekly 200 EMA signal")), use_container_width=True, hide_index=True)
                         st.download_button("⬇ Download stock strength scanner CSV", strength_display.to_csv(index=False).encode("utf-8-sig"), file_name="leading_improving_200ema_strength.csv", mime="text/csv", key="download_leading_improving_200ema_strength")
                     else:
-                        st.info("No qualifying stocks found in the current Leading/Improving micro sectors. This can also occur when 200-period EMA history is unavailable.")
+                        st.info("No qualifying stocks found where BOTH broad and micro sectors are Leading/Improving and the stock meets the Daily/Weekly 200 EMA rules. Unmapped micro groups and sectors without a valid current rotation zone are excluded.")
                     # Micro-sector institutional context is inherited only from an explicitly
                     # mapped NSDL parent industry. It is labelled as parent context, never as
                     # a direct micro-sector transaction figure.
