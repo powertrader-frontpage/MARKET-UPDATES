@@ -433,6 +433,26 @@ def _calculate():
     result["RS vs Industry 4W (pp)"] = result["4W Return %"] - result.groupby("Industry")["4W Return %"].transform("median")
     result["RS vs Industry 12W (pp)"] = result["12W Return %"] - result.groupby("Industry")["12W Return %"].transform("median")
 
+    # Sector leadership is context for the daily breakout watch, not a stock-selection filter.
+    universe_median_4w = pd.to_numeric(result["4W Return %"], errors="coerce").median()
+    universe_median_12w = pd.to_numeric(result["12W Return %"], errors="coerce").median()
+    sector_medians = result.groupby("Sector").agg(
+        _sector_4w=("4W Return %", "median"),
+        _sector_12w=("12W Return %", "median"),
+    )
+    sector_medians["Sector 4W RS vs NSE 500 (pp)"] = sector_medians["_sector_4w"] - universe_median_4w
+    sector_medians["Sector 12W RS vs NSE 500 (pp)"] = sector_medians["_sector_12w"] - universe_median_12w
+    sector_medians["Sector Strength"] = np.select(
+        [
+            (sector_medians["Sector 4W RS vs NSE 500 (pp)"] > 0) & (sector_medians["Sector 12W RS vs NSE 500 (pp)"] > 0),
+            (sector_medians["Sector 4W RS vs NSE 500 (pp)"] > 0) & (sector_medians["Sector 12W RS vs NSE 500 (pp)"] <= 0),
+            (sector_medians["Sector 4W RS vs NSE 500 (pp)"] <= 0) & (sector_medians["Sector 12W RS vs NSE 500 (pp)"] > 0),
+        ],
+        ["Leading", "Improving", "Weakening"],
+        default="Lagging",
+    )
+    result = result.join(sector_medians[["Sector 4W RS vs NSE 500 (pp)", "Sector 12W RS vs NSE 500 (pp)", "Sector Strength"]], on="Sector")
+
     sector_rows = []
     for sector, group in result.groupby("Sector", dropna=False):
         changes = pd.to_numeric(group["Daily Change %"], errors="coerce").dropna()
@@ -611,11 +631,16 @@ def render_nse500_screener():
             daily_breakouts = results[(results["Stage"] == STAGE_2) & results["Daily Breakout"]].copy()
             daily_breakouts = daily_breakouts.sort_values(["Daily Breakout Volume / 20D", "RS Rank"], ascending=[False, False], na_position="last")
             st.markdown("#### Daily Stage 2 Breakout Watch · confirmed closes")
-            st.caption("Only existing Weinstein Stage 2 stocks. A signal requires the latest completed daily close to finish above the highest high of the prior 20 trading sessions. Volume ≥1.5× the prior 20-session average is highlighted as confirmation, but is not a mandatory filter. Yahoo Finance daily data may be delayed.")
+            st.caption("Only existing Weinstein Stage 2 stocks. A signal requires the latest completed daily close to finish above the highest high of the prior 20 trading sessions. Sector Strength is context based on sector median 4W/12W returns versus the NSE 500 median: Leading (both positive), Improving (4W positive only), Weakening (12W positive only), or Lagging (both non-positive). It never removes a breakout candidate. Yahoo Finance daily data may be delayed.")
             if daily_breakouts.empty:
                 st.info("No confirmed daily 20-session resistance breakouts among current Stage 2 stocks.")
             else:
-                daily_breakout_cols = ["Symbol", "Company", "Sector", "Price", "Daily Breakout Date", "Daily Breakout Close", "Daily Breakout Resistance", "Daily Breakout Volume / 20D", "RS Rank", "Base Setup"]
+                strength_order = ["Leading", "Improving", "Neutral", "Weakening", "Lagging"]
+                strength_counts = daily_breakouts["Sector Strength"].value_counts()
+                summary_cols = st.columns(4)
+                for col, label in zip(summary_cols, ["Leading", "Improving", "Weakening", "Lagging"]):
+                    col.metric(label, int(strength_counts.get(label, 0)))
+                daily_breakout_cols = ["Symbol", "Company", "Sector", "Sector Strength", "Sector 4W RS vs NSE 500 (pp)", "Sector 12W RS vs NSE 500 (pp)", "Price", "Daily Breakout Date", "Daily Breakout Close", "Daily Breakout Resistance", "Daily Breakout Volume / 20D", "RS Rank", "Base Setup"]
                 st.dataframe(daily_breakouts[daily_breakout_cols], use_container_width=True, hide_index=True, height=min(420, 45 + 38 * len(daily_breakouts)))
                 st.download_button("Download Daily Stage 2 Breakout Watch (CSV)", daily_breakouts[daily_breakout_cols].to_csv(index=False).encode("utf-8"), "nse500_daily_stage2_breakout_watch.csv", "text/csv", key="download_nse500_daily_stage2_breakouts")
 
