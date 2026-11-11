@@ -316,9 +316,35 @@ def _calculate():
         ticker_daily = prices[ticker].dropna()
         if ticker_daily.empty:
             continue
+        # Confirmed alerts use completed daily bars only; ignore today's forming candle before 15:45 IST.
+        confirmed_daily = ticker_daily.copy()
+        now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+        if not confirmed_daily.empty and confirmed_daily.index[-1].date() == now_ist.date() and now_ist.time() < time(15, 45):
+            confirmed_daily = confirmed_daily.iloc[:-1]
         price = float(ticker_daily.iloc[-1])
         ticker_price_date = ticker_daily.index[-1]
         previous_daily_price = float(ticker_daily.iloc[-2]) if len(ticker_daily) > 1 else np.nan
+        daily_breakout_close = np.nan
+        daily_breakout_resistance = np.nan
+        daily_breakout_volume_ratio = np.nan
+        daily_breakout_date = "—"
+        daily_breakout = False
+        if len(confirmed_daily) >= 21 and ticker in daily_high.columns:
+            aligned_high = daily_high[ticker].reindex(confirmed_daily.index)
+            prior_resistance = aligned_high.shift(1).rolling(20, min_periods=20).max()
+            last_date = confirmed_daily.index[-1]
+            last_resistance = prior_resistance.loc[last_date]
+            if pd.notna(last_resistance) and float(last_resistance) > 0:
+                daily_breakout_close = float(confirmed_daily.loc[last_date])
+                daily_breakout_resistance = float(last_resistance)
+                daily_breakout = daily_breakout_close > daily_breakout_resistance
+                daily_breakout_date = pd.Timestamp(last_date).strftime("%d %b %Y")
+                if ticker in daily_volume.columns:
+                    vol_series = pd.to_numeric(daily_volume[ticker].reindex(confirmed_daily.index), errors="coerce")
+                    avg20_vol = vol_series.shift(1).rolling(20, min_periods=20).mean().loc[last_date]
+                    current_vol = vol_series.loc[last_date]
+                    if pd.notna(avg20_vol) and float(avg20_vol) > 0 and pd.notna(current_vol):
+                        daily_breakout_volume_ratio = float(current_vol / avg20_vol)
         avg30 = float(ma30_now[ticker])
         avg10 = ma10_now.get(ticker)
         prev_avg10 = ma10_prev.get(ticker)
@@ -389,6 +415,11 @@ def _calculate():
             "30W Avg": avg30,
             "Gap vs 30W %": gap, "52W High Gap %": high_gap,
             "Extension": extension, "30W Slope %": float(ma_slope), "Daily Change %": day_change,
+            "Daily Breakout": bool(stage == STAGE_2 and daily_breakout),
+            "Daily Breakout Close": daily_breakout_close,
+            "Daily Breakout Resistance": daily_breakout_resistance,
+            "Daily Breakout Volume / 20D": daily_breakout_volume_ratio,
+            "Daily Breakout Date": daily_breakout_date,
         })
 
     result = pd.DataFrame(records)
@@ -576,6 +607,17 @@ def render_nse500_screener():
                 st.warning("The latest market-data date could not be verified. Check the source before using these prices.")
             if st.session_state.get("nse500_rs_stage_last_error"):
                 st.warning("The latest refresh failed. The table below is the last successful scan, not confirmed current data: " + st.session_state["nse500_rs_stage_last_error"])
+
+            daily_breakouts = results[(results["Stage"] == STAGE_2) & results["Daily Breakout"]].copy()
+            daily_breakouts = daily_breakouts.sort_values(["Daily Breakout Volume / 20D", "RS Rank"], ascending=[False, False], na_position="last")
+            st.markdown("#### Daily Stage 2 Breakout Watch · confirmed closes")
+            st.caption("Only existing Weinstein Stage 2 stocks. A signal requires the latest completed daily close to finish above the highest high of the prior 20 trading sessions. Volume ≥1.5× the prior 20-session average is highlighted as confirmation, but is not a mandatory filter. Yahoo Finance daily data may be delayed.")
+            if daily_breakouts.empty:
+                st.info("No confirmed daily 20-session resistance breakouts among current Stage 2 stocks.")
+            else:
+                daily_breakout_cols = ["Symbol", "Company", "Sector", "Price", "Daily Breakout Date", "Daily Breakout Close", "Daily Breakout Resistance", "Daily Breakout Volume / 20D", "RS Rank", "Base Setup"]
+                st.dataframe(daily_breakouts[daily_breakout_cols], use_container_width=True, hide_index=True, height=min(420, 45 + 38 * len(daily_breakouts)))
+                st.download_button("Download Daily Stage 2 Breakout Watch (CSV)", daily_breakouts[daily_breakout_cols].to_csv(index=False).encode("utf-8"), "nse500_daily_stage2_breakout_watch.csv", "text/csv", key="download_nse500_daily_stage2_breakouts")
 
             fresh = results[results["New Stage 2"]].copy().sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False])
             current_stage2 = results[results["Stage"] == STAGE_2].copy().sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False])
