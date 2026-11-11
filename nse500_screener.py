@@ -84,6 +84,35 @@ def _daily_ohlc(tickers):
     return combine(close_parts), combine(high_parts), combine(low_parts), combine(volume_parts)
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def _nifty500_benchmark_daily_close():
+    """Fetch NIFTY 500 benchmark separately; it is not an NSE 500 constituent."""
+    raw = yf.download(
+        tickers="^CRSLDX", period="2y", interval="1d", auto_adjust=True,
+        group_by="column", threads=False, progress=False, timeout=25,
+    )
+    if raw is None or raw.empty:
+        return pd.Series(dtype="float64", name="^CRSLDX")
+    if isinstance(raw.columns, pd.MultiIndex):
+        level0 = list(map(str, raw.columns.get_level_values(0)))
+        level1 = list(map(str, raw.columns.get_level_values(1)))
+        if "Close" in level0:
+            close = raw.xs("Close", axis=1, level=0)
+        elif "Close" in level1:
+            close = raw.xs("Close", axis=1, level=1)
+        else:
+            return pd.Series(dtype="float64", name="^CRSLDX")
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+    else:
+        if "Close" not in raw.columns:
+            return pd.Series(dtype="float64", name="^CRSLDX")
+        close = raw["Close"]
+    close = pd.to_numeric(close, errors="coerce").dropna()
+    close.name = "^CRSLDX"
+    return close
+
+
 def _pine_rma(series, length):
     """TradingView ta.rma(): SMA seed followed by Wilder's recursive moving average."""
     values = pd.to_numeric(series, errors="coerce")
@@ -209,6 +238,8 @@ def _calculate():
         raise ValueError("Insufficient daily history returned for a full-universe scan.")
     prices = prices.apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
     weekly_all = prices.resample("W-FRI").last().dropna(how="all")
+    benchmark_daily = _nifty500_benchmark_daily_close()
+    benchmark_weekly_all = benchmark_daily.resample("W-FRI").last() if not benchmark_daily.empty else pd.Series(dtype="float64", name="^CRSLDX")
     weekly_high_all = daily_high.resample("W-FRI").max().reindex(weekly_all.index) if not daily_high.empty else pd.DataFrame(index=weekly_all.index)
     weekly_low_all = daily_low.resample("W-FRI").min().reindex(weekly_all.index) if not daily_low.empty else pd.DataFrame(index=weekly_all.index)
     weekly_volume_all = daily_volume.resample("W-FRI").sum(min_count=1).reindex(weekly_all.index) if not daily_volume.empty else pd.DataFrame(index=weekly_all.index)
@@ -232,6 +263,8 @@ def _calculate():
         weekly_volume = weekly_volume_all.reindex(weekly.index)
     if len(weekly) < 34:
         raise ValueError("Not enough completed weekly bars after excluding the in-progress week.")
+
+    benchmark_weekly = benchmark_weekly_all.reindex(weekly.index)
 
     # Weekly series below is deliberately completed-week-only for Weinstein stages.
     # Display prices and daily breadth use the newest available daily close.
@@ -420,7 +453,7 @@ def _calculate():
     # Strict list requires strong RS/trend/volume/sector confirmation and avoids extended entries.
     # v8 historical setup resemblance, applied to ALL current Stage 2 stocks.
     # Not a calibrated probability; no changes to Weinstein stages or existing quality rules.
-    benchmark_series = weekly["^CRSLDX"] if "^CRSLDX" in weekly else pd.Series(dtype=float)
+    benchmark_series = benchmark_weekly
     benchmark_13w = ((benchmark_series.iloc[-1] / benchmark_series.iloc[-14] - 1) * 100) if len(benchmark_series) >= 14 and pd.notna(benchmark_series.iloc[-14]) and benchmark_series.iloc[-14] > 0 else np.nan
     prior_52w_high = weekly.shift(1).tail(52).max()
     score_map = {}
