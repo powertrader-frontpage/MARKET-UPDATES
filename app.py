@@ -3935,6 +3935,7 @@ if active_page == "Sector Leadership & Heatmap":
                 for period, ema in ema_values.items():
                     row[f"Above {period} EMA"] = bool(latest > float(ema.iloc[-1])) if pd.notna(ema.iloc[-1]) else np.nan
                 row["Positive 1W"] = bool(latest > float(series.iloc[-6])) if len(series) >= 6 else np.nan
+                row["Negative 1W"] = bool(latest < float(series.iloc[-6])) if len(series) >= 6 else np.nan
                 row["Positive 1M"] = bool(latest > float(series.iloc[-22])) if len(series) >= 22 else np.nan
                 row["Return 1M %"] = (latest / float(series.iloc[-22]) - 1) * 100 if len(series) >= 22 and float(series.iloc[-22]) else np.nan
                 aligned = pd.concat([series.rename("stock"), benchmark.rename("benchmark")], axis=1).dropna()
@@ -3946,6 +3947,8 @@ if active_page == "Sector Leadership & Heatmap":
                 else:
                     row["1M vs NIFTY 500 (pp)"] = np.nan
                     row["Outperforming NIFTY 500"] = np.nan
+                prior_20_close_high = series.iloc[-21:-1].max() if len(series) >= 21 else np.nan
+                row["Fresh 20D closing high"] = bool(latest >= float(prior_20_close_high)) if pd.notna(prior_20_close_high) else np.nan
                 recent_high = highs[ticker].dropna().tail(20).max() if highs is not None and not highs.empty and ticker in highs.columns else np.nan
                 row["Near 20D high"] = bool(latest >= float(recent_high) * 0.995) if pd.notna(recent_high) and recent_high else np.nan
                 records.append(row)
@@ -3966,11 +3969,15 @@ if active_page == "Sector Leadership & Heatmap":
                     "Above 100 EMA %": "Above 100 EMA", "Above 200 EMA %": "Above 200 EMA",
                     "Positive 1W %": "Positive 1W", "Positive 1M %": "Positive 1M",
                     "Outperforming NIFTY 500 %": "Outperforming NIFTY 500",
+                    "Fresh 20D closing highs %": "Fresh 20D closing high",
                     "Near 20D high %": "Near 20D high",
                 }
                 for output, source in fields.items():
                     values = frame[source].dropna()
                     out[output] = float(values.astype(float).mean() * 100) if len(values) else np.nan
+                out["Advances 1W"] = int(frame["Positive 1W"].fillna(False).sum())
+                out["Declines 1W"] = int(frame["Negative 1W"].fillna(False).sum())
+                out["Advance / Decline ratio 1W"] = out["Advances 1W"] / out["Declines 1W"] if out["Declines 1W"] else np.inf if out["Advances 1W"] else np.nan
                 out["Average 1M relative return (pp)"] = pd.to_numeric(frame["1M vs NIFTY 500 (pp)"], errors="coerce").mean()
                 out["Breadth vs RS quadrant"] = (
                     "Broad leadership" if pd.notna(out["Above 50 EMA %"]) and out["Above 50 EMA %"] >= 60 and pd.notna(out["Outperforming NIFTY 500 %"]) and out["Outperforming NIFTY 500 %"] >= 50
