@@ -16,6 +16,7 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 import streamlit.components.v1 as components
 import yfinance as yf
+import nse500_screener as nse500_data
 from nse500_screener import render_nse500_screener
 
 import hashlib
@@ -3899,6 +3900,140 @@ if active_page == "Sector Leadership & Heatmap":
             else:
                 st.info("Weekly sector momentum is temporarily unavailable because usable 3-month daily history was not returned.")
             
+    with st.expander("Breadth Intelligence · NIFTY 500, sectors & micro-sectors", expanded=False):
+        st.markdown("### Breadth Intelligence")
+        st.caption("Measures participation separately from relative performance. Uses the official NIFTY 500 constituent list and adjusted daily prices. Percentages are equal-weighted; missing histories are excluded rather than treated as weak.")
+        @st.cache_data(ttl=900, show_spinner=False)
+        def _breadth_intelligence_frame():
+            universe = nse500_data._constituents()
+            tickers = tuple(universe["Ticker"].astype(str).tolist())
+            closes, highs, _, _ = nse500_data._daily_ohlc(tickers)
+            if closes is None or closes.empty:
+                return pd.DataFrame(), "NIFTY 500 daily price history is unavailable."
+            closes = closes.apply(pd.to_numeric, errors="coerce").sort_index()
+            benchmark = closes.mean(axis=1, skipna=True).dropna()
+            if benchmark.empty:
+                return pd.DataFrame(), "A usable equal-weight NIFTY 500 benchmark could not be calculated."
+            records = []
+            for _, item in universe.iterrows():
+                ticker = item["Ticker"]
+                if ticker not in closes.columns:
+                    continue
+                series = closes[ticker].dropna()
+                if len(series) < 205:
+                    continue
+                latest = float(series.iloc[-1])
+                ema_values = {period: series.ewm(span=period, adjust=False, min_periods=period).mean() for period in (20, 50, 100, 200)}
+                row = {
+                    "Symbol": item["Symbol"], "Company": item["Company"],
+                    "Sector": item["Sector"], "Industry": item.get("Industry", item["Sector"]),
+                    "Latest close": latest, "Price date": pd.Timestamp(series.index[-1]).strftime("%d %b %Y"),
+                }
+                for period, ema in ema_values.items():
+                    row[f"Above {period} EMA"] = bool(latest > float(ema.iloc[-1])) if pd.notna(ema.iloc[-1]) else np.nan
+                row["Positive 1W"] = bool(latest > float(series.iloc[-6])) if len(series) >= 6 else np.nan
+                row["Positive 1M"] = bool(latest > float(series.iloc[-22])) if len(series) >= 22 else np.nan
+                row["Return 1M %"] = (latest / float(series.iloc[-22]) - 1) * 100 if len(series) >= 22 and float(series.iloc[-22]) else np.nan
+                b_aligned = benchmark.reindex(series.index).dropna()
+                aligned = pd.concat([series.rename("stock"), benchmark.rename("benchmark")], axis=1).dropna()
+                if len(aligned) >= 22:
+                    stock_return = (float(aligned["stock"].iloc[-1]) / float(aligned["stock"].iloc[-22]) - 1) * 100
+                    benchmark_return = (float(aligned["benchmark"].iloc[-1]) / float(aligned["benchmark"].iloc[-22]) - 1) * 100
+                    row["1M vs NIFTY 500 (pp)"] = stock_return - benchmark_return
+                    row["Outperforming NIFTY 500"] = stock_return > benchmark_return
+                else:
+                    row["1M vs NIFTY 500 (pp)"] = np.nan
+                    row["Outperforming NIFTY 500"] = np.nan
+                recent_high = highs[ticker].dropna().tail(20).max() if highs is not None and not highs.empty and ticker in highs.columns else np.nan
+                row["Near 20D high"] = bool(latest >= float(recent_high) * 0.995) if pd.notna(recent_high) and recent_high else np.nan
+                records.append(row)
+            return pd.DataFrame(records), None
+        with st.spinner("Calculating NIFTY 500 breadth from constituent histories…"):
+            breadth_universe, breadth_error = _breadth_intelligence_frame()
+        if breadth_error:
+            st.warning(breadth_error)
+        elif breadth_universe.empty:
+            st.info("No constituents had sufficient history for a reliable breadth calculation.")
+        else:
+            def _breadth_summary(frame, label):
+                if frame.empty:
+                    return None
+                out = {"Name": label, "Stocks measured": len(frame)}
+                fields = {
+                    "Above 20 EMA %": "Above 20 EMA", "Above 50 EMA %": "Above 50 EMA",
+                    "Above 100 EMA %": "Above 100 EMA", "Above 200 EMA %": "Above 200 EMA",
+                    "Positive 1W %": "Positive 1W", "Positive 1M %": "Positive 1M",
+                    "Outperforming NIFTY 500 %": "Outperforming NIFTY 500",
+                    "Near 20D high %": "Near 20D high",
+                }
+                for output, source in fields.items():
+                    values = frame[source].dropna()
+                    out[output] = float(values.astype(float).mean() * 100) if len(values) else np.nan
+                out["Average 1M relative return (pp)"] = pd.to_numeric(frame["1M vs NIFTY 500 (pp)"], errors="coerce").mean()
+                out["Breadth vs RS quadrant"] = (
+                    "Broad leadership" if pd.notna(out["Above 50 EMA %"]) and out["Above 50 EMA %"] >= 60 and pd.notna(out["Outperforming NIFTY 500 %"]) and out["Outperforming NIFTY 500 %"] >= 50
+                    else "Participation, weak RS" if pd.notna(out["Above 50 EMA %"]) and out["Above 50 EMA %"] >= 60
+                    else "Narrow leadership" if pd.notna(out["Outperforming NIFTY 500 %"]) and out["Outperforming NIFTY 500 %"] >= 50
+                    else "Weak participation"
+                )
+                return out
+            overall = _breadth_summary(breadth_universe, "NIFTY 500")
+            metric_cols = st.columns(4)
+            for col, key, label in zip(metric_cols, ["Above 20 EMA %", "Above 50 EMA %", "Above 100 EMA %", "Above 200 EMA %"], ["Above 20 EMA", "Above 50 EMA", "Above 100 EMA", "Above 200 EMA"]):
+                value = overall.get(key, np.nan)
+                col.metric(label, f"{value:.1f}%" if pd.notna(value) else "—", f"{overall['Stocks measured']} stocks")
+            st.caption(f"Equal-weighted NIFTY 500 breadth · {breadth_universe['Price date'].mode().iloc[0]} · {overall['Outperforming NIFTY 500 %']:.1f}% outperforming the equal-weight benchmark over 1 month · {overall['Near 20D high %']:.1f}% near 20-day highs.")
+            st.markdown("**NIFTY 500 participation and leadership snapshot**")
+            overall_view = pd.DataFrame([overall]).drop(columns=["Name"])
+            st.dataframe(overall_view, use_container_width=True, hide_index=True)
+            def _group_breadth(frame, group_col):
+                rows = []
+                for group_name, group_frame in frame.groupby(group_col, dropna=False):
+                    if str(group_name).strip().lower() in ("", "nan", "none"):
+                        continue
+                    summary = _breadth_summary(group_frame, str(group_name))
+                    if summary and summary["Stocks measured"] >= 3:
+                        rows.append(summary)
+                return pd.DataFrame(rows)
+            sector_breadth = _group_breadth(breadth_universe, "Sector")
+            industry_breadth = _group_breadth(breadth_universe, "Industry")
+            st.markdown("**Sector breadth vs relative strength**")
+            if not sector_breadth.empty:
+                sector_breadth = sector_breadth.sort_values(["Above 50 EMA %", "Outperforming NIFTY 500 %"], ascending=False, na_position="last")
+                st.dataframe(sector_breadth, use_container_width=True, hide_index=True)
+                sector_scatter = px.scatter(sector_breadth, x="Above 50 EMA %", y="Outperforming NIFTY 500 %", size="Stocks measured", color="Breadth vs RS quadrant", hover_name="Name", hover_data=["Average 1M relative return (pp)", "Above 200 EMA %"], title="Sector breadth vs relative strength · high breadth does not automatically mean leadership", template="plotly_white")
+                sector_scatter.add_vline(x=60, line_dash="dash", line_color="#64748b")
+                sector_scatter.add_hline(y=50, line_dash="dash", line_color="#64748b")
+                sector_scatter.update_layout(height=470, xaxis_title="Constituents above 50 EMA (%)", yaxis_title="Constituents outperforming NIFTY 500 over 1M (%)")
+                st.plotly_chart(sector_scatter, use_container_width=True, config={"displaylogo": False}, key="breadth_sector_rs_quadrant")
+            st.markdown("**Micro-sector breadth vs relative strength**")
+            micro_breadth_rows = []
+            for micro_name, (micro_group, symbols) in MICRO_SECTORS.items():
+                selected = breadth_universe[breadth_universe["Symbol"].isin([symbol.replace(".NS", "") for symbol in symbols])]
+                summary = _breadth_summary(selected, micro_name)
+                if summary and summary["Stocks measured"] >= 3:
+                    summary["Group"] = micro_group
+                    micro_breadth_rows.append(summary)
+            micro_breadth_intel = pd.DataFrame(micro_breadth_rows)
+            if not micro_breadth_intel.empty:
+                micro_breadth_intel = micro_breadth_intel.sort_values(["Above 50 EMA %", "Outperforming NIFTY 500 %"], ascending=False, na_position="last")
+                st.dataframe(micro_breadth_intel, use_container_width=True, hide_index=True)
+                micro_scatter = px.scatter(micro_breadth_intel, x="Above 50 EMA %", y="Outperforming NIFTY 500 %", size="Stocks measured", color="Breadth vs RS quadrant", hover_name="Name", hover_data=["Group", "Average 1M relative return (pp)", "Above 200 EMA %"], title="Micro-sector breadth vs relative strength", template="plotly_white")
+                micro_scatter.add_vline(x=60, line_dash="dash", line_color="#64748b")
+                micro_scatter.add_hline(y=50, line_dash="dash", line_color="#64748b")
+                micro_scatter.update_layout(height=520, xaxis_title="Constituents above 50 EMA (%)", yaxis_title="Constituents outperforming NIFTY 500 over 1M (%)")
+                st.plotly_chart(micro_scatter, use_container_width=True, config={"displaylogo": False}, key="breadth_micro_rs_quadrant")
+            else:
+                st.info("No micro-sector baskets currently have at least three NIFTY 500 constituents with sufficient history.")
+            st.markdown("**Industry drill-down**")
+            if not industry_breadth.empty:
+                industry_options = sorted(industry_breadth["Name"].astype(str).tolist())
+                selected_industry = st.selectbox("Choose an industry", industry_options, key="breadth_industry_drilldown")
+                industry_stocks = breadth_universe[breadth_universe["Industry"].astype(str) == selected_industry].copy()
+                industry_stocks = industry_stocks.sort_values("1M vs NIFTY 500 (pp)", ascending=False, na_position="last")
+                st.dataframe(industry_stocks[["Symbol", "Company", "Latest close", "Above 20 EMA", "Above 50 EMA", "Above 100 EMA", "Above 200 EMA", "1M vs NIFTY 500 (pp)", "Near 20D high"]], use_container_width=True, hide_index=True)
+            st.download_button("Download NIFTY 500 breadth CSV", breadth_universe.to_csv(index=False).encode("utf-8-sig"), file_name="nifty500_breadth_intelligence.csv", mime="text/csv", key="download_nifty500_breadth_intelligence")
+
     st.markdown("""<div style="font-size:clamp(26px,3.5vw,38px);font-weight:850;letter-spacing:-1px;line-height:1.15;margin:10px 0 8px;background:linear-gradient(90deg,#60a5fa,#a78bfa,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">NIFTY 50 stock heatmap</div>""", unsafe_allow_html=True)
     st.caption("NIFTY 50 constituents only · Tile size is equal-weighted in this view · Green = positive daily change, red = negative daily change")
     NIFTY50_HEATMAP_SYMBOLS = [
