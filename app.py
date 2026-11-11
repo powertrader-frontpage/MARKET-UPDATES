@@ -3273,9 +3273,9 @@ if active_page == "Main Dashboard":
                         rising = pd.notna(row["1M vs NIFTY 500 (pp)"]) and row["1M vs NIFTY 500 (pp)"] >= 0
                         return "Leading" if ahead and rising else "Weakening" if ahead else "Improving" if rising else "Lagging"
                     micro_df["Zone"] = micro_df.apply(_micro_zone, axis=1)
-                    # Dual-confirmation stock-strength scan: BOTH the mapped broad sector and
-                    # the micro sector must currently be Leading or Improving. Unmapped groups
-                    # are deliberately excluded rather than assigned an assumed parent sector.
+                    # Dual-confirmation stock-strength scan: qualifying micro-sectors are retained.
+                    # Validate the broad sector only where a reliable mapping and current zone exist.
+                    # Unmapped groups remain included and are labelled transparently.
                     micro_group_to_main_sector = {
                         "Pharma": "Pharma", "Technology": "IT", "Industrials": "Infrastructure",
                         "Media & Services": "Media", "Financials": "Financial Services",
@@ -3334,14 +3334,14 @@ if active_page == "Main Dashboard":
                                     aggregations[column] = "first"
                             strength_scan = strength_scan.groupby("Stock", as_index=False).agg(aggregations)
                     st.subheader("Stock strength scanner · Broad + Micro sectors")
-                    st.caption("A stock is eligible when its micro sector is Leading or Improving and, where a reliable broad-sector mapping exists, its broad sector is also Leading or Improving. Unmapped groups are retained and labelled "Not mapped · micro-sector only" rather than excluded. Within the eligible universe, either Daily or Weekly 200 EMA must show a fresh upward crossover or price 0–3% above the EMA. One row per stock; all qualifying micro-sector memberships are retained.")
+                    st.caption('A stock is eligible when its micro sector is Leading or Improving and, where a reliable broad-sector mapping exists, its broad sector is also Leading or Improving. Unmapped groups are retained and labelled "Not mapped · micro-sector only" rather than excluded. Within the eligible universe, either Daily or Weekly 200 EMA must show a fresh upward crossover or price 0–3% above the EMA. One row per stock; all qualifying micro-sector memberships are retained.')
                     if not strength_scan.empty:
                         strength_cols = ["Main sector", "Main sector zone", "Micro sector", "Micro sector zone", "Group", "Stock", "Latest close", "EMA setup", "Fresh crossover", "Daily 200 EMA distance (%)", "Daily 200 EMA signal", "Weekly 200 EMA distance (%)", "Weekly 200 EMA signal", "1D %", "1W %", "1M %", "3M %", "MFI 14", "Volume vs 20D avg"]
                         strength_display = strength_scan[strength_cols].reset_index(drop=True)
                         st.dataframe(_style_rotation_table(strength_display, zone_columns=("Main sector zone", "Micro sector zone"), transition_columns=("Daily 200 EMA signal", "Weekly 200 EMA signal")), use_container_width=True, hide_index=True)
                         st.download_button("⬇ Download stock strength scanner CSV", strength_display.to_csv(index=False).encode("utf-8-sig"), file_name="leading_improving_200ema_strength.csv", mime="text/csv", key="download_leading_improving_200ema_strength")
                     else:
-                        st.info("No qualifying stocks found where BOTH broad and micro sectors are Leading/Improving and the stock meets the Daily/Weekly 200 EMA rules. Unmapped micro groups and sectors without a valid current rotation zone are excluded.")
+                        st.info("No stocks currently meet the sector-eligibility and Daily/Weekly 200 EMA rules. Unmapped micro groups are retained when their micro-sector zone qualifies.")
                     # Micro-sector institutional context is inherited only from an explicitly
                     # mapped NSDL parent industry. It is labelled as parent context, never as
                     # a direct micro-sector transaction figure.
