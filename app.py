@@ -3911,7 +3911,10 @@ if active_page == "Sector Leadership & Heatmap":
             if closes is None or closes.empty:
                 return pd.DataFrame(), "NIFTY 500 daily price history is unavailable."
             closes = closes.apply(pd.to_numeric, errors="coerce").sort_index()
-            benchmark = closes.mean(axis=1, skipna=True).dropna()
+            daily_returns = closes.pct_change(fill_method=None)
+            benchmark_returns = daily_returns.mean(axis=1, skipna=True).fillna(0.0)
+            benchmark = (1.0 + benchmark_returns).cumprod() * 100.0
+            benchmark = benchmark.dropna()
             if benchmark.empty:
                 return pd.DataFrame(), "A usable equal-weight NIFTY 500 benchmark could not be calculated."
             records = []
@@ -3934,7 +3937,6 @@ if active_page == "Sector Leadership & Heatmap":
                 row["Positive 1W"] = bool(latest > float(series.iloc[-6])) if len(series) >= 6 else np.nan
                 row["Positive 1M"] = bool(latest > float(series.iloc[-22])) if len(series) >= 22 else np.nan
                 row["Return 1M %"] = (latest / float(series.iloc[-22]) - 1) * 100 if len(series) >= 22 and float(series.iloc[-22]) else np.nan
-                b_aligned = benchmark.reindex(series.index).dropna()
                 aligned = pd.concat([series.rename("stock"), benchmark.rename("benchmark")], axis=1).dropna()
                 if len(aligned) >= 22:
                     stock_return = (float(aligned["stock"].iloc[-1]) / float(aligned["stock"].iloc[-22]) - 1) * 100
