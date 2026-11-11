@@ -28,6 +28,38 @@ from urllib.parse import urlencode
 st.set_page_config(page_title="Market Intelligence Terminal", page_icon="📈", layout="wide")
 
 # Weekly rotation history is stored in the repository; the token is read only from Streamlit Secrets.
+ROTATION_ZONE_CELL_COLORS = {
+    "Leading": ("#166534", "#ffffff"),
+    "Improving": ("#1d4ed8", "#ffffff"),
+    "Weakening": ("#b45309", "#ffffff"),
+    "Lagging": ("#b91c1c", "#ffffff"),
+}
+
+def _rotation_zone_cell_css(value):
+    text_value = str(value).strip()
+    zone = next((name for name in ROTATION_ZONE_CELL_COLORS if text_value == name), None)
+    if zone is None:
+        return ""
+    background, foreground = ROTATION_ZONE_CELL_COLORS[zone]
+    return f"background-color: {background}; color: {foreground}; font-weight: 700;"
+
+def _style_rotation_table(frame, zone_columns=(), transition_columns=()):
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return frame
+    styles = pd.DataFrame("", index=frame.index, columns=frame.columns)
+    for column in zone_columns:
+        if column in frame.columns:
+            styles[column] = frame[column].map(_rotation_zone_cell_css)
+    for column in transition_columns:
+        if column in frame.columns:
+            def _transition_css(value):
+                label = str(value).strip()
+                target = label.split("→")[-1].strip()
+                zone = next((name for name in ROTATION_ZONE_CELL_COLORS if target == name or target.startswith(name + " ")), None)
+                return _rotation_zone_cell_css(zone) if zone else ""
+            styles[column] = frame[column].map(_transition_css)
+    return frame.style.apply(lambda _: styles, axis=None)
+
 ROTATION_HISTORY_PATH = "data/weekly_rotation_history.json"
 ROTATION_HISTORY_REPO = "powertrader-frontpage/MARKET-UPDATES"
 ROTATION_HISTORY_BRANCH = "phase1-fyers-main-dashboard-data"
@@ -2782,7 +2814,7 @@ if active_page == "Main Dashboard":
                     st.markdown('<div style="background:rgba(80,120,200,.07);border-radius:24px;padding:18px;">' + "".join(pills) + '</div>', unsafe_allow_html=True)
                     with st.expander("View all current rotation zones", expanded=False):
                         current_zones = sorted(rotation_rows, key=lambda x: (zone_order.get(x["Current zone"], 4), -float(x.get("Relative return vs NIFTY (pp)", -999))))
-                        st.dataframe(pd.DataFrame(current_zones), use_container_width=True, hide_index=True)
+                        st.dataframe(_style_rotation_table(pd.DataFrame(current_zones), zone_columns=("Previous zone", "Current zone"), transition_columns=("Signal",)), use_container_width=True, hide_index=True)
                 else:
                     st.warning("Not enough overlapping daily sector and NIFTY data to calculate rotation zones. No values have been substituted.")
         
@@ -2913,14 +2945,14 @@ if active_page == "Main Dashboard":
                         for zi, zname in enumerate(["Leading","Improving","Weakening","Lagging"]):
                             with zcols[zi]:
                                 st.metric(zname, int(counts.get(zname,0)))
-                        st.dataframe(constituent_df.sort_values(["Rotation zone","3M vs NIFTY 500 (pp)"],ascending=[True,False]),use_container_width=True,hide_index=True)
+                        st.dataframe(_style_rotation_table(constituent_df.sort_values(["Rotation zone","3M vs NIFTY 500 (pp)"],ascending=[True,False]), zone_columns=("Rotation zone",), transition_columns=("Zone change (5 sessions)",)),use_container_width=True,hide_index=True)
                         st.markdown("**Stocks changing rotation zone over the latest five available sessions**")
                         if constituent_transitions:
-                            st.dataframe(pd.DataFrame(constituent_transitions),use_container_width=True,hide_index=True)
+                            st.dataframe(_style_rotation_table(pd.DataFrame(constituent_transitions), transition_columns=("Transition",)),use_container_width=True,hide_index=True)
                         else:
                             st.info("No constituent stock zone changes detected over the latest five available sessions.")
                         st.markdown("**Strongest stocks in this sector**")
-                        st.dataframe(constituent_df.sort_values("3M vs NIFTY 500 (pp)",ascending=False).head(5)[["Stock","Rotation zone","1D %","1M %","3M %","1M vs NIFTY 500 (pp)","3M vs NIFTY 500 (pp)"]],use_container_width=True,hide_index=True)
+                        st.dataframe(_style_rotation_table(constituent_df.sort_values("3M vs NIFTY 500 (pp)",ascending=False).head(5)[["Stock","Rotation zone","1D %","1M %","3M %","1M vs NIFTY 500 (pp)","3M vs NIFTY 500 (pp)"]], zone_columns=("Rotation zone",)),use_container_width=True,hide_index=True)
                     else:
                         st.warning("No constituent price history returned for this sector. No sample values are shown.")
         
@@ -3306,11 +3338,11 @@ if active_page == "Main Dashboard":
                                 micro_changes["Transition"] = micro_changes["Zone previous"] + " → " + micro_changes["Zone current"]
                                 priority_changes = micro_changes[micro_changes["Transition"].isin(["Improving → Leading", "Lagging → Improving"])]
                                 if not priority_changes.empty:
-                                    st.dataframe(priority_changes[["Micro sector", "Transition"]], use_container_width=True, hide_index=True)
+                                    st.dataframe(_style_rotation_table(priority_changes[["Micro sector", "Transition"]], transition_columns=("Transition",)), use_container_width=True, hide_index=True)
                                 else:
                                     st.info("No Improving → Leading or Lagging → Improving micro-sector transitions between these two archived weeks.")
                                 with st.expander("All micro-sector zone changes", expanded=False):
-                                    st.dataframe(micro_changes[["Micro sector", "Transition"]], use_container_width=True, hide_index=True)
+                                    st.dataframe(_style_rotation_table(micro_changes[["Micro sector", "Transition"]], transition_columns=("Transition",)), use_container_width=True, hide_index=True)
                             old_stocks = pd.DataFrame(previous_snapshot.get("micro_sector_stocks", []))
                             new_stocks = pd.DataFrame(latest_snapshot.get("micro_sector_stocks", []))
                             stock_keys = {"Stock", "1M vs NIFTY 500 (pp)", "3M vs NIFTY 500 (pp)"}
@@ -3334,9 +3366,9 @@ if active_page == "Main Dashboard":
                                 if priority_stocks.empty:
                                     st.info("No constituent stocks made either priority transition between these two archived weeks.")
                                 else:
-                                    st.dataframe(priority_stocks[["Micro sector", "Stock", "Transition"]], use_container_width=True, hide_index=True)
+                                    st.dataframe(_style_rotation_table(priority_stocks[["Micro sector", "Stock", "Transition"]], transition_columns=("Transition",)), use_container_width=True, hide_index=True)
                                 with st.expander("All constituent stock zone changes", expanded=False):
-                                    st.dataframe(stock_changes[["Micro sector", "Stock", "Transition"]], use_container_width=True, hide_index=True)
+                                    st.dataframe(_style_rotation_table(stock_changes[["Micro sector", "Stock", "Transition"]], transition_columns=("Transition",)), use_container_width=True, hide_index=True)
                     download_cols = st.columns(2)
                     with download_cols[0]:
                         st.download_button(
@@ -3409,7 +3441,7 @@ if active_page == "Main Dashboard":
                     zone_filter = st.selectbox("Filter micro sectors by rotation zone", ["All zones", "Leading", "Improving", "Weakening", "Lagging"], key="micro_zone_filter")
                     zone_view = micro_df if zone_filter == "All zones" else micro_df[micro_df["Zone"] == zone_filter]
                     display_cols = ["Micro sector", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Weekly positive breadth %", "Weekly strong breadth %", "Above 20 DMA %", "Above 50 DMA %", "20 DMA breadth change (pp)", "50 DMA breadth change (pp)", "Avg. distance from Weekly 200 EMA (%)", "Stocks in preferred 3–8% zone (%)", "Stocks above Weekly 200 EMA (%)", "Weekly 200 EMA status", "Stocks available"]
-                    st.dataframe(zone_view[display_cols].sort_values("Score", ascending=False), use_container_width=True, hide_index=True)
+                    st.dataframe(_style_rotation_table(zone_view[display_cols].sort_values("Score", ascending=False), zone_columns=("Zone",)), use_container_width=True, hide_index=True)
                     st.subheader("Visual ranking · micro-sectors with improving breadth")
                     micro_breadth_rank = micro_df.copy()
                     micro_breadth_rank["Breadth improvement score (pp)"] = micro_breadth_rank[["20 DMA breadth change (pp)", "50 DMA breadth change (pp)"]].mean(axis=1)
@@ -3435,7 +3467,7 @@ if active_page == "Main Dashboard":
                     st.subheader("Confirmation layer · micro-sector money flow and volume")
                     st.caption("Average constituent MFI 14 and latest volume versus each stock's prior 20-session average. NSDL FPI is shown only as parent-industry context where an explicit mapping exists; it is not represented as direct micro-sector flow. These fields do not change the existing composite Score or Zone.")
                     micro_confirmation_cols = ["Micro sector", "Group", "Zone", "Weekly positive breadth %", "Weekly strong breadth %", "Above 20 DMA %", "Above 50 DMA %", "20 DMA breadth change (pp)", "50 DMA breadth change (pp)", "Avg. distance from Weekly 200 EMA (%)", "Stocks in preferred 3–8% zone (%)", "Stocks above Weekly 200 EMA (%)", "Weekly 200 EMA status", "Average MFI 14", "Average volume vs 20D", "Flow confirmation", "Volume confirmation", "FPI parent industry context (₹ Cr)", "FPI context mapping"]
-                    st.dataframe(micro_df[micro_confirmation_cols].sort_values("Average MFI 14", ascending=False, na_position="last"), use_container_width=True, hide_index=True)
+                    st.dataframe(_style_rotation_table(micro_df[micro_confirmation_cols].sort_values("Average MFI 14", ascending=False, na_position="last"), zone_columns=("Zone",)), use_container_width=True, hide_index=True)
                     st.caption("This list shows every available micro sector in each rotation zone—not only the top six cards.")
         
                     st.subheader("Rotation map: every micro sector against NIFTY 500")
