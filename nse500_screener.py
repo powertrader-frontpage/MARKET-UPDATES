@@ -655,7 +655,14 @@ def _calculate(fyers_app_id="", fyers_access_token=""):
     return result, sectors, industries, len(universe), len(prices.columns), current_week_label, previous_week_label, latest_daily_date
 
 
-def render_nse500_screener(fyers_app_id="", fyers_access_token=""):
+def render_nse500_screener():
+    # Read the already-authenticated FYERS session directly to avoid coupling the
+    # screener's public render signature to the dashboard import/version lifecycle.
+    try:
+        fyers_app_id = str(st.secrets.get("FYERS_APP_ID", "")).strip()
+    except Exception:
+        fyers_app_id = ""
+    fyers_access_token = str(st.session_state.get("fyers_access_token", "") or "")
     with st.expander("NSE 500 · Relative Strength & Weinstein Stage Screener", expanded=False):
         st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#f97316,#facc15,#22c55e);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">NSE 500 · Relative Strength & Weinstein Stage Screener</div>""", unsafe_allow_html=True)
         st.markdown("**Find market leaders, fresh Stage 2 breakouts and sector participation across the full NSE 500.**")
