@@ -707,24 +707,6 @@ def render_nse500_screener():
         else:
             st.caption("Data pipeline: Yahoo Finance fallback · Connect FYERS in the sidebar to enable the primary historical-data feed.")
 
-        if fyers_app_id and fyers_access_token:
-            with st.expander("FYERS historical-data diagnostics", expanded=(_fyers_cached_count == 0 and _fyers_state.get("last_refresh") is not None)):
-                st.caption(f"Last history attempt: {_fyers_state.get('last_refresh') or 'Not attempted in this server session'}")
-                st.caption(
-                    f"Latest batch: {_fyers_state.get('last_batch_success', 0)} validated / "
-                    f"{_fyers_state.get('last_attempted', 0)} attempted · "
-                    f"Validated histories currently cached: {_fyers_cached_count}"
-                )
-                _fyers_failures = _fyers_state.get("last_failures", [])
-                if _fyers_failures:
-                    st.warning("Latest FYERS history failures (credentials are not shown):")
-                    for _failure in _fyers_failures:
-                        st.code(_failure)
-                elif _fyers_state.get("last_refresh"):
-                    st.success("No failures recorded in the latest FYERS history batch.")
-                else:
-                    st.info("No FYERS historical batch has run in this server session. Refresh the NSE 500 screener to trigger one.")
-
         st.caption(
             "RS is a 1–99 percentile rank using a 3M/6M/12M momentum blend versus the scanned NSE 500 universe. "
             "Weinstein stages match the supplied weekly Pine engine: 30-week SMA, two-week SMA slope and ATR(14) flatness. "
