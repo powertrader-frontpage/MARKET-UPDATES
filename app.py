@@ -3019,6 +3019,13 @@ if active_page == "Main Dashboard":
                                 "Latest close": last, "1D %": ret1d, "1W %": ret1w, "1M %": ret1,
                                 "3M %": ret3, "6M %": ret6, "1Y %": ret1y,
                                 "1M vs NIFTY 500 (pp)": rel1_export, "3M vs NIFTY 500 (pp)": rel3_export,
+                                "Stock Rotation Zone": (
+                                    "Leading" if pd.notna(rel1_export) and pd.notna(rel3_export) and rel1_export >= 0 and rel3_export >= 0 else
+                                    "Weakening" if pd.notna(rel1_export) and pd.notna(rel3_export) and rel3_export >= 0 else
+                                    "Improving" if pd.notna(rel1_export) and pd.notna(rel3_export) and rel1_export >= 0 else
+                                    "Lagging" if pd.notna(rel1_export) and pd.notna(rel3_export) else
+                                    "Insufficient data"
+                                ),
                                 "Above 50 EMA": bool(last > ema50.iloc[-1]) if pd.notna(ema50.iloc[-1]) else None,
                                 "Daily 200 EMA distance (%)": daily_200_gap,
                                 "Daily 200 EMA signal": daily_200_signal,
@@ -3083,7 +3090,7 @@ if active_page == "Main Dashboard":
                     ):
                         micro_membership = micro_membership[
                             micro_membership["Micro sector"].astype(str).isin(leading_micro_names)
-                        ][["Micro sector", "Group", "Stock"]].drop_duplicates()
+                        ][["Micro sector", "Group", "Stock", "Stock Rotation Zone", "1M vs NIFTY 500 (pp)", "3M vs NIFTY 500 (pp)"]].drop_duplicates()
                         leading_stage2_bases = nse_stage_results[
                             (nse_stage_results["Stage"] == "Stage 2 · Uptrend")
                             & (nse_stage_results["Base Setup"].isin([
@@ -3099,21 +3106,29 @@ if active_page == "Main Dashboard":
                             )
                             watch_cols = [
                                 "Micro sector", "Group", "Symbol", "Company", "Stage",
-                                "Base Setup", "RS Rank", "Price", "Gap vs 30W %",
+                                "Base Setup", "Stock Rotation Zone",
+                                "1M vs NIFTY 500 (pp)", "3M vs NIFTY 500 (pp)",
+                                "RS Rank", "Price", "Gap vs 30W %",
                                 "30W Slope %", "4W Return %", "12W Return %",
                             ]
                             watch_cols = [column for column in watch_cols if column in leading_stage2_bases.columns]
+                            zone_order = {"Leading": 0, "Improving": 1, "Weakening": 2, "Lagging": 3, "Insufficient data": 4}
+                            leading_stage2_bases["_zone_order"] = leading_stage2_bases["Stock Rotation Zone"].map(zone_order).fillna(4)
                             leading_stage2_bases = leading_stage2_bases.sort_values(
-                                ["Micro sector", "RS Rank"],
-                                ascending=[True, False],
+                                ["Micro sector", "_zone_order", "RS Rank"],
+                                ascending=[True, True, False],
                                 na_position="last",
-                            )
+                            ).drop(columns=["_zone_order"])
                             st.caption(
                                 f"{len(leading_stage2_bases)} stock–microsector matches across "
                                 f"{leading_stage2_bases['Micro sector'].nunique()} leading microsectors."
                             )
+                            st.caption("Stock Rotation Zone is colour-coded: green = Leading, blue = Improving, amber = Weakening, red = Lagging. Stocks remain listed regardless of their individual zone.")
                             st.dataframe(
-                                leading_stage2_bases[watch_cols].reset_index(drop=True),
+                                _style_rotation_table(
+                                    leading_stage2_bases[watch_cols].reset_index(drop=True),
+                                    zone_columns=("Stock Rotation Zone",),
+                                ),
                                 use_container_width=True,
                                 hide_index=True,
                                 height=min(480, 45 + 36 * len(leading_stage2_bases)),
