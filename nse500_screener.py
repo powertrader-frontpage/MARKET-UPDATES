@@ -121,11 +121,13 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
     failed = []
     attempted = 0
     if fyers_app_id and fyers_access_token and tickers:
-        # Two <=366-day calls per symbol. 20 symbols = 40 calls, below Standard's 50/min limit.
+        # Two history calls per symbol. Pace conservatively below the Standard
+        # 50/minute account limit because other dashboard features may use FYERS too.
         batch_size = 20
+        request_delay_seconds = 2.0
         first = int(state.get("cursor", 0)) % len(tickers)
         selected = [tickers[(first + i) % len(tickers)] for i in range(min(batch_size, len(tickers)))]
-        state["cursor"] = (first + len(selected)) % len(tickers)
+        rate_limited = False
         today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
         ranges = [(today - timedelta(days=730), today - timedelta(days=366)),
                   (today - timedelta(days=365), today)]
@@ -142,7 +144,14 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
                         headers={"Authorization": f"{fyers_app_id}:{fyers_access_token}"},
                         timeout=20,
                     )
-                    time_module.sleep(1.25)
+                    time_module.sleep(request_delay_seconds)
+                    if response.status_code == 429:
+                        try:
+                            limit_payload = response.json()
+                            limit_message = str(limit_payload.get("message") or limit_payload.get("code") or "FYERS request limit reached")
+                        except Exception:
+                            limit_message = "FYERS request limit reached"
+                        raise RuntimeError(f"RATE_LIMIT: HTTP 429: {limit_message[:140]}")
                     try:
                         payload = response.json()
                     except Exception:
@@ -181,6 +190,11 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
             except Exception as exc:
                 detail = str(exc).replace(chr(10), " ")[:180]
                 failed.append(f"{ticker}: {detail or exc.__class__.__name__}")
+                if "RATE_LIMIT:" in detail:
+                    rate_limited = True
+                    break
+        # If throttled, retry the first uncompleted symbol on the next scan.
+        state["cursor"] = (first + max(0, attempted - 1)) % len(tickers) if rate_limited else (first + len(selected)) % len(tickers)
         state["last_refresh"] = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
         state["last_attempted"] = attempted
         state["last_batch_success"] = refreshed
