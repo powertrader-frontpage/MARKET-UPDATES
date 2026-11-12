@@ -179,14 +179,15 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
     for ticker, frame in list(state.get("frames", {}).items()):
         if ticker not in tickers or frame is None or frame.empty:
             continue
-        # A cached FYERS series must not overwrite a newer Yahoo fallback session.
-        yahoo_dates = prices[ticker].dropna().index if ticker in prices.columns else pd.Index([])
-        if len(yahoo_dates) and pd.Timestamp(frame.index.max()).date() < pd.Timestamp(yahoo_dates.max()).date():
-            continue
+        # Overlay validated FYERS candles on their own dates, even when Yahoo has
+        # a newer session. Yahoo-only dates remain untouched, so a newer fallback
+        # candle is preserved without discarding the rest of the FYERS history.
         for source_col, target in (("Close", prices), ("High", highs), ("Low", lows), ("Volume", volumes)):
             if ticker not in target.columns:
                 target[ticker] = np.nan
-            target.loc[frame.index, ticker] = frame[source_col].reindex(frame.index)
+            fyers_values = frame[source_col].reindex(frame.index).dropna()
+            if not fyers_values.empty:
+                target.loc[fyers_values.index, ticker] = fyers_values
     return prices.sort_index(), highs.sort_index(), lows.sort_index(), volumes.sort_index()
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -682,12 +683,13 @@ def render_nse500_screener():
             "Weinstein stages match the supplied weekly Pine engine: 30-week SMA, two-week SMA slope and ATR(14) flatness. "
             "A fresh Stage 2 entry means the stock was Stage 1 in the previous completed week and is Stage 2 now."
         )
-        # Explicit refresh clears all screener caches; normal reruns refresh every 15 minutes.
+        # Explicit refresh clears computed/data caches and session results. Keep the
+        # process-wide FYERS history cache: it contains validated histories for prior
+        # 20-stock batches and is needed to retain FYERS coverage across the universe.
         force_refresh = st.button("↻ Refresh NSE 500 prices and rotation now", key="nse500_force_refresh")
         if force_refresh:
             _calculate.clear()
             _daily_ohlc.clear()
-            _fyers_history_state.clear()
             _constituents.clear()
             for key in (
                 "nse500_rs_stage_results", "nse500_rs_stage_sectors",
