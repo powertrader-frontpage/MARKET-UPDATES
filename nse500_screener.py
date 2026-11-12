@@ -167,7 +167,7 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
                 for col in ("Open", "High", "Low", "Close"):
                     adjusted[col] = pd.to_numeric(adjusted[col], errors="coerce") * aligned_factor
                 overlap = pd.concat([adjusted["Close"].rename("fyers"), yahoo_close.rename("yahoo")], axis=1).dropna()
-                overlap = overlap[overlap.index >= (today - timedelta(days=20))]
+                overlap = overlap[overlap.index >= pd.Timestamp(today - timedelta(days=20))]
                 if overlap.empty:
                     raise ValueError("No recent overlapping candles for price validation")
                 relative_error = ((overlap["fyers"] / overlap["yahoo"]) - 1).abs().median()
