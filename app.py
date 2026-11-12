@@ -43,20 +43,62 @@ def _rotation_zone_cell_css(value):
     return f"background-color: {background}; color: {foreground}; font-weight: 700;"
 
 def _style_rotation_table(frame, zone_columns=(), transition_columns=()):
+    """Apply consistent positive/negative colors to rotation and confirmation data."""
     if not isinstance(frame, pd.DataFrame) or frame.empty:
         return frame
     styles = pd.DataFrame("", index=frame.index, columns=frame.columns)
-    for column in zone_columns:
-        if column in frame.columns:
+    positive_css = "color: #22c55e; font-weight: 700;"
+    negative_css = "color: #ef4444; font-weight: 700;"
+    neutral_css = "color: #d1d5db;"
+    for column in frame.columns:
+        label = str(column).strip().lower()
+        if column in zone_columns:
             styles[column] = frame[column].map(_rotation_zone_cell_css)
-    for column in transition_columns:
-        if column in frame.columns:
+            continue
+        if column in transition_columns:
             def _transition_css(value):
-                label = str(value).strip()
-                target = label.split("→")[-1].strip()
+                text_value = str(value).strip()
+                target = text_value.split("→")[-1].strip()
                 zone = next((name for name in ROTATION_ZONE_CELL_COLORS if target == name or target.startswith(name + " ")), None)
-                return _rotation_zone_cell_css(zone) if zone else ""
+                if zone:
+                    return _rotation_zone_cell_css(zone)
+                if "leading" in text_value.lower() or "improving" in text_value.lower():
+                    return positive_css
+                if "weakening" in text_value.lower() or "lagging" in text_value.lower():
+                    return negative_css
+                return ""
             styles[column] = frame[column].map(_transition_css)
+            continue
+        values = frame[column]
+        # Color only metrics where the sign/level has a meaningful directional interpretation.
+        directional_numeric = (
+            "%" in label or "relative return" in label or "vs nifty" in label
+            or "net flow" in label or "net equity investment" in label
+            or "breadth" in label or label == "score"
+        )
+        if directional_numeric:
+            numeric = pd.to_numeric(values, errors="coerce")
+            styles[column] = numeric.map(
+                lambda value: positive_css if pd.notna(value) and value > 0
+                else negative_css if pd.notna(value) and value < 0 else neutral_css
+            )
+        elif label == "mfi 14":
+            numeric = pd.to_numeric(values, errors="coerce")
+            styles[column] = numeric.map(
+                lambda value: positive_css if pd.notna(value) and value >= 50
+                else negative_css if pd.notna(value) and value < 50 else ""
+            )
+        elif "flow signal" in label or label == "flow signal":
+            styles[column] = values.astype(str).str.lower().map(
+                lambda value: positive_css if "inflow" in value or value == "positive" or "strong inflow" in value
+                else negative_css if "outflow" in value or "distribution" in value
+                else neutral_css if value in ("flat", "normal", "unavailable", "nan") else ""
+            )
+        elif "volume signal" in label:
+            styles[column] = values.astype(str).str.lower().map(
+                lambda value: positive_css if value in ("expansion", "elevated")
+                else neutral_css if value in ("normal", "unavailable", "nan") else ""
+            )
     return frame.style.apply(lambda _: styles, axis=None)
 
 ROTATION_HISTORY_PATH = "data/weekly_rotation_history.json"
@@ -2793,14 +2835,14 @@ if active_page == "Main Dashboard":
                     confirmation_view = sec[["Sector", "MFI 14", "Volume vs 20D avg", "Flow signal", "Volume signal", "Last source bar"]].copy()
                     confirmation_view = confirmation_view.merge(fpi_mapped[["Sector", "FPI net flow (₹ Cr)", "FPI flow signal"]], on="Sector", how="left")
                     confirmation_cols = ["Sector", "MFI 14", "Volume vs 20D avg", "Flow signal", "Volume signal", "FPI net flow (₹ Cr)", "FPI flow signal", "Last source bar"]
-                    st.dataframe(confirmation_view[confirmation_cols].sort_values("MFI 14", ascending=False, na_position="last"), use_container_width=True, hide_index=True)
+                    st.dataframe(_style_rotation_table(confirmation_view[confirmation_cols].sort_values("MFI 14", ascending=False, na_position="last")), use_container_width=True, hide_index=True)
                     with st.expander("Official FPI sector investment · NSDL", expanded=True):
                         if not fpi_frame.empty:
                             st.caption(f"Official fortnightly FPI equity net investment · report period: {fpi_period} · source: NSDL. Values are ₹ crore; positive = net investment, negative = net withdrawal.")
-                            st.dataframe(fpi_frame.sort_values("FPI net equity investment (₹ crore)", ascending=False), use_container_width=True, hide_index=True)
+                            st.dataframe(_style_rotation_table(fpi_frame.sort_values("FPI net equity investment (₹ crore)", ascending=False)), use_container_width=True, hide_index=True)
                             st.markdown(f"[Open original NSDL report]({fpi_url})")
                             st.markdown("**Mapped dashboard-sector view**")
-                            st.dataframe(fpi_mapped, use_container_width=True, hide_index=True)
+                            st.dataframe(_style_rotation_table(fpi_mapped), use_container_width=True, hide_index=True)
                         else:
                             st.warning(f"Official FPI sector report could not be parsed: {fpi_error or 'No report data returned'}. Existing rotation scores are unaffected.")
                             st.markdown(f"[Open NSDL official FPI report archive]({fpi_url})")
