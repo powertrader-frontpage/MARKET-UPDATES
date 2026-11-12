@@ -54,7 +54,7 @@ def _constituents():
 @st.cache_resource
 def _fyers_history_state():
     # Process-wide rolling cache. Yahoo remains the fallback after a process restart.
-    return {"frames": {}, "cursor": 0, "last_refresh": None, "last_error": None, "last_success": 0}
+    return {"frames": {}, "cursor": 0, "last_refresh": None, "last_error": None, "last_success": 0, "last_attempted": 0, "last_batch_success": 0, "last_failures": []}
 
 
 @st.cache_data(ttl=SCREENER_DATA_TTL_SECONDS, show_spinner=False)
@@ -119,6 +119,7 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
     state = _fyers_history_state()
     refreshed = 0
     failed = []
+    attempted = 0
     if fyers_app_id and fyers_access_token and tickers:
         # Two <=366-day calls per symbol. 20 symbols = 40 calls, below Standard's 50/min limit.
         batch_size = 20
@@ -129,8 +130,9 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
         ranges = [(today - timedelta(days=730), today - timedelta(days=366)),
                   (today - timedelta(days=365), today)]
         for ticker in selected:
+            attempted += 1
+            symbol = "NSE:" + str(ticker).removesuffix(".NS") + "-EQ"
             try:
-                symbol = "NSE:" + str(ticker).removesuffix(".NS") + "-EQ"
                 chunks = []
                 for range_from, range_to in ranges:
                     response = requests.get(
@@ -141,9 +143,13 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
                         timeout=20,
                     )
                     time_module.sleep(1.25)
-                    payload = response.json()
+                    try:
+                        payload = response.json()
+                    except Exception:
+                        raise ValueError(f"HTTP {response.status_code}: non-JSON response")
                     if not response.ok or payload.get("s") != "ok" or not payload.get("candles"):
-                        raise ValueError(str(payload.get("message", "No FYERS candles")))
+                        api_message = str(payload.get("message") or payload.get("code") or "No FYERS candles")
+                        raise ValueError(f"HTTP {response.status_code}: {api_message[:140]}")
                     chunk = pd.DataFrame(payload["candles"], columns=["Epoch", "Open", "High", "Low", "Close", "Volume"])
                     chunk["Date"] = pd.to_datetime(chunk["Epoch"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata").dt.tz_localize(None).dt.normalize()
                     chunk = chunk.set_index("Date")
@@ -173,8 +179,12 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
                 state["frames"][ticker] = adjusted
                 refreshed += 1
             except Exception as exc:
-                failed.append(f"{ticker}: {exc.__class__.__name__}")
+                detail = str(exc).replace(chr(10), " ")[:180]
+                failed.append(f"{ticker}: {detail or exc.__class__.__name__}")
         state["last_refresh"] = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
+        state["last_attempted"] = attempted
+        state["last_batch_success"] = refreshed
+        state["last_failures"] = failed[:8]
         state["last_error"] = "; ".join(failed[:5]) if failed else None
         state["last_success"] = int(state.get("last_success", 0)) + refreshed
 
@@ -679,6 +689,24 @@ def render_nse500_screener():
             )
         else:
             st.caption("Data pipeline: Yahoo Finance fallback · Connect FYERS in the sidebar to enable the primary historical-data feed.")
+
+        if fyers_app_id and fyers_access_token:
+            with st.expander("FYERS historical-data diagnostics", expanded=(_fyers_cached_count == 0 and _fyers_state.get("last_refresh") is not None)):
+                st.caption(f"Last history attempt: {_fyers_state.get('last_refresh') or 'Not attempted in this server session'}")
+                st.caption(
+                    f"Latest batch: {_fyers_state.get('last_batch_success', 0)} validated / "
+                    f"{_fyers_state.get('last_attempted', 0)} attempted · "
+                    f"Validated histories currently cached: {_fyers_cached_count}"
+                )
+                _fyers_failures = _fyers_state.get("last_failures", [])
+                if _fyers_failures:
+                    st.warning("Latest FYERS history failures (credentials are not shown):")
+                    for _failure in _fyers_failures:
+                        st.code(_failure)
+                elif _fyers_state.get("last_refresh"):
+                    st.success("No failures recorded in the latest FYERS history batch.")
+                else:
+                    st.info("No FYERS historical batch has run in this server session. Refresh the NSE 500 screener to trigger one.")
 
         st.caption(
             "RS is a 1–99 percentile rank using a 3M/6M/12M momentum blend versus the scanned NSE 500 universe. "
