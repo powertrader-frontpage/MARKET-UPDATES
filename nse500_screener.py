@@ -641,18 +641,15 @@ def render_nse500_screener():
                 for col, label in zip(summary_cols, ["Leading", "Improving", "Weakening", "Lagging"]):
                     col.metric(label, int(strength_counts.get(label, 0)))
                 daily_breakout_cols = ["Symbol", "Company", "Sector", "Sector Strength", "Sector 4W RS vs NSE 500 (pp)", "Sector 12W RS vs NSE 500 (pp)", "Price", "Daily Breakout Date", "Daily Breakout Close", "Daily Breakout Resistance", "Daily Breakout Volume / 20D", "RS Rank", "Base Setup"]
-                def _highlight_sector_strength(row):
-                    strength = row.get("Sector Strength")
-                    if strength == "Leading":
-                        style = "background-color: #D9F2E3; color: #14532D; font-weight: 600;"
-                    elif strength == "Improving":
-                        style = "background-color: #DCEBFF; color: #1E40AF; font-weight: 600;"
-                    else:
-                        style = ""
-                    return [style] * len(row)
+                def _highlight_sector_strength(value):
+                    if value == "Leading":
+                        return "background-color: #D9F2E3; color: #14532D; font-weight: 700;"
+                    if value == "Improving":
+                        return "background-color: #DCEBFF; color: #1E40AF; font-weight: 700;"
+                    return ""
 
-                styled_daily_breakouts = daily_breakouts[daily_breakout_cols].style.apply(
-                    _highlight_sector_strength, axis=1
+                styled_daily_breakouts = daily_breakouts[daily_breakout_cols].style.applymap(
+                    _highlight_sector_strength, subset=["Sector Strength"]
                 )
                 st.dataframe(styled_daily_breakouts, use_container_width=True, hide_index=True, height=min(420, 45 + 38 * len(daily_breakouts)))
                 st.download_button("Download Daily Stage 2 Breakout Watch (CSV)", daily_breakouts[daily_breakout_cols].to_csv(index=False).encode("utf-8"), "nse500_daily_stage2_breakout_watch.csv", "text/csv", key="download_nse500_daily_stage2_breakouts")
