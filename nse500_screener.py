@@ -671,9 +671,8 @@ def render_nse500_screener():
         _fyers_cached_count = len(_fyers_state.get("frames", {}))
         if fyers_app_id and fyers_access_token:
             st.caption(
-                f"Data pipeline: FYERS primary · Yahoo fallback | {_fyers_cached_count} stocks have validated FYERS history cached; "
-                "the remaining universe is served by Yahoo until its FYERS batch is validated. "
-                "History refresh rotates 20 stocks per scan to respect API limits."
+                f"Data pipeline: validated FYERS history where available · Yahoo fallback elsewhere | {_fyers_cached_count} stocks have validated FYERS history cached; "
+                "newer Yahoo-only sessions are retained. History refresh rotates 20 stocks per scan to respect API limits."
             )
         else:
             st.caption("Data pipeline: Yahoo Finance fallback · Connect FYERS in the sidebar to enable the primary historical-data feed.")
@@ -737,7 +736,7 @@ def render_nse500_screener():
                 f"Latest daily price date: {price_date} · Last scan: {st.session_state.get('nse500_rs_stage_time', '—')} · "
                 f"Weinstein stages use completed week: {current_week} (prior: {previous_week}) · "
                 f"Official constituents: {universe_count} · With usable prices: {priced_count} · "
-                "Market data source: Yahoo Finance (daily close; may be delayed)"
+                "Market data: validated FYERS history where available; Yahoo fallback for remaining dates/stocks (daily close; may be delayed)"
             )
             try:
                 quote_age_days = (datetime.now(ZoneInfo("Asia/Kolkata")).date() - pd.Timestamp(price_date).date()).days
