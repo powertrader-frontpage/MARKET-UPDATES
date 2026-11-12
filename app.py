@@ -1065,11 +1065,8 @@ def get_main_index_history(ticker: str, period: str, interval: str, fyers_symbol
     return candidate.reset_index(drop=True), None
 
 
-# Actually invalidate only the short-lived Yahoo history cache once per new browser session.
-# Keep longer-running research/scanner caches untouched to avoid expensive reloads.
-if not st.session_state.get("_market_data_cache_cleared_on_open", False):
-    get_history.clear()
-    st.session_state["_market_data_cache_cleared_on_open"] = True
+# Keep the shared short-lived Yahoo history cache available across browser sessions.
+# Its existing 120-second TTL bounds data age; the manual Refresh ALL control still clears it.
 
 # Public-data universe used to make stock research less manual. Industry labels are static classifications,
 # while prices are fetched live from Yahoo Finance and must be verified against source timestamps.
