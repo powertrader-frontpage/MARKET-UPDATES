@@ -176,6 +176,10 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
     for ticker, frame in list(state.get("frames", {}).items()):
         if ticker not in tickers or frame is None or frame.empty:
             continue
+        # A cached FYERS series must not overwrite a newer Yahoo fallback session.
+        yahoo_dates = prices[ticker].dropna().index if ticker in prices.columns else pd.Index([])
+        if len(yahoo_dates) and pd.Timestamp(frame.index.max()).date() < pd.Timestamp(yahoo_dates.max()).date():
+            continue
         for source_col, target in (("Close", prices), ("High", highs), ("Low", lows), ("Volume", volumes)):
             if ticker not in target.columns:
                 target[ticker] = np.nan
@@ -652,6 +656,17 @@ def render_nse500_screener(fyers_app_id="", fyers_access_token=""):
     with st.expander("NSE 500 · Relative Strength & Weinstein Stage Screener", expanded=False):
         st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#f97316,#facc15,#22c55e);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">NSE 500 · Relative Strength & Weinstein Stage Screener</div>""", unsafe_allow_html=True)
         st.markdown("**Find market leaders, fresh Stage 2 breakouts and sector participation across the full NSE 500.**")
+        _fyers_state = _fyers_history_state()
+        _fyers_cached_count = len(_fyers_state.get("frames", {}))
+        if fyers_app_id and fyers_access_token:
+            st.caption(
+                f"Data pipeline: FYERS primary · Yahoo fallback | {_fyers_cached_count} stocks have validated FYERS history cached; "
+                "the remaining universe is served by Yahoo until its FYERS batch is validated. "
+                "History refresh rotates 20 stocks per scan to respect API limits."
+            )
+        else:
+            st.caption("Data pipeline: Yahoo Finance fallback · Connect FYERS in the sidebar to enable the primary historical-data feed.")
+
         st.caption(
             "RS is a 1–99 percentile rank using a 3M/6M/12M momentum blend versus the scanned NSE 500 universe. "
             "Weinstein stages match the supplied weekly Pine engine: 30-week SMA, two-week SMA slope and ATR(14) flatness. "
