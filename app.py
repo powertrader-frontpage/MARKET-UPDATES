@@ -3104,11 +3104,11 @@ if active_page == "Main Dashboard":
                                 right_on="Stock",
                                 how="inner",
                             )
+                            # Put the fastest decision-making fields first for narrow screens.
                             watch_cols = [
-                                "Micro sector", "Group", "Symbol", "Company", "Stage",
-                                "Base Setup", "Stock Rotation Zone",
-                                "1M vs NIFTY 500 (pp)", "3M vs NIFTY 500 (pp)",
-                                "RS Rank", "Price", "Gap vs 30W %",
+                                "Micro sector", "Symbol", "Base Setup", "Stock Rotation Zone",
+                                "RS Rank", "Price", "1M vs NIFTY 500 (pp)", "3M vs NIFTY 500 (pp)",
+                                "Company", "Group", "Stage", "Gap vs 30W %",
                                 "30W Slope %", "4W Return %", "12W Return %",
                             ]
                             watch_cols = [column for column in watch_cols if column in leading_stage2_bases.columns]
