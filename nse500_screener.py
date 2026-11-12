@@ -18,6 +18,9 @@ STAGE_3 = "Stage 3 · Top"
 STAGE_4 = "Stage 4 · Downtrend"
 STAGES = [STAGE_1, STAGE_2, STAGE_3, STAGE_4, "Unclassified"]
 
+# Keep the data, full-scan and session-result refresh windows aligned.
+SCREENER_DATA_TTL_SECONDS = 900
+
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def _constituents():
@@ -54,7 +57,7 @@ def _fyers_history_state():
     return {"frames": {}, "cursor": 0, "last_refresh": None, "last_error": None, "last_success": 0}
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=SCREENER_DATA_TTL_SECONDS, show_spinner=False)
 def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
     """Use validated FYERS history as primary; Yahoo adjusted history is the fallback."""
     close_parts, high_parts, low_parts, volume_parts = [], [], [], []
@@ -190,7 +193,7 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
                 target.loc[fyers_values.index, ticker] = fyers_values
     return prices.sort_index(), highs.sort_index(), lows.sort_index(), volumes.sort_index()
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=SCREENER_DATA_TTL_SECONDS, show_spinner=False)
 def _nifty500_benchmark_daily_close():
     """Fetch NIFTY 500 benchmark separately; it is not an NSE 500 constituent."""
     raw = yf.download(
@@ -335,7 +338,7 @@ def _stage_at(weekly, ticker, position, weekly_high, weekly_low):
     stage_series, _, _, _ = _pine_stage_series(weekly[ticker], weekly_high[ticker], weekly_low[ticker])
     return stage_series.iloc[position]
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=SCREENER_DATA_TTL_SECONDS, show_spinner=False)
 def _calculate(fyers_app_id="", fyers_access_token=""):
     universe = _constituents()
     tickers = tuple(universe["Ticker"].tolist())
@@ -699,7 +702,7 @@ def render_nse500_screener():
                 st.session_state.pop(key, None)
 
         last_epoch = st.session_state.get("nse500_rs_stage_epoch", 0)
-        session_data_expired = (datetime.now(ZoneInfo("Asia/Kolkata")).timestamp() - last_epoch) >= 900
+        session_data_expired = (datetime.now(ZoneInfo("Asia/Kolkata")).timestamp() - last_epoch) >= SCREENER_DATA_TTL_SECONDS
         cached_session_results = st.session_state.get("nse500_rs_stage_results")
         needs_peer_rs_refresh = (
             not isinstance(cached_session_results, pd.DataFrame)
