@@ -47,42 +47,139 @@ def _constituents():
     return out.reset_index(drop=True)
 
 
+@st.cache_resource
+def _fyers_history_state():
+    # Process-wide rolling cache. Yahoo remains the fallback after a process restart.
+    return {"frames": {}, "cursor": 0, "last_refresh": None, "last_error": None, "last_success": 0}
+
+
 @st.cache_data(ttl=900, show_spinner=False)
-def _daily_ohlc(tickers):
-    """Fetch adjusted daily OHLC once per batch; shared by RS and Weinstein calculations."""
+def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
+    """Use validated FYERS history as primary; Yahoo adjusted history is the fallback."""
     close_parts, high_parts, low_parts, volume_parts = [], [], [], []
+    adjustment_factors = {}
+    yahoo_adjusted_close = {}
     for start in range(0, len(tickers), 80):
         batch = list(tickers[start:start + 80])
         raw = yf.download(
-            tickers=batch, period="2y", interval="1d", auto_adjust=True,
+            tickers=batch, period="2y", interval="1d", auto_adjust=False,
             group_by="ticker", threads=False, progress=False, timeout=25,
         )
         if raw is None or raw.empty:
             continue
-        if isinstance(raw.columns, pd.MultiIndex):
-            level0 = set(map(str, raw.columns.get_level_values(0)))
-            level1 = set(map(str, raw.columns.get_level_values(1)))
-            for ticker in batch:
-                if ticker in level0 and {"Close", "High", "Low", "Volume"}.issubset(level1):
-                    part = raw[ticker]
-                    close_parts.append(part["Close"].rename(ticker))
-                    high_parts.append(part["High"].rename(ticker))
-                    low_parts.append(part["Low"].rename(ticker))
-                    volume_parts.append(part["Volume"].rename(ticker))
-                elif ticker in level1 and {"Close", "High", "Low", "Volume"}.issubset(level0):
-                    close_parts.append(raw["Close"][ticker].rename(ticker))
-                    high_parts.append(raw["High"][ticker].rename(ticker))
-                    low_parts.append(raw["Low"][ticker].rename(ticker))
-                    volume_parts.append(raw["Volume"][ticker].rename(ticker))
-        elif len(batch) == 1 and {"Close", "High", "Low", "Volume"}.issubset(raw.columns):
-            close_parts.append(raw["Close"].rename(batch[0]))
-            high_parts.append(raw["High"].rename(batch[0]))
-            low_parts.append(raw["Low"].rename(batch[0]))
-            volume_parts.append(raw["Volume"].rename(batch[0]))
-    def combine(parts):
-        return pd.concat(parts, axis=1).loc[:, lambda d: ~d.columns.duplicated()].sort_index() if parts else pd.DataFrame()
-    return combine(close_parts), combine(high_parts), combine(low_parts), combine(volume_parts)
+        level0 = set(map(str, raw.columns.get_level_values(0))) if isinstance(raw.columns, pd.MultiIndex) else set()
+        level1 = set(map(str, raw.columns.get_level_values(1))) if isinstance(raw.columns, pd.MultiIndex) else set()
+        for ticker in batch:
+            try:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    if ticker in level0:
+                        part = raw[ticker]
+                    elif ticker in level1:
+                        part = raw.xs(ticker, axis=1, level=1)
+                    else:
+                        continue
+                elif len(batch) == 1:
+                    part = raw
+                else:
+                    continue
+                if not {"Close", "High", "Low", "Volume"}.issubset(part.columns):
+                    continue
+                raw_close = pd.to_numeric(part["Close"], errors="coerce")
+                adj_close = pd.to_numeric(part["Adj Close"], errors="coerce") if "Adj Close" in part else raw_close
+                factor = (adj_close / raw_close).replace([np.inf, -np.inf], np.nan)
+                factor = factor.where(factor > 0).ffill().bfill()
+                factor.index = pd.to_datetime(factor.index).tz_localize(None).normalize() if getattr(factor.index, "tz", None) is not None else pd.to_datetime(factor.index).normalize()
+                factor = factor[~factor.index.duplicated(keep="last")].sort_index()
+                adjustment_factors[ticker] = factor
+                yahoo_adjusted_close[ticker] = (raw_close * factor).set_axis(pd.to_datetime(raw_close.index).tz_localize(None).normalize() if getattr(raw_close.index, "tz", None) is not None else pd.to_datetime(raw_close.index).normalize())
+                for col, target in (("Close", close_parts), ("High", high_parts), ("Low", low_parts)):
+                    series = pd.to_numeric(part[col], errors="coerce") * factor.to_numpy()
+                    series.index = factor.index
+                    target.append(series.rename(ticker))
+                volume = pd.to_numeric(part["Volume"], errors="coerce")
+                volume.index = factor.index
+                volume_parts.append(volume.rename(ticker))
+            except Exception:
+                continue
 
+    def combine(parts):
+        if not parts:
+            return pd.DataFrame()
+        frame = pd.concat(parts, axis=1).sort_index()
+        return frame.loc[:, ~frame.columns.duplicated(keep="last")]
+
+    prices, highs, lows, volumes = map(combine, (close_parts, high_parts, low_parts, volume_parts))
+    state = _fyers_history_state()
+    refreshed = 0
+    failed = []
+    if fyers_app_id and fyers_access_token and tickers:
+        # Two <=366-day calls per symbol. 20 symbols = 40 calls, below Standard's 50/min limit.
+        batch_size = 20
+        first = int(state.get("cursor", 0)) % len(tickers)
+        selected = [tickers[(first + i) % len(tickers)] for i in range(min(batch_size, len(tickers)))]
+        state["cursor"] = (first + len(selected)) % len(tickers)
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        ranges = [(today - timedelta(days=730), today - timedelta(days=366)),
+                  (today - timedelta(days=365), today)]
+        for ticker in selected:
+            try:
+                symbol = "NSE:" + str(ticker).removesuffix(".NS") + "-EQ"
+                chunks = []
+                for range_from, range_to in ranges:
+                    response = requests.get(
+                        "https://api-t1.fyers.in/data/history",
+                        params={"symbol": symbol, "resolution": "D", "date_format": "1",
+                                "range_from": str(range_from), "range_to": str(range_to), "cont_flag": "1"},
+                        headers={"Authorization": f"{fyers_app_id}:{fyers_access_token}"},
+                        timeout=20,
+                    )
+                    payload = response.json()
+                    if not response.ok or payload.get("s") != "ok" or not payload.get("candles"):
+                        raise ValueError(str(payload.get("message", "No FYERS candles")))
+                    chunk = pd.DataFrame(payload["candles"], columns=["Epoch", "Open", "High", "Low", "Close", "Volume"])
+                    chunk["Date"] = pd.to_datetime(chunk["Epoch"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata").dt.tz_localize(None).dt.normalize()
+                    chunk = chunk.set_index("Date")
+                    chunks.append(chunk[["Open", "High", "Low", "Close", "Volume"]])
+                    time.sleep(1.25)
+                fyers = pd.concat(chunks).sort_index()
+                fyers = fyers[~fyers.index.duplicated(keep="last")]
+                factor = adjustment_factors.get(ticker)
+                yahoo_close = yahoo_adjusted_close.get(ticker)
+                if factor is None or yahoo_close is None or factor.empty or yahoo_close.empty:
+                    raise ValueError("No Yahoo adjustment reference for validation")
+                aligned_factor = factor.reindex(fyers.index).ffill().bfill()
+                if aligned_factor.isna().any():
+                    raise ValueError("Adjustment factor does not cover FYERS dates")
+                adjusted = fyers.copy()
+                for col in ("Open", "High", "Low", "Close"):
+                    adjusted[col] = pd.to_numeric(adjusted[col], errors="coerce") * aligned_factor
+                overlap = pd.concat([adjusted["Close"].rename("fyers"), yahoo_close.rename("yahoo")], axis=1).dropna()
+                overlap = overlap[overlap.index >= (today - timedelta(days=20))]
+                if overlap.empty:
+                    raise ValueError("No recent overlapping candles for price validation")
+                relative_error = ((overlap["fyers"] / overlap["yahoo"]) - 1).abs().median()
+                if not np.isfinite(relative_error) or relative_error > 0.03:
+                    raise ValueError(f"FYERS/Yahoo adjusted close mismatch ({relative_error:.1%})")
+                adjusted = adjusted.apply(pd.to_numeric, errors="coerce").dropna(subset=["Close", "High", "Low", "Volume"])
+                if len(adjusted) < 180:
+                    raise ValueError("FYERS returned insufficient daily history")
+                state["frames"][ticker] = adjusted
+                refreshed += 1
+            except Exception as exc:
+                failed.append(f"{ticker}: {exc.__class__.__name__}")
+        state["last_refresh"] = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
+        state["last_error"] = "; ".join(failed[:5]) if failed else None
+        state["last_success"] = int(state.get("last_success", 0)) + refreshed
+
+    # Overlay only fully fetched and price-validated FYERS histories; otherwise Yahoo remains intact.
+    for ticker, frame in list(state.get("frames", {}).items()):
+        if ticker not in tickers or frame is None or frame.empty:
+            continue
+        for source_col, target in (("Close", prices), ("High", highs), ("Low", lows), ("Volume", volumes)):
+            if ticker not in target.columns:
+                target[ticker] = np.nan
+            target.loc[frame.index, ticker] = frame[source_col].reindex(frame.index)
+    return prices.sort_index(), highs.sort_index(), lows.sort_index(), volumes.sort_index()
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _nifty500_benchmark_daily_close():
@@ -230,10 +327,10 @@ def _stage_at(weekly, ticker, position, weekly_high, weekly_low):
     return stage_series.iloc[position]
 
 @st.cache_data(ttl=900, show_spinner=False)
-def _calculate():
+def _calculate(fyers_app_id="", fyers_access_token=""):
     universe = _constituents()
     tickers = tuple(universe["Ticker"].tolist())
-    prices, daily_high, daily_low, daily_volume = _daily_ohlc(tickers)
+    prices, daily_high, daily_low, daily_volume = _daily_ohlc(tickers, fyers_app_id, fyers_access_token)
     if prices.empty or len(prices.index) < 160:
         raise ValueError("Insufficient daily history returned for a full-universe scan.")
     prices = prices.apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
@@ -550,7 +647,7 @@ def _calculate():
     return result, sectors, industries, len(universe), len(prices.columns), current_week_label, previous_week_label, latest_daily_date
 
 
-def render_nse500_screener():
+def render_nse500_screener(fyers_app_id="", fyers_access_token=""):
     with st.expander("NSE 500 · Relative Strength & Weinstein Stage Screener", expanded=False):
         st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#f97316,#facc15,#22c55e);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">NSE 500 · Relative Strength & Weinstein Stage Screener</div>""", unsafe_allow_html=True)
         st.markdown("**Find market leaders, fresh Stage 2 breakouts and sector participation across the full NSE 500.**")
@@ -564,6 +661,7 @@ def render_nse500_screener():
         if force_refresh:
             _calculate.clear()
             _daily_ohlc.clear()
+            _fyers_history_state.clear()
             _constituents.clear()
             for key in (
                 "nse500_rs_stage_results", "nse500_rs_stage_sectors",
@@ -586,7 +684,7 @@ def render_nse500_screener():
         if needs_peer_rs_refresh:
             with st.spinner("Loading NSE 500 screener and calculating peer-relative strength…"):
                 try:
-                    results, sectors, industries, universe_count, priced_count, current_week, previous_week, price_date = _calculate()
+                    results, sectors, industries, universe_count, priced_count, current_week, previous_week, price_date = _calculate(fyers_app_id, fyers_access_token)
                     st.session_state["nse500_rs_stage_results"] = results
                     st.session_state.pop("nse500_rs_stage_last_error", None)
                     st.session_state["nse500_rs_stage_sectors"] = sectors
