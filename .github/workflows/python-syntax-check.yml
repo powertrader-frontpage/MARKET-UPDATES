@@ -3,6 +3,7 @@ name: Python syntax check
 on:
   push:
     branches:
+      - phase1-fyers-main-dashboard-data
       - mobile-navigation-refactor
   pull_request:
     branches:
