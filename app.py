@@ -4,8 +4,6 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import json
 import html
-import queue
-import threading
 
 import numpy as np
 import pandas as pd
