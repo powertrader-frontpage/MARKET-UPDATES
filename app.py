@@ -3085,7 +3085,7 @@ if active_page == "Main Dashboard":
                             micro_membership["Micro sector"].astype(str).isin(leading_micro_names)
                         ][["Micro sector", "Group", "Stock"]].drop_duplicates()
                         leading_stage2_bases = nse_stage_results[
-                            (nse_stage_results["Stage"] == "Stage 2")
+                            (nse_stage_results["Stage"] == "Stage 2 · Uptrend")
                             & (nse_stage_results["Base Setup"].isin([
                                 "B1 · First base phase", "B2 · Second base phase"
                             ]))
