@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
 from io import StringIO
+import time as time_module
 
 import numpy as np
 import pandas as pd
@@ -133,6 +134,7 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
                         headers={"Authorization": f"{fyers_app_id}:{fyers_access_token}"},
                         timeout=20,
                     )
+                    time_module.sleep(1.25)
                     payload = response.json()
                     if not response.ok or payload.get("s") != "ok" or not payload.get("candles"):
                         raise ValueError(str(payload.get("message", "No FYERS candles")))
@@ -140,7 +142,6 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
                     chunk["Date"] = pd.to_datetime(chunk["Epoch"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata").dt.tz_localize(None).dt.normalize()
                     chunk = chunk.set_index("Date")
                     chunks.append(chunk[["Open", "High", "Low", "Close", "Volume"]])
-                    time.sleep(1.25)
                 fyers = pd.concat(chunks).sort_index()
                 fyers = fyers[~fyers.index.duplicated(keep="last")]
                 factor = adjustment_factors.get(ticker)
