@@ -3066,6 +3066,70 @@ if active_page == "Main Dashboard":
                         rising = pd.notna(row["1M vs NIFTY 500 (pp)"]) and row["1M vs NIFTY 500 (pp)"] >= 0
                         return "Leading" if ahead and rising else "Weakening" if ahead else "Improving" if rising else "Lagging"
                     micro_df["Zone"] = micro_df.apply(_micro_zone, axis=1)
+
+                    # Focused watchlist: NSE 500 Stage 2 stocks in B1/B2 bases,
+                    # belonging to micro-sectors currently classified as Leading.
+                    st.subheader("Leading Microsector · Stage 2 B1/B2 Watchlist")
+                    st.caption("Uses the existing NSE 500 screener's completed-week Stage and base classifications. Only stocks mapped to a currently Leading microsector are shown. No additional EMA, volume or breakout filter is applied.")
+                    nse_stage_results = st.session_state.get("nse500_rs_stage_results", pd.DataFrame())
+                    leading_micro_names = set(
+                        micro_df.loc[micro_df["Zone"] == "Leading", "Micro sector"].astype(str)
+                    )
+                    micro_membership = pd.DataFrame(micro_stock_export_rows)
+                    if (
+                        not nse_stage_results.empty
+                        and {"Symbol", "Stage", "Base Setup"}.issubset(nse_stage_results.columns)
+                        and not micro_membership.empty
+                    ):
+                        micro_membership = micro_membership[
+                            micro_membership["Micro sector"].astype(str).isin(leading_micro_names)
+                        ][["Micro sector", "Group", "Stock"]].drop_duplicates()
+                        leading_stage2_bases = nse_stage_results[
+                            (nse_stage_results["Stage"] == "Stage 2")
+                            & (nse_stage_results["Base Setup"].isin([
+                                "B1 · First base phase", "B2 · Second base phase"
+                            ]))
+                        ].copy()
+                        if not leading_stage2_bases.empty and not micro_membership.empty:
+                            leading_stage2_bases = leading_stage2_bases.merge(
+                                micro_membership,
+                                left_on="Symbol",
+                                right_on="Stock",
+                                how="inner",
+                            )
+                            watch_cols = [
+                                "Micro sector", "Group", "Symbol", "Company", "Stage",
+                                "Base Setup", "RS Rank", "Price", "Gap vs 30W %",
+                                "30W Slope %", "4W Return %", "12W Return %",
+                            ]
+                            watch_cols = [column for column in watch_cols if column in leading_stage2_bases.columns]
+                            leading_stage2_bases = leading_stage2_bases.sort_values(
+                                ["Micro sector", "RS Rank"],
+                                ascending=[True, False],
+                                na_position="last",
+                            )
+                            st.caption(
+                                f"{len(leading_stage2_bases)} stock–microsector matches across "
+                                f"{leading_stage2_bases['Micro sector'].nunique()} leading microsectors."
+                            )
+                            st.dataframe(
+                                leading_stage2_bases[watch_cols].reset_index(drop=True),
+                                use_container_width=True,
+                                hide_index=True,
+                                height=min(480, 45 + 36 * len(leading_stage2_bases)),
+                            )
+                            st.download_button(
+                                "⬇ Download Leading Microsector Stage 2 B1/B2 Watchlist",
+                                leading_stage2_bases[watch_cols].to_csv(index=False).encode("utf-8-sig"),
+                                file_name="leading_microsector_stage2_b1_b2.csv",
+                                mime="text/csv",
+                                key="download_leading_microsector_stage2_b1_b2",
+                            )
+                        else:
+                            st.info("No NSE 500 Stage 2 B1/B2 stocks currently belong to a Leading microsector.")
+                    else:
+                        st.info("The NSE 500 screener results or microsector constituent data are not available yet. Refresh the relevant data and this watchlist will populate automatically.")
+
                     # Dual-confirmation stock-strength scan: qualifying micro-sectors are retained.
                     # Validate the broad sector only where a reliable mapping and current zone exist.
                     # Unmapped groups remain included and are labelled transparently.
