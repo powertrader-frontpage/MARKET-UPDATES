@@ -2678,7 +2678,12 @@ if active_page == "Main Dashboard":
             st.markdown("---")
             st.markdown("## NSE 500 · Relative Strength & Weinstein Stage Screener")
             st.caption("NSE 500 Weinstein stages, Stage 2 quality, and confirmed daily breakout watch.")
-            render_nse500_screener()
+            _nse_fyers_config = fyers_credentials()
+            _nse_fyers_token = st.session_state.get("fyers_access_token", "")
+            render_nse500_screener(
+                _nse_fyers_config[0] if _nse_fyers_config and _nse_fyers_token else "",
+                _nse_fyers_token,
+            )
 
             with st.expander("Sector rotation", expanded=False):
                 st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Sector rotation</div>""", unsafe_allow_html=True)
