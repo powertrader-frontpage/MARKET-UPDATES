@@ -200,7 +200,10 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
                 target[ticker] = np.nan
             fyers_values = frame[source_col].reindex(frame.index).dropna()
             if not fyers_values.empty:
-                target.loc[fyers_values.index, ticker] = fyers_values
+                # combine_first forms the union of Yahoo and FYERS dates. FYERS
+                # takes priority on dates it supplies; Yahoo fills every other date.
+                yahoo_values = target[ticker] if ticker in target.columns else pd.Series(dtype=float)
+                target[ticker] = fyers_values.combine_first(yahoo_values)
     return prices.sort_index(), highs.sort_index(), lows.sort_index(), volumes.sort_index()
 
 @st.cache_data(ttl=SCREENER_DATA_TTL_SECONDS, show_spinner=False)
