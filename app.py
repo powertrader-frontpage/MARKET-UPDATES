@@ -343,98 +343,6 @@ def _mfi_volume_confirmation(frame: pd.DataFrame, period: int = 14):
     volume_signal = ("Expansion" if volume_ratio >= 1.5 else "Elevated" if volume_ratio >= 1.2 else "Normal") if pd.notna(volume_ratio) else "Unavailable"
     return {"MFI 14": mfi_value, "Volume vs 20D avg": volume_ratio, "Flow signal": mfi_signal, "Volume signal": volume_signal}
 
-# Upstox read-only OAuth integration. Secrets stay in Streamlit Cloud Secrets.
-def upstox_oauth_credentials():
-    try:
-        values = (
-            str(st.secrets["UPSTOX_API_KEY"]).strip(),
-            str(st.secrets["UPSTOX_API_SECRET"]).strip(),
-            str(st.secrets["UPSTOX_REDIRECT_URI"]).strip(),
-        )
-        return values if all(values) else None
-    except Exception:
-        return None
-
-def upstox_make_state(client_secret: str) -> str:
-    # Signed state survives OAuth redirects even if Streamlit creates a fresh session.
-    payload = str(int(time.time())) + "." + secrets.token_urlsafe(24)
-    signature = hmac.new(client_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-    return payload + "." + signature
-
-def upstox_verify_state(state: str, client_secret: str, max_age_seconds: int = 900) -> bool:
-    try:
-        payload, signature = state.rsplit(".", 1)
-        timestamp_text, nonce = payload.split(".", 1)
-        timestamp = int(timestamp_text)
-        if not nonce or abs(int(time.time()) - timestamp) > max_age_seconds:
-            return False
-        expected = hmac.new(client_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-        return secrets.compare_digest(signature, expected)
-    except Exception:
-        return False
-
-def upstox_login_url(client_id: str, redirect_uri: str, state: str) -> str:
-    params = {"client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code", "state": state}
-    return "https://api.upstox.com/v2/login/authorization/dialog?" + urlencode(params)
-
-@st.cache_resource
-def upstox_token_vault():
-    return {}
-
-def upstox_exchange_auth_code(client_id: str, client_secret: str, redirect_uri: str, code: str):
-    try:
-        response = requests.post(
-            "https://api.upstox.com/v2/login/authorization/token",
-            headers={"accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"},
-            data={"code": code, "client_id": client_id, "client_secret": client_secret,
-                  "redirect_uri": redirect_uri, "grant_type": "authorization_code"},
-            timeout=20,
-        )
-        payload = response.json()
-        if response.ok and payload.get("access_token"):
-            return payload["access_token"], None
-        return None, str(payload.get("errors") or payload.get("message") or "Upstox did not return an access token.")
-    except Exception as exc:
-        return None, f"Upstox token exchange failed ({exc.__class__.__name__})."
-
-def upstox_get_profile(access_token: str):
-    try:
-        response = requests.get(
-            "https://api.upstox.com/v2/user/profile",
-            headers={"Accept": "application/json", "Authorization": f"Bearer {access_token}"},
-            timeout=15,
-        )
-        payload = response.json()
-        if response.ok and payload.get("status") == "success":
-            return payload.get("data") or {}, None
-        return None, str(payload.get("errors") or payload.get("message") or f"HTTP {response.status_code}")
-    except Exception as exc:
-        return None, f"Upstox profile request failed ({exc.__class__.__name__})."
-
-# Complete Upstox OAuth redirects and keep the newly issued token in the app's in-memory vault.
-try:
-    _upstox_params = st.query_params
-    _upstox_code = str(_upstox_params.get("code", "")).strip()
-    _upstox_state = str(_upstox_params.get("state", "")).strip()
-    _upstox_oauth = upstox_oauth_credentials()
-    if _upstox_code and _upstox_state and _upstox_oauth:
-        _upstox_client_id, _upstox_client_secret, _upstox_redirect_uri = _upstox_oauth
-        if upstox_verify_state(_upstox_state, _upstox_client_secret):
-            _upstox_new_token, _upstox_token_error = upstox_exchange_auth_code(
-                _upstox_client_id, _upstox_client_secret, _upstox_redirect_uri, _upstox_code
-            )
-            if _upstox_new_token:
-                upstox_token_vault()["access_token"] = _upstox_new_token
-                st.cache_data.clear()
-                st.query_params.clear()
-                st.session_state["upstox_oauth_connected"] = True
-            else:
-                st.session_state["upstox_oauth_error"] = _upstox_token_error
-        else:
-            st.session_state["upstox_oauth_error"] = "Upstox login state expired or invalid. Start login again."
-except Exception:
-    pass
-
 with st.sidebar:
     st.header("Dashboard controls")
     active_page = st.radio(
@@ -451,20 +359,6 @@ with st.sidebar:
         key="mit_page_navigation",
     )
     st.divider()
-    _upstox_oauth = upstox_oauth_credentials()
-    if _upstox_oauth:
-        _upstox_client_id, _upstox_client_secret, _upstox_redirect_uri = _upstox_oauth
-        _upstox_login = upstox_login_url(
-            _upstox_client_id, _upstox_redirect_uri, upstox_make_state(_upstox_client_secret)
-        )
-        st.markdown(f"[Connect / Reconnect Upstox for Brent]({_upstox_login})")
-        if st.session_state.get("upstox_oauth_connected"):
-            st.success("Upstox connected for this app session.")
-        if st.session_state.get("upstox_oauth_error"):
-            st.warning("Upstox login issue: " + str(st.session_state["upstox_oauth_error"]))
-        st.caption("If the quote still falls back to EIA, confirm the Upstox app redirect URI exactly matches this dashboard URL.")
-    else:
-        st.caption("Upstox Brent login unavailable: configure UPSTOX_API_KEY, UPSTOX_API_SECRET and UPSTOX_REDIRECT_URI in Streamlit Secrets.")
     period = st.selectbox("Historical lookback", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=2)
     interval = st.selectbox("Intraday bar interval", ["5m", "15m", "30m", "60m"], index=0)
     st.caption("Intraday Yahoo Finance history is limited by the upstream source. If it is unavailable, the app will show an error instead of substituting sample values.")
@@ -504,51 +398,6 @@ with st.sidebar:
     st.markdown("- [Yahoo Finance data coverage/delays](https://help.yahoo.com/kb/SLN2310.html)")
 
 
-
-# Upstox read-only market-data connection. Keep credentials in Streamlit Cloud Secrets.
-def upstox_credentials():
-    """Read required Upstox secrets and return safe configuration diagnostics."""
-    required = ("UPSTOX_API_KEY", "UPSTOX_API_SECRET", "UPSTOX_REDIRECT_URI", "UPSTOX_ACCESS_TOKEN")
-    missing = []
-    values = {}
-    for name in required:
-        try:
-            value = str(st.secrets[name]).strip()
-            if value:
-                values[name] = value
-            else:
-                missing.append(name + " (empty)")
-        except Exception:
-            missing.append(name)
-    if missing:
-        return None, missing
-    return (
-        values["UPSTOX_API_KEY"],
-        values["UPSTOX_API_SECRET"],
-        values["UPSTOX_REDIRECT_URI"],
-        values["UPSTOX_ACCESS_TOKEN"],
-    ), []
-
-def upstox_ltp(access_token: str, instrument_keys: list[str]):
-    """Fetch read-only LTP quotes from Upstox; never place orders."""
-    try:
-        response = requests.get(
-            "https://api.upstox.com/v2/market-quote/ltp",
-            params={"instrument_key": ",".join(instrument_keys)},
-            headers={"Accept": "application/json", "Authorization": f"Bearer {access_token}"},
-            timeout=15,
-        )
-        try:
-            payload = response.json()
-        except Exception:
-            return {}, f"Upstox returned a non-JSON response (HTTP {response.status_code})."
-        if response.ok and payload.get("status") == "success":
-            return payload.get("data") or {}, None
-        errors = payload.get("errors") or []
-        detail = errors[0].get("message") if errors and isinstance(errors[0], dict) else payload.get("message")
-        return {}, f"Upstox quote request failed (HTTP {response.status_code}): {detail or 'check token, instrument keys and API access'}"
-    except Exception as exc:
-        return {}, f"Upstox request failed ({exc.__class__.__name__})."
 
 # FYERS read-only market-data connection. Credentials must live in Streamlit Cloud Secrets.
 def fyers_credentials():
@@ -939,59 +788,6 @@ with st.expander("FYERS live market snapshot · optional", expanded=False):
     else:
         st.info("FYERS is not connected in this app session. Connect or reconnect FYERS, then reopen this panel to fetch live quotes.")
 
-
-
-@st.cache_data(ttl=60, show_spinner=False)
-def get_upstox_brent_quote() -> tuple[pd.DataFrame, str | None]:
-    """Fetch Upstox's global Brent instrument (Oil (Brent), BZUSD) using the full quote API."""
-    try:
-        # Prefer a fresh OAuth token from this app session; otherwise use the configured secret.
-        access_token = str(upstox_token_vault().get("access_token", "")).strip()
-        if not access_token:
-            try:
-                access_token = str(st.secrets["UPSTOX_ACCESS_TOKEN"]).strip()
-            except Exception:
-                return pd.DataFrame(), "Upstox not connected: use the Connect Upstox login in the sidebar."
-        if not access_token:
-            return pd.DataFrame(), "Upstox access token is empty; reconnect Upstox from the sidebar."
-        response = requests.get(
-            "https://api.upstox.com/v2/market-quote/quotes",
-            params={"instrument_key": "GLOBAL_INDEX|BZUSD"},
-            headers={"Accept": "application/json", "Authorization": f"Bearer {access_token}"},
-            timeout=15,
-        )
-        payload = response.json()
-        if not response.ok or payload.get("status") != "success":
-            errors = payload.get("errors") or []
-            detail = errors[0].get("message") if errors and isinstance(errors[0], dict) else payload.get("message")
-            return pd.DataFrame(), f"Upstox Brent quote unavailable (HTTP {response.status_code}): {detail or 'check access token and instrument access'}"
-        quotes = payload.get("data") or {}
-        quote = quotes.get("GLOBAL_INDEX:BZUSD") or quotes.get("GLOBAL_INDEX|BZUSD")
-        if not quote and len(quotes) == 1:
-            quote = next(iter(quotes.values()))
-        if not isinstance(quote, dict):
-            return pd.DataFrame(), "Upstox did not return the Oil (Brent) quote."
-        last_price = pd.to_numeric(quote.get("last_price"), errors="coerce")
-        net_change = pd.to_numeric(quote.get("net_change"), errors="coerce")
-        if pd.isna(last_price) or pd.isna(net_change) or float(last_price) <= 0:
-            return pd.DataFrame(), "Upstox Brent quote is missing a valid price or daily change."
-        ts = quote.get("timestamp") or quote.get("last_trade_time")
-        if ts is not None:
-            stamp = pd.to_datetime(float(ts), unit="ms", utc=True).tz_convert("Asia/Kolkata")
-        else:
-            stamp = datetime.now(ZoneInfo("Asia/Kolkata"))
-        previous_close = float(last_price) - float(net_change)
-        if previous_close <= 0:
-            return pd.DataFrame(), "Upstox Brent quote returned an invalid previous-close calculation."
-        # Two rows preserve the existing quote_snapshot interface; values are from the same Upstox quote.
-        daily_change_pct = float(net_change) / previous_close * 100
-        frame = pd.DataFrame([
-            {"Date": stamp - pd.Timedelta(days=1), "Open": previous_close, "High": previous_close, "Low": previous_close, "Close": previous_close, "Volume": np.nan, "Source": "Upstox", "DailyChange": float(net_change), "DailyChangePct": daily_change_pct},
-            {"Date": stamp, "Open": quote.get("ohlc", {}).get("open", last_price), "High": quote.get("ohlc", {}).get("high", last_price), "Low": quote.get("ohlc", {}).get("low", last_price), "Close": float(last_price), "Volume": quote.get("volume", np.nan), "Source": "Upstox", "DailyChange": float(net_change), "DailyChangePct": daily_change_pct},
-        ])
-        return frame, None
-    except Exception as exc:
-        return pd.DataFrame(), f"Upstox Brent quote failed: {type(exc).__name__}: {str(exc)[:160]}"
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -1420,7 +1216,7 @@ with st.spinner("Loading best-effort public market data…"):
     for name, ticker in INDEXES.items():
         # Brent Crude must always come exclusively from OilPrice.com.
         # If OilPrice.com is unavailable or its quote cannot be parsed, show unavailable;
-        # do not silently substitute Upstox, Trading Economics, EIA, or Yahoo data.
+        # do not silently substitute another provider.
         if name == "Brent Crude":
             hist, err = get_oilprice_brent_quote()
         elif name == "NIFTY 50":
@@ -1592,12 +1388,6 @@ if active_page == "Main Dashboard":
                     continue
                 # Prefer a source-provided daily move. Otherwise derive it from the latest two
                 # genuine observations; never display a fabricated zero when a percentage is missing.
-                if brent_source in ("Upstox", "Trading Economics") and pd.notna(last.get("DailyChange")):
-                    change = float(last["DailyChange"])
-                    if pd.notna(last.get("DailyChangePct")):
-                        pct = float(last["DailyChangePct"])
-                    elif pd.notna(last.get("Close")) and float(last["Close"]) - change > 0:
-                        pct = change / (float(last["Close"]) - change) * 100
                 if pd.isna(pct) and len(df) >= 2:
                     brent_closes = pd.to_numeric(df["Close"], errors="coerce").dropna()
                     if len(brent_closes) >= 2 and float(brent_closes.iloc[-2]) != 0:
@@ -1825,7 +1615,7 @@ if active_page == "Main Dashboard":
             "Source bar": "No verified current source quote",
         })
         sentiment_errors.append("GIFT Nifty live quote unavailable; excluded from the weighted sentiment score (" + "; ".join(gift_failures) + ")")
-    # Prefer Upstox's global Oil (Brent) quote; use EIA only as a dated fallback.
+    # Use the OilPrice.com Brent quote already loaded for the dashboard.
     try:
         brent_frame = market_data.get("Brent Crude", pd.DataFrame())
         brent_snap = quote_snapshot(brent_frame)
@@ -1846,7 +1636,7 @@ if active_page == "Main Dashboard":
                     "Source bar": brent_date.strftime("%Y-%m-%d %H:%M IST") + " · " + brent_source,
                 })
         else:
-            sentiment_errors.append("Brent crude: Upstox and EIA sources unavailable")
+            sentiment_errors.append("Brent crude: OilPrice.com source unavailable")
     except Exception as exc:
         sentiment_errors.append("Brent crude source error: " + type(exc).__name__)
     _sentiment_change("USD/INR (inverse impact)", "INR=X", 0.05, inverse=True)
