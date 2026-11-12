@@ -1207,136 +1207,137 @@ def quote_snapshot(df: pd.DataFrame):
         pct = change / float(prev_close) * 100 if pd.notna(change) and pd.notna(prev_close) and float(prev_close) != 0 else np.nan
     return last, change, pct
 
-# Pull key instruments. The sidebar interval controls intraday bars; daily history is used for indicators.
-market_data: dict[str, pd.DataFrame] = {}
-market_errors: dict[str, str | None] = {}
-with st.spinner("Loading best-effort public market data…"):
-    for name, ticker in INDEXES.items():
-        # Brent Crude must always come exclusively from OilPrice.com.
-        # If OilPrice.com is unavailable or its quote cannot be parsed, show unavailable;
-        # do not silently substitute another provider.
-        if name == "Brent Crude":
-            hist, err = get_oilprice_brent_quote()
-        elif name == "NIFTY 50":
-            hist, err = get_main_index_history(ticker, period, "1d", "NSE:NIFTY50-INDEX")
-        elif name == "BANK NIFTY":
-            hist, err = get_main_index_history(ticker, period, "1d", "NSE:NIFTYBANK-INDEX")
-        else:
-            hist, err = get_history(ticker, period, "1d")
-        market_data[name], market_errors[name] = hist, err
-
-@st.cache_data(ttl=180, show_spinner=False)
-def get_nse_index_archive_latest() -> tuple[pd.DataFrame, str | None]:
-    """Fetch several recent official NSE daily archives and select the newest actual trading date."""
-    try:
-        today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36",
-            "Cache-Control": "no-cache, no-store, max-age=0",
-            "Pragma": "no-cache",
-        }
-        candidates = []
-        errors = []
-        # Do not stop at the first valid file: an archive named for today can contain
-        # an older session. Compare the actual Index Date inside every recent file.
-        for offset in range(0, 8):
-            day = today - pd.Timedelta(days=offset)
-            response = None
-            last_host_error = None
-            # NSE serves the same official archive through two hostnames. Cloud
-            # deployments can be blocked/rate-limited on one hostname while the
-            # alternate archive host remains reachable.
-            for archive_host in ("archives.nseindia.com", "nsearchives.nseindia.com"):
-                url = f"https://{archive_host}/content/indices/ind_close_all_{day:%d%m%Y}.csv"
+if active_page == "Main Dashboard":
+    # Pull key instruments. The sidebar interval controls intraday bars; daily history is used for indicators.
+    market_data: dict[str, pd.DataFrame] = {}
+    market_errors: dict[str, str | None] = {}
+    with st.spinner("Loading best-effort public market data…"):
+        for name, ticker in INDEXES.items():
+            # Brent Crude must always come exclusively from OilPrice.com.
+            # If OilPrice.com is unavailable or its quote cannot be parsed, show unavailable;
+            # do not silently substitute another provider.
+            if name == "Brent Crude":
+                hist, err = get_oilprice_brent_quote()
+            elif name == "NIFTY 50":
+                hist, err = get_main_index_history(ticker, period, "1d", "NSE:NIFTY50-INDEX")
+            elif name == "BANK NIFTY":
+                hist, err = get_main_index_history(ticker, period, "1d", "NSE:NIFTYBANK-INDEX")
+            else:
+                hist, err = get_history(ticker, period, "1d")
+            market_data[name], market_errors[name] = hist, err
+    
+    @st.cache_data(ttl=180, show_spinner=False)
+    def get_nse_index_archive_latest() -> tuple[pd.DataFrame, str | None]:
+        """Fetch several recent official NSE daily archives and select the newest actual trading date."""
+        try:
+            today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36",
+                "Cache-Control": "no-cache, no-store, max-age=0",
+                "Pragma": "no-cache",
+            }
+            candidates = []
+            errors = []
+            # Do not stop at the first valid file: an archive named for today can contain
+            # an older session. Compare the actual Index Date inside every recent file.
+            for offset in range(0, 8):
+                day = today - pd.Timedelta(days=offset)
+                response = None
+                last_host_error = None
+                # NSE serves the same official archive through two hostnames. Cloud
+                # deployments can be blocked/rate-limited on one hostname while the
+                # alternate archive host remains reachable.
+                for archive_host in ("archives.nseindia.com", "nsearchives.nseindia.com"):
+                    url = f"https://{archive_host}/content/indices/ind_close_all_{day:%d%m%Y}.csv"
+                    try:
+                        candidate_response = requests.get(
+                            url, params={"_": int(time.time())}, headers=headers, timeout=12
+                        )
+                        if candidate_response.status_code == 404:
+                            continue
+                        candidate_response.raise_for_status()
+                        if len(candidate_response.content) < 5000:
+                            last_host_error = f"{archive_host}: short archive response"
+                            continue
+                        response = candidate_response
+                        break
+                    except Exception as host_exc:
+                        last_host_error = f"{archive_host}: {type(host_exc).__name__}"
+                if response is None:
+                    if last_host_error:
+                        errors.append(f"{day:%d-%b}: {last_host_error}")
+                    continue
                 try:
-                    candidate_response = requests.get(
-                        url, params={"_": int(time.time())}, headers=headers, timeout=12
-                    )
-                    if candidate_response.status_code == 404:
+                    frame = pd.read_csv(pd.io.common.BytesIO(response.content))
+                    required = {"Index Name", "Index Date", "Open", "High", "Low", "Closing"}
+                    if not required.issubset(frame.columns):
+                        errors.append(f"{day:%d-%b}: unexpected archive columns")
                         continue
-                    candidate_response.raise_for_status()
-                    if len(candidate_response.content) < 5000:
-                        last_host_error = f"{archive_host}: short archive response"
+                    frame["Index Date"] = pd.to_datetime(frame["Index Date"], format="%d-%m-%Y", errors="coerce")
+                    frame = frame.dropna(subset=["Index Date"])
+                    if frame.empty:
                         continue
-                    response = candidate_response
-                    break
-                except Exception as host_exc:
-                    last_host_error = f"{archive_host}: {type(host_exc).__name__}"
-            if response is None:
-                if last_host_error:
-                    errors.append(f"{day:%d-%b}: {last_host_error}")
-                continue
-            try:
-                frame = pd.read_csv(pd.io.common.BytesIO(response.content))
-                required = {"Index Name", "Index Date", "Open", "High", "Low", "Closing"}
-                if not required.issubset(frame.columns):
-                    errors.append(f"{day:%d-%b}: unexpected archive columns")
-                    continue
-                frame["Index Date"] = pd.to_datetime(frame["Index Date"], format="%d-%m-%Y", errors="coerce")
-                frame = frame.dropna(subset=["Index Date"])
-                if frame.empty:
-                    continue
-                for col in ["Open", "High", "Low", "Closing", "Volume", "Points Change", "Change(%)"]:
-                    if col in frame:
-                        frame[col] = pd.to_numeric(frame[col].astype(str).str.replace(",", "", regex=False), errors="coerce")
-                candidates.append(frame)
-            except Exception as exc:
-                errors.append(f"{day:%d-%b}: {type(exc).__name__}")
-        if not candidates:
-            detail = "; ".join(errors[-3:])
-            return pd.DataFrame(), "No usable recent NSE index archive was returned." + (f" Details: {detail}" if detail else "")
-        combined = pd.concat(candidates, ignore_index=True)
-        combined = combined.sort_values("Index Date").drop_duplicates(
-            subset=["Index Name", "Index Date"], keep="last"
-        )
-        latest_date = combined["Index Date"].max()
-        latest = combined[combined["Index Date"] == latest_date].copy()
-        latest.attrs["archive_latest_date"] = latest_date.strftime("%d %b %Y")
-        return latest, None
-    except Exception as exc:
-        return pd.DataFrame(), f"NSE archive unavailable: {type(exc).__name__}"
-
-def apply_nse_index_archive(market_data: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
-    """Append newer official NSE EOD bars to Yahoo history for Indian benchmark indices."""
-    archive, archive_error = get_nse_index_archive_latest()
-    if archive.empty:
-        return market_data
-    aliases = {
-        "NIFTY 50": {"nifty50", "nifty 50"},
-        "BANK NIFTY": {"niftybank", "nifty bank", "bank nifty"},
-        "India VIX": {"indiavix", "india vix"},
-    }
-    for dashboard_name, names in aliases.items():
-        matches = archive[archive["Index Name"].astype(str).str.strip().str.lower().isin(names)]
-        if matches.empty:
-            continue
-        source_row = matches.sort_values("Index Date").iloc[-1]
-        official_bar = {
-            "Date": source_row["Index Date"].tz_localize("Asia/Kolkata"),
-            "Open": source_row.get("Open", np.nan),
-            "High": source_row.get("High", np.nan),
-            "Low": source_row.get("Low", np.nan),
-            "Close": source_row.get("Closing", np.nan),
-            "Volume": source_row.get("Volume", np.nan),
-            "Source": "NSE India official archive",
+                    for col in ["Open", "High", "Low", "Closing", "Volume", "Points Change", "Change(%)"]:
+                        if col in frame:
+                            frame[col] = pd.to_numeric(frame[col].astype(str).str.replace(",", "", regex=False), errors="coerce")
+                    candidates.append(frame)
+                except Exception as exc:
+                    errors.append(f"{day:%d-%b}: {type(exc).__name__}")
+            if not candidates:
+                detail = "; ".join(errors[-3:])
+                return pd.DataFrame(), "No usable recent NSE index archive was returned." + (f" Details: {detail}" if detail else "")
+            combined = pd.concat(candidates, ignore_index=True)
+            combined = combined.sort_values("Index Date").drop_duplicates(
+                subset=["Index Name", "Index Date"], keep="last"
+            )
+            latest_date = combined["Index Date"].max()
+            latest = combined[combined["Index Date"] == latest_date].copy()
+            latest.attrs["archive_latest_date"] = latest_date.strftime("%d %b %Y")
+            return latest, None
+        except Exception as exc:
+            return pd.DataFrame(), f"NSE archive unavailable: {type(exc).__name__}"
+    
+    def apply_nse_index_archive(market_data: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+        """Append newer official NSE EOD bars to Yahoo history for Indian benchmark indices."""
+        archive, archive_error = get_nse_index_archive_latest()
+        if archive.empty:
+            return market_data
+        aliases = {
+            "NIFTY 50": {"nifty50", "nifty 50"},
+            "BANK NIFTY": {"niftybank", "nifty bank", "bank nifty"},
+            "India VIX": {"indiavix", "india vix"},
         }
-        current = market_data.get(dashboard_name, pd.DataFrame()).copy()
-        if current.empty:
-            market_data[dashboard_name] = pd.DataFrame([official_bar])
-            continue
-        current_dates = pd.to_datetime(current["Date"], errors="coerce")
-        if current_dates.dt.tz is None:
-            current_dates = current_dates.dt.tz_localize("Asia/Kolkata")
-        else:
-            current_dates = current_dates.dt.tz_convert("Asia/Kolkata")
-        latest_current = current_dates.max()
-        if pd.isna(latest_current) or official_bar["Date"] > latest_current:
-            market_data[dashboard_name] = pd.concat([current, pd.DataFrame([official_bar])], ignore_index=True).sort_values("Date").drop_duplicates("Date", keep="last").reset_index(drop=True)
-    return market_data
-
-
-market_data = apply_nse_index_archive(market_data)
-
+        for dashboard_name, names in aliases.items():
+            matches = archive[archive["Index Name"].astype(str).str.strip().str.lower().isin(names)]
+            if matches.empty:
+                continue
+            source_row = matches.sort_values("Index Date").iloc[-1]
+            official_bar = {
+                "Date": source_row["Index Date"].tz_localize("Asia/Kolkata"),
+                "Open": source_row.get("Open", np.nan),
+                "High": source_row.get("High", np.nan),
+                "Low": source_row.get("Low", np.nan),
+                "Close": source_row.get("Closing", np.nan),
+                "Volume": source_row.get("Volume", np.nan),
+                "Source": "NSE India official archive",
+            }
+            current = market_data.get(dashboard_name, pd.DataFrame()).copy()
+            if current.empty:
+                market_data[dashboard_name] = pd.DataFrame([official_bar])
+                continue
+            current_dates = pd.to_datetime(current["Date"], errors="coerce")
+            if current_dates.dt.tz is None:
+                current_dates = current_dates.dt.tz_localize("Asia/Kolkata")
+            else:
+                current_dates = current_dates.dt.tz_convert("Asia/Kolkata")
+            latest_current = current_dates.max()
+            if pd.isna(latest_current) or official_bar["Date"] > latest_current:
+                market_data[dashboard_name] = pd.concat([current, pd.DataFrame([official_bar])], ignore_index=True).sort_values("Date").drop_duplicates("Date", keep="last").reset_index(drop=True)
+        return market_data
+    
+    
+    market_data = apply_nse_index_archive(market_data)
+    
 now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
 # Hidden refresh/source note retained in code to keep the dashboard focused on key headings and values.
 
