@@ -85,6 +85,9 @@ def _daily_ohlc(tickers, fyers_app_id="", fyers_access_token=""):
                     continue
                 if not {"Close", "High", "Low", "Volume"}.issubset(part.columns):
                     continue
+                part = part.copy()
+                part.index = pd.to_datetime(part.index).tz_localize(None).normalize() if getattr(part.index, "tz", None) is not None else pd.to_datetime(part.index).normalize()
+                part = part[~part.index.duplicated(keep="last")].sort_index()
                 raw_close = pd.to_numeric(part["Close"], errors="coerce")
                 adj_close = pd.to_numeric(part["Adj Close"], errors="coerce") if "Adj Close" in part else raw_close
                 factor = (adj_close / raw_close).replace([np.inf, -np.inf], np.nan)
