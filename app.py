@@ -16,6 +16,7 @@ import streamlit.components.v1 as components
 import yfinance as yf
 import nse500_screener as nse500_data
 from nse500_screener import render_nse500_screener
+from hourly_strength_screener import render_hourly_strength_screener
 
 import hashlib
 import hmac
@@ -476,6 +477,7 @@ with st.sidebar:
         "Navigate",
         [
             "Main Dashboard",
+            "1-Hour Strength Screener",
             "Breakout Scanners",
             "Stage 2 B1 Fundamentals",
             "Sector Leadership & Heatmap",
@@ -3582,6 +3584,9 @@ if active_page == "Main Dashboard":
         
         
         
+if active_page == "1-Hour Strength Screener":
+    render_hourly_strength_screener()
+
 if active_page == "Breakout Scanners":
     from explosive_breakout_scanner import render_explosive_breakout_scanner
 
