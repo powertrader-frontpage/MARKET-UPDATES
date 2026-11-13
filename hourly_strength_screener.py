@@ -252,7 +252,18 @@ def render_hourly_strength_screener():
                 "Sector breadth 5H %", "Price", "Signal", "1H Volume / Prior 20H Avg",
                 "Bull / Bear Volume", "Bullish candles (12H)", "Quiet pullbacks",
                 "Higher highs & lows", "EMA momentum", "Last completed candle"]
-        st.dataframe(view[cols], use_container_width=True, hide_index=True, height=560)
+        def _sector_status_style(value):
+            colors = {
+                "Leading": "background-color: #14532d; color: #bbf7d0; font-weight: 700;",
+                "Improving": "background-color: #164e63; color: #a5f3fc; font-weight: 700;",
+                "Neutral": "background-color: #374151; color: #e5e7eb;",
+                "Weakening": "background-color: #7f1d1d; color: #fecaca; font-weight: 700;",
+                "Unavailable": "background-color: #374151; color: #9ca3af;",
+            }
+            return colors.get(str(value), "")
+
+        styled_view = view[cols].style.map(_sector_status_style, subset=["Sector strength"])
+        st.dataframe(styled_view, use_container_width=True, hide_index=True, height=560)
         st.download_button("Download hourly strength watchlist (CSV)", view[cols].to_csv(index=False).encode("utf-8"),
                            "nse500_1h_price_volume_strength.csv", "text/csv", key="download_hourly_strength")
     sector_summary = result.groupby("Sector").agg(
