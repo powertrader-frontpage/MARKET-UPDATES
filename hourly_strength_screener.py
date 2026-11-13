@@ -77,7 +77,7 @@ def _completed_bars(data: pd.DataFrame) -> pd.DataFrame:
     now = pd.Timestamp(datetime.now(IST))
     # Yahoo labels 60-minute candles by their opening timestamp. Exclude any bar
     # whose full 60 minutes have not elapsed; this also excludes the live candle.
-    out = data[data["Datetime"] + pd.Timedelta(minutes=60) <= now].copy()
+    out = data[(data["Datetime"] + pd.Timedelta(minutes=60) <= now) & (data["Datetime"].dt.strftime("%H:%M") != "15:15")].copy()
     return out
 
 
