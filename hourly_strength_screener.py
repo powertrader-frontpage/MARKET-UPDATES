@@ -139,6 +139,50 @@ def _classify_symbol(frame: pd.DataFrame) -> dict | None:
     }
 
 
+def _sector_strength(completed: pd.DataFrame) -> pd.DataFrame:
+    """Estimate hourly sector leadership from constituent returns in the same completed-bar dataset."""
+    rows = []
+    for ticker, group in completed.groupby("Ticker", sort=False):
+        close = pd.to_numeric(group.sort_values("Datetime")["Close"], errors="coerce").dropna()
+        if len(close) < 11:
+            continue
+        current_5h = (float(close.iloc[-1]) / float(close.iloc[-6]) - 1) * 100
+        previous_5h = (float(close.iloc[-6]) / float(close.iloc[-11]) - 1) * 100
+        rows.append({"Ticker": ticker, "Current 5H return %": current_5h,
+                     "Previous 5H return %": previous_5h})
+    stock_returns = pd.DataFrame(rows)
+    if stock_returns.empty:
+        return pd.DataFrame(columns=["Sector", "Sector strength", "Sector relative 5H (pp)", "Sector breadth 5H %"])
+
+    market_current = float(stock_returns["Current 5H return %"].median())
+    market_previous = float(stock_returns["Previous 5H return %"].median())
+    stock_returns = stock_returns.merge(
+        _nse500_universe()[["Ticker", "Sector"]].drop_duplicates("Ticker"),
+        on="Ticker", how="left"
+    )
+    output = []
+    for sector, group in stock_returns.groupby("Sector", dropna=False):
+        if len(group) < 3:
+            continue
+        current = float(group["Current 5H return %"].median())
+        previous = float(group["Previous 5H return %"].median())
+        relative = current - market_current
+        relative_change = relative - (previous - market_previous)
+        breadth = float((group["Current 5H return %"] > 0).mean() * 100)
+        if relative >= 0.15 and breadth >= 55:
+            status = "Leading"
+        elif relative_change > 0 and breadth >= 45:
+            status = "Improving"
+        elif relative < 0 and relative_change <= 0:
+            status = "Weakening"
+        else:
+            status = "Neutral"
+        output.append({"Sector": sector, "Sector strength": status,
+                       "Sector relative 5H (pp)": round(relative, 2),
+                       "Sector breadth 5H %": round(breadth, 1)})
+    return pd.DataFrame(output)
+
+
 def render_hourly_strength_screener():
     st.title("1-Hour Price–Volume Strength Screener")
     st.caption("NSE 500 · Completed 60-minute candles only · Yahoo Finance intraday data · Research watchlist, not a buy signal")
@@ -176,6 +220,16 @@ def render_hourly_strength_screener():
         st.warning("Hourly history was returned, but not enough completed candles were available to classify stocks.")
         return
 
+    # Sector context uses the same completed hourly constituent data as this screener.
+    sector_strength = _sector_strength(completed)
+    if not sector_strength.empty:
+        result = result.merge(sector_strength, on="Sector", how="left")
+    else:
+        result["Sector strength"] = "Unavailable"
+        result["Sector relative 5H (pp)"] = np.nan
+        result["Sector breadth 5H %"] = np.nan
+    result["Sector strength"] = result["Sector strength"].fillna("Unavailable")
+
     latest = completed["Datetime"].max()
     st.caption(f"Latest completed candle in dataset: {latest.strftime('%d %b %Y, %I:%M %p IST')} · Stocks classified: {len(result)} / {len(tickers)} · Unavailable/failed tickers: {len(failures)}")
     if failures:
@@ -194,7 +248,8 @@ def render_hourly_strength_screener():
     if view.empty:
         st.info("No stocks match the selected hourly signal categories.")
     else:
-        cols = ["Symbol", "Company", "Sector", "Price", "Signal", "1H Volume / Prior 20H Avg",
+        cols = ["Symbol", "Company", "Sector", "Sector strength", "Sector relative 5H (pp)",
+                "Sector breadth 5H %", "Price", "Signal", "1H Volume / Prior 20H Avg",
                 "Bull / Bear Volume", "Bullish candles (12H)", "Quiet pullbacks",
                 "Higher highs & lows", "EMA momentum", "Last completed candle"]
         st.dataframe(view[cols], use_container_width=True, hide_index=True, height=560)
@@ -204,7 +259,13 @@ def render_hourly_strength_screener():
         Stocks=("Symbol", "count"),
         Strong=("Signal", lambda x: int((x == "Strong").sum())),
         Emerging=("Signal", lambda x: int((x == "Emerging").sum())),
-    ).reset_index()
+        Sector_strength=("Sector strength", "first"),
+        Relative_5H_pp=("Sector relative 5H (pp)", "first"),
+        Breadth_5H_pct=("Sector breadth 5H %", "first"),
+    ).reset_index().rename(columns={"Sector_strength": "Sector strength",
+                                    "Relative_5H_pp": "Relative 5H (pp)",
+                                    "Breadth_5H_pct": "Breadth 5H %"})
     sector_summary = sector_summary.sort_values(["Strong", "Emerging", "Stocks"], ascending=False)
+    st.caption("Sector strength is a separate context signal calculated from the median 5-hour return of available sector constituents versus the NSE 500 median, plus sector breadth. It does not filter stocks or change the hourly stock-signal ranking.")
     with st.expander("Sector participation in hourly strength", expanded=False):
         st.dataframe(sector_summary, use_container_width=True, hide_index=True)
