@@ -296,7 +296,7 @@ def _pine_stage_series(close, high, low, ma_length=30, atr_length=14):
     return stage, sma, atr, flat_flag
 
 
-def _pine_base_progress(close, high, low, stage_series, min_advance_pct=10.0, min_base_weeks=6):
+def _pine_base_progress(close, high, low, stage_series, min_advance_pct=10.0, min_base_weeks=4):
     """Port of Pine base counting: duration, breakout, advance and explosive-base exception."""
     count = 0
     stage2_low = np.nan
