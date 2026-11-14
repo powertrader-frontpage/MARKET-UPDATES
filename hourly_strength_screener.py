@@ -10,6 +10,18 @@ import yfinance as yf
 
 IST = ZoneInfo("Asia/Kolkata")
 HOURLY_TTL_SECONDS = 900
+WEEKLY_STAGES = ["Stage 1 · Base", "Stage 2 · Uptrend", "Stage 3 · Top", "Stage 4 · Downtrend"]
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _weekly_stage_lookup(fyers_app_id: str, fyers_access_token: str):
+    """Use the exact weekly Weinstein classifications from the existing NSE 500 screener."""
+    from nse500_screener import _calculate
+    results = _calculate(fyers_app_id, fyers_access_token)[0]
+    if results is None or results.empty or not {"Symbol", "Stage"}.issubset(results.columns):
+        return {}
+    return dict(zip(results["Symbol"].astype(str).str.replace(".NS", "", regex=False),
+                    results["Stage"].astype(str)))
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -303,6 +315,19 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         result["Strength source"] = "Unavailable"
         st.warning(f"Sector-rotation context is temporarily unavailable; hourly stock signals are unaffected. ({type(exc).__name__})")
 
+    # Attach the exact weekly Weinstein stage classification used by the NSE 500 screener.
+    try:
+        fyers_app_id = str(st.secrets.get("FYERS_APP_ID", "")).strip()
+    except Exception:
+        fyers_app_id = ""
+    fyers_access_token = str(st.session_state.get("fyers_access_token", "") or "")
+    try:
+        stage_map = _weekly_stage_lookup(fyers_app_id, fyers_access_token)
+    except Exception as exc:
+        stage_map = {}
+        st.warning(f"Weekly stage data is temporarily unavailable; stage filtering is not applied. ({type(exc).__name__})")
+    result["Weekly Stage"] = result["Symbol"].astype(str).map(stage_map).fillna("Unavailable")
+
     latest = completed["Datetime"].max()
     st.caption(f"Latest completed candle in dataset: {latest.strftime('%d %b %Y, %I:%M %p IST')} · Stocks classified: {len(result)} / {len(tickers)} · Unavailable/failed tickers: {len(failures)}")
     if failures:
@@ -312,7 +337,8 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     result["_rank"] = result["Signal"].map(order).fillna(4)
     result = result.sort_values(["_rank", "1H Volume / Prior 20H Avg", "Bull / Bear Volume"], ascending=[True, False, False]).drop(columns="_rank")
     selected = st.multiselect("Signal categories", ["Strong", "Emerging", "Developing", "Weakening"], default=["Strong", "Emerging"], key="hourly_strength_categories")
-    view = result[result["Signal"].isin(selected)].copy()
+    selected_stages = st.multiselect("Weekly Weinstein stages", WEEKLY_STAGES, default=WEEKLY_STAGES, format_func=lambda value: value.replace(" · ", " — "), key="hourly_strength_weekly_stages")
+    view = result[result["Signal"].isin(selected) & result["Weekly Stage"].isin(selected_stages)].copy()
 
     c1, c2, c3, c4 = st.columns(4)
     for col, signal in zip((c1, c2, c3, c4), ("Strong", "Emerging", "Developing", "Weakening")):
@@ -321,7 +347,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     if view.empty:
         st.info("No stocks match the selected hourly signal categories.")
     else:
-        cols = ["Symbol", "Company", "Sector", "Sector strength", "Strength source",
+        cols = ["Symbol", "Company", "Weekly Stage", "Sector", "Sector strength", "Strength source",
                 "Price", "Signal", "1H Volume / Prior 20H Avg",
                 "Bull / Bear Volume", "Bullish candles (12H)", "Quiet pullbacks",
                 "Higher highs & lows", "EMA momentum", "Last completed candle"]
