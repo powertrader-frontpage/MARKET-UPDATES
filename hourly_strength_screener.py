@@ -151,6 +151,87 @@ def _classify_symbol(frame: pd.DataFrame) -> dict | None:
     }
 
 
+
+def _pocket_pivot_labels(frame: pd.DataFrame) -> pd.Series:
+    """Classify each completed hour using close-vs-prior-close and 10 prior down-hours."""
+    labels = []
+    closes = pd.to_numeric(frame["Close"], errors="coerce")
+    volumes = pd.to_numeric(frame["Volume"], errors="coerce")
+    for i in range(len(frame)):
+        if i == 0 or pd.isna(closes.iloc[i]) or pd.isna(closes.iloc[i - 1]):
+            labels.append("Grey")
+            continue
+        if closes.iloc[i] > closes.iloc[i - 1]:
+            prior_down = volumes.iloc[:i][closes.iloc[:i].diff() < 0].dropna().tail(10)
+            is_ppv = len(prior_down) == 10 and pd.notna(volumes.iloc[i]) and volumes.iloc[i] > prior_down.max()
+            labels.append("Dark blue · PPV" if is_ppv else "Light blue")
+        elif closes.iloc[i] < closes.iloc[i - 1]:
+            labels.append("Red")
+        else:
+            labels.append("Grey")
+    return pd.Series(labels, index=frame.index)
+
+
+def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
+    """Find a compact hourly base or a breakout from the immediately preceding base."""
+    frame = frame.sort_values("Datetime").drop_duplicates("Datetime").tail(30).copy()
+    for col in ("High", "Low", "Close", "Volume"):
+        frame[col] = pd.to_numeric(frame[col], errors="coerce")
+    frame = frame.dropna(subset=["High", "Low", "Close", "Volume"]).reset_index(drop=True)
+    if len(frame) < 13:
+        return None
+
+    # Evaluate the last 12 completed hours as a base; breakout tests the 12 hours before it.
+    base = frame.tail(12).copy().reset_index(drop=True)
+    labels = _pocket_pivot_labels(frame)
+    base_labels = labels.iloc[-12:].reset_index(drop=True)
+    blue_count = int(base_labels.isin(["Dark blue · PPV", "Light blue"]).sum())
+    dark_count = int((base_labels == "Dark blue · PPV").sum())
+    light_count = int((base_labels == "Light blue").sum())
+    red_count = int((base_labels == "Red").sum())
+    grey_count = int((base_labels == "Grey").sum())
+    blue_volume = float(base.loc[base_labels.isin(["Dark blue · PPV", "Light blue"]), "Volume"].sum())
+    red_volume = float(base.loc[base_labels == "Red", "Volume"].sum())
+    participation_ok = blue_count > red_count and blue_volume > red_volume
+
+    base_high = float(base["High"].max())
+    base_low = float(base["Low"].min())
+    base_range_pct = ((base_high / base_low) - 1) * 100 if base_low > 0 else np.nan
+    first_half_vol = float(base["Volume"].iloc[:6].mean())
+    second_half_vol = float(base["Volume"].iloc[6:].mean())
+    contraction_ratio = second_half_vol / first_half_vol if first_half_vol > 0 else np.nan
+    compact_base = pd.notna(base_range_pct) and base_range_pct <= 8.0
+    volume_contracting = pd.notna(contraction_ratio) and contraction_ratio <= 1.0
+
+    # A breakout must close above the preceding 12-hour range on expanded volume.
+    prior_base = frame.iloc[-13:-1]
+    prior_high = float(prior_base["High"].max())
+    latest = frame.iloc[-1]
+    prior_10_avg = frame["Volume"].iloc[-11:-1].mean()
+    breakout = bool(latest["Close"] > prior_high and pd.notna(prior_10_avg)
+                    and prior_10_avg > 0 and latest["Volume"] >= 1.3 * prior_10_avg)
+
+    if breakout:
+        setup = "Hourly Base Breakout"
+    elif compact_base and volume_contracting and participation_ok:
+        setup = "Hourly Base Forming"
+    else:
+        setup = "No qualifying base"
+
+    latest_label = labels.iloc[-1]
+    return {
+        "Hourly setup": setup,
+        "PPV bars (12H)": dark_count,
+        "Light-blue bars (12H)": light_count,
+        "Grey bars (12H)": grey_count,
+        "Red bars (12H)": red_count,
+        "Blue / Red volume": round(blue_volume / red_volume, 2) if red_volume > 0 else (np.inf if blue_volume > 0 else np.nan),
+        "Base range %": round(base_range_pct, 2) if pd.notna(base_range_pct) else np.nan,
+        "Volume contraction ratio": round(contraction_ratio, 2) if pd.notna(contraction_ratio) else np.nan,
+        "Latest volume bar": latest_label,
+        "Last completed candle": latest["Datetime"].strftime("%d %b %H:%M"),
+    }
+
 @st.cache_data(ttl=21600, show_spinner=False)
 def _rotation_zone_lookup(sector_tickers: tuple, micro_members: tuple):
     """Reuse the daily/weekly rotation-zone definitions used by the terminal's rotation tabs."""
@@ -366,6 +447,53 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         st.dataframe(styled_view, use_container_width=True, hide_index=True, height=560)
         st.download_button("Download hourly strength watchlist (CSV)", view[cols].to_csv(index=False).encode("utf-8"),
                            "nse500_1h_price_volume_strength.csv", "text/csv", key="download_hourly_strength")
+
+    st.divider()
+    st.subheader("Hourly Base Formation & Pocket Pivot Scanner")
+    st.caption("12 completed 1-hour candles · Dark blue = Pocket Pivot Volume · Light blue = other up-hours · Grey = unchanged · Red = down-hours")
+    st.info("Research watchlist for weekly Stage 1 and Stage 2 stocks. A base requires a compact range, non-expanding volume, more blue than red bars, and greater total blue-bar volume than red-bar volume. A breakout requires a close above the preceding 12-hour high with at least 1.3× the prior 10-hour average volume.")
+    base_rows = []
+    for ticker, group in completed.groupby("Ticker", sort=False):
+        setup_metrics = _base_setup_for_symbol(group)
+        if setup_metrics is None:
+            continue
+        meta = lookup.get(ticker, {})
+        symbol = str(meta.get("Symbol", ticker))
+        base_rows.append({
+            "Symbol": symbol, "Company": meta.get("Company", ""),
+            "Sector": meta.get("Sector", "Unclassified"),
+            "Weekly Stage": stage_map.get(symbol, "Unavailable"),
+            **setup_metrics,
+        })
+    base_result = pd.DataFrame(base_rows)
+    if not base_result.empty:
+        eligible_stages = ["Stage 1 · Base", "Stage 2 · Uptrend"]
+        base_result = base_result[base_result["Weekly Stage"].isin(eligible_stages)].copy()
+        base_view_choice = st.radio(
+            "Hourly base view", ["Hourly Base Forming", "Hourly Base Breakout", "All qualifying setups"],
+            horizontal=True, key="hourly_base_view"
+        )
+        if base_view_choice != "All qualifying setups":
+            base_result = base_result[base_result["Hourly setup"] == base_view_choice]
+        base_result = base_result[base_result["Hourly setup"].isin(["Hourly Base Forming", "Hourly Base Breakout"])]
+        base_result["_setup_rank"] = base_result["Hourly setup"].map({"Hourly Base Breakout": 0, "Hourly Base Forming": 1})
+        base_result = base_result.sort_values(
+            ["_setup_rank", "PPV bars (12H)", "Blue / Red volume"],
+            ascending=[True, False, False], na_position="last"
+        ).drop(columns="_setup_rank")
+        if base_result.empty:
+            st.info("No qualifying hourly bases or breakouts match the selected view and weekly stages.")
+        else:
+            st.dataframe(base_result, use_container_width=True, hide_index=True, height=440)
+            st.download_button(
+                "Download hourly base & PPV watchlist (CSV)",
+                base_result.to_csv(index=False).encode("utf-8"),
+                "nse500_hourly_base_pocket_pivot_watchlist.csv", "text/csv",
+                key="download_hourly_base_ppv"
+            )
+    else:
+        st.info("Not enough completed hourly candles to evaluate base formation.")
+
     sector_summary = result.groupby("Sector").agg(
         Stocks=("Symbol", "count"),
         Strong=("Signal", lambda x: int((x == "Strong").sum())),
