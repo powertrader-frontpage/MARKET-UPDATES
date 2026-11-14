@@ -41,7 +41,7 @@ def _download_hourly(tickers: tuple[str, ...]):
         batch = list(tickers[start:start + 40])
         try:
             raw = yf.download(
-                tickers=batch, period="30d", interval="2h",
+                tickers=batch, period="60d", interval="2h",
                 auto_adjust=False, group_by="ticker", threads=False,
                 progress=False, timeout=30, prepost=False,
             )
