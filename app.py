@@ -476,7 +476,7 @@ with st.sidebar:
         "Navigate",
         [
             "Main Dashboard",
-            "2-Hour Strength Screener",
+            "1-Hour Strength Screener",
             "Breakout Scanners",
             "Stage 2 B1 Fundamentals",
             "Sector Leadership & Heatmap",
@@ -3585,7 +3585,7 @@ if active_page == "Main Dashboard":
         
         
         
-if active_page == "2-Hour Strength Screener":
+if active_page == "1-Hour Strength Screener":
     # Backward-compatible call while Streamlit may still have an older imported module.
     import inspect
     _hourly_params = inspect.signature(render_hourly_strength_screener).parameters
