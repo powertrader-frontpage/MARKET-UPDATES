@@ -512,14 +512,10 @@ with st.sidebar:
     auto_refresh_enabled = st.checkbox("Automatic refresh", value=True, key="market_auto_refresh_enabled", help="Refreshes the dashboard every 5 minutes by default. Some upstream sources may still publish delayed data.")
     if auto_refresh_enabled:
         auto_refresh_minutes = st.selectbox("Refresh interval", [1, 5, 10, 15, 30], index=1, format_func=lambda n: f"Every {n} minutes", key="market_auto_refresh_minutes")
-        @st.fragment(run_every=f"{auto_refresh_minutes}m")
-        def _native_market_auto_refresh():
-            # Use Streamlit's native fragment scheduler instead of the
-            # streamlit-autorefresh iframe component, which can lose its server connection.
-            st.rerun()
-
-        _native_market_auto_refresh()
-        st.caption(f"Automatic page refresh enabled · every {auto_refresh_minutes} minutes. Data freshness depends on each source and its cache.")
+        # Keep the interval selector visible, but do not trigger a rerun from
+        # inside a fragment: doing so immediately reruns the full script and can
+        # leave the app stuck on a blank page. Manual refresh remains available.
+        st.caption("Automatic refresh is temporarily paused while the refresh mechanism is corrected. Use “Refresh ALL data now” for a safe refresh.")
     else:
         st.caption("Automatic refresh is off. Use Refresh market data for a manual refresh.")
     st.divider()
