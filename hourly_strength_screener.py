@@ -94,7 +94,7 @@ def _completed_bars(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def _classify_symbol(frame: pd.DataFrame) -> dict | None:
-    frame = frame.sort_values("Datetime").drop_duplicates("Datetime").tail(120).copy()
+    frame = frame.sort_values("Datetime").drop_duplicates("Datetime").tail(30).copy()
     if len(frame) < 12:
         return None
     for col in ("Open", "High", "Low", "Close", "Volume"):
