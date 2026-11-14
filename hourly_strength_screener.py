@@ -15,9 +15,11 @@ WEEKLY_STAGES = ["Stage 1 · Base", "Stage 2 · Uptrend", "Stage 3 · Top", "Sta
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _weekly_stage_and_rs_lookup(fyers_app_id: str, fyers_access_token: str):
-    """Reuse weekly NSE 500 stage and RS Rank values without applying an RS filter."""
-    from nse500_screener import _calculate
-    results = _calculate(fyers_app_id, fyers_access_token)[0]
+    """Reuse the NSE 500 screener's exact weekly Stage and RS results when available."""
+    results = st.session_state.get("nse500_rs_stage_results")
+    if not isinstance(results, pd.DataFrame) or results.empty or not {"Symbol", "Stage", "RS Rank"}.issubset(results.columns):
+        from nse500_screener import _calculate
+        results = _calculate(fyers_app_id, fyers_access_token)[0]
     if results is None or results.empty or not {"Symbol", "Stage", "RS Rank"}.issubset(results.columns):
         return {}, {}
     symbols = results["Symbol"].astype(str).str.replace(".NS", "", regex=False)
@@ -32,44 +34,56 @@ def _nse500_universe():
     return _constituents()
 
 
-@st.cache_data(ttl=HOURLY_TTL_SECONDS, show_spinner=False)
-def _download_hourly(tickers: tuple[str, ...]):
-    """Yahoo 60-minute OHLCV. Fetch in modest batches to avoid oversized requests."""
+def _download_hourly_batch(batch: tuple[str, ...]):
+    """Download one Yahoo 60-minute batch and return its frames plus failed symbols."""
     parts = []
     failures = []
-    for start in range(0, len(tickers), 40):
-        batch = list(tickers[start:start + 40])
-        try:
-            raw = yf.download(
-                tickers=batch, period="30d", interval="60m",
-                auto_adjust=False, group_by="ticker", threads=False,
-                progress=False, timeout=30, prepost=False,
-            )
-            if raw is None or raw.empty:
-                failures.extend(batch)
-                continue
-            if isinstance(raw.columns, pd.MultiIndex):
-                level0 = set(map(str, raw.columns.get_level_values(0)))
-                level1 = set(map(str, raw.columns.get_level_values(1)))
-                for ticker in batch:
-                    try:
-                        frame = raw[ticker] if ticker in level0 else raw.xs(ticker, axis=1, level=1) if ticker in level1 else None
-                        if frame is not None and {"Open", "High", "Low", "Close", "Volume"}.issubset(frame.columns):
-                            frame = frame[["Open", "High", "Low", "Close", "Volume"]].copy()
-                            frame["Ticker"] = ticker
-                            parts.append(frame.reset_index().rename(columns={frame.index.name or "Datetime": "Datetime"}))
-                        else:
-                            failures.append(ticker)
-                    except Exception:
+    try:
+        raw = yf.download(
+            tickers=list(batch), period="30d", interval="60m",
+            auto_adjust=False, group_by="ticker", threads=False,
+            progress=False, timeout=30, prepost=False,
+        )
+        if raw is None or raw.empty:
+            return parts, list(batch)
+        if isinstance(raw.columns, pd.MultiIndex):
+            level0 = set(map(str, raw.columns.get_level_values(0)))
+            level1 = set(map(str, raw.columns.get_level_values(1)))
+            for ticker in batch:
+                try:
+                    frame = raw[ticker] if ticker in level0 else raw.xs(ticker, axis=1, level=1) if ticker in level1 else None
+                    if frame is not None and {"Open", "High", "Low", "Close", "Volume"}.issubset(frame.columns):
+                        frame = frame[["Open", "High", "Low", "Close", "Volume"]].copy()
+                        frame["Ticker"] = ticker
+                        parts.append(frame.reset_index().rename(columns={frame.index.name or "Datetime": "Datetime"}))
+                    else:
                         failures.append(ticker)
-            elif len(batch) == 1 and {"Open", "High", "Low", "Close", "Volume"}.issubset(raw.columns):
-                frame = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
-                frame["Ticker"] = batch[0]
-                parts.append(frame.reset_index().rename(columns={frame.index.name or "Datetime": "Datetime"}))
-            else:
-                failures.extend(batch)
-        except Exception:
+                except Exception:
+                    failures.append(ticker)
+        elif len(batch) == 1 and {"Open", "High", "Low", "Close", "Volume"}.issubset(raw.columns):
+            frame = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
+            frame["Ticker"] = batch[0]
+            parts.append(frame.reset_index().rename(columns={frame.index.name or "Datetime": "Datetime"}))
+        else:
             failures.extend(batch)
+    except Exception:
+        failures.extend(batch)
+    return parts, failures
+
+
+@st.cache_data(ttl=HOURLY_TTL_SECONDS, show_spinner=False)
+def _download_hourly(tickers: tuple[str, ...]):
+    """Yahoo 60-minute OHLCV in small concurrent batches; cache the combined result."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    batches = [tuple(tickers[start:start + 40]) for start in range(0, len(tickers), 40)]
+    parts = []
+    failures = []
+    # A small fixed worker count reduces sequential network wait without flooding Yahoo.
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        for batch_parts, batch_failures in executor.map(_download_hourly_batch, batches):
+            parts.extend(batch_parts)
+            failures.extend(batch_failures)
     if not parts:
         return pd.DataFrame(), sorted(set(failures))
     data = pd.concat(parts, ignore_index=True)
@@ -83,7 +97,6 @@ def _download_hourly(tickers: tuple[str, ...]):
     else:
         data["Datetime"] = data["Datetime"].dt.tz_convert(IST)
     return data.dropna(subset=["Datetime", "Close"]).sort_values(["Ticker", "Datetime"]), sorted(set(failures))
-
 
 def _completed_bars(data: pd.DataFrame) -> pd.DataFrame:
     if data.empty:
