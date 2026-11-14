@@ -204,11 +204,23 @@ def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
     volume_contracting = pd.notna(contraction_ratio) and contraction_ratio <= 1.0
 
     # A breakout must close above the preceding 12-hour range on expanded volume.
-    prior_base = frame.iloc[-13:-1]
+    prior_base = frame.iloc[-13:-1].copy().reset_index(drop=True)
     prior_high = float(prior_base["High"].max())
     latest = frame.iloc[-1]
     prior_10_avg = frame["Volume"].iloc[-11:-1].mean()
-    breakout = bool(latest["Close"] > prior_high and pd.notna(prior_10_avg)
+    prior_labels = labels.iloc[-13:-1].reset_index(drop=True)
+    prior_blue_count = int(prior_labels.isin(["Dark blue · PPV", "Light blue"]).sum())
+    prior_red_count = int((prior_labels == "Red").sum())
+    prior_blue_volume = float(prior_base.loc[prior_labels.isin(["Dark blue · PPV", "Light blue"]), "Volume"].sum())
+    prior_red_volume = float(prior_base.loc[prior_labels == "Red", "Volume"].sum())
+    prior_range_pct = ((float(prior_base["High"].max()) / float(prior_base["Low"].min())) - 1) * 100 if float(prior_base["Low"].min()) > 0 else np.nan
+    prior_volume_ratio = float(prior_base["Volume"].iloc[6:].mean() / prior_base["Volume"].iloc[:6].mean()) if prior_base["Volume"].iloc[:6].mean() > 0 else np.nan
+    prior_base_valid = (
+        pd.notna(prior_range_pct) and prior_range_pct <= 8.0
+        and pd.notna(prior_volume_ratio) and prior_volume_ratio <= 1.0
+        and prior_blue_count > prior_red_count and prior_blue_volume > prior_red_volume
+    )
+    breakout = bool(prior_base_valid and latest["Close"] > prior_high and pd.notna(prior_10_avg)
                     and prior_10_avg > 0 and latest["Volume"] >= 1.3 * prior_10_avg)
 
     if breakout:
