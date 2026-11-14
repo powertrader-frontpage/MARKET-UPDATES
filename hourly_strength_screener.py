@@ -293,8 +293,15 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         st.warning("Hourly history was returned, but not enough completed candles were available to classify stocks.")
         return
 
-    # Use the existing terminal Sector Rotation / Micro Sector Rotation zone definitions.
-    result = _sector_strength_columns(result, sector_tickers, micro_sectors)
+    # Use existing rotation zones where available. A failure in this optional context
+    # must never prevent the core hourly screener from rendering.
+    try:
+        result = _sector_strength_columns(result, sector_tickers, micro_sectors)
+    except Exception as exc:
+        result = result.copy()
+        result["Sector strength"] = "Unavailable"
+        result["Strength source"] = "Unavailable"
+        st.warning(f"Sector-rotation context is temporarily unavailable; hourly stock signals are unaffected. ({type(exc).__name__})")
 
     latest = completed["Datetime"].max()
     st.caption(f"Latest completed candle in dataset: {latest.strftime('%d %b %Y, %I:%M %p IST')} · Stocks classified: {len(result)} / {len(tickers)} · Unavailable/failed tickers: {len(failures)}")
