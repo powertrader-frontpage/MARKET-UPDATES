@@ -447,6 +447,14 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         st.warning(f"Weekly stage / RS context is temporarily unavailable; stage filtering is not applied. ({type(exc).__name__})")
     result["Weekly Stage"] = result["Symbol"].astype(str).map(stage_map).fillna("Unavailable")
 
+    # Display only stocks classified as weekly Stage 1 or Stage 2.
+    # Keep unclassified stocks out rather than guessing their stage.
+    eligible_stages = ["Stage 1 · Base", "Stage 2 · Uptrend"]
+    result = result[result["Weekly Stage"].isin(eligible_stages)].copy()
+    if result.empty:
+        st.info("No NSE 500 stocks with a confirmed weekly Stage 1 or Stage 2 classification are available. Weekly stage data may be temporarily unavailable.")
+        return
+
     latest = completed["Datetime"].max()
     st.caption(f"Latest completed candle in dataset: {latest.strftime('%d %b %Y, %I:%M %p IST')} · Stocks classified: {len(result)} / {len(tickers)} · Unavailable/failed tickers: {len(failures)}")
     if failures:
@@ -456,7 +464,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     result["_rank"] = result["Signal"].map(order).fillna(4)
     result = result.sort_values(["_rank", "1H Volume / Prior 20H Avg", "Bull / Bear Volume"], ascending=[True, False, False]).drop(columns="_rank")
     selected = st.multiselect("Signal categories", ["Strong", "Emerging", "Developing", "Weakening"], default=["Strong", "Emerging"], key="hourly_strength_categories")
-    selected_stages = st.multiselect("Weekly Weinstein stages", WEEKLY_STAGES, default=WEEKLY_STAGES, format_func=lambda value: value.replace(" · ", " — "), key="hourly_strength_weekly_stages")
+    selected_stages = st.multiselect("Weekly Weinstein stages", eligible_stages, default=eligible_stages, format_func=lambda value: value.replace(" · ", " — "), key="hourly_strength_weekly_stages")
     view = result[result["Signal"].isin(selected) & result["Weekly Stage"].isin(selected_stages)].copy()
 
     c1, c2, c3, c4 = st.columns(4)
