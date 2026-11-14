@@ -3585,7 +3585,13 @@ if active_page == "Main Dashboard":
         
         
 if active_page == "1-Hour Strength Screener":
-    render_hourly_strength_screener(SECTOR_TICKERS, MICRO_SECTORS)
+    # Backward-compatible call while Streamlit may still have an older imported module.
+    import inspect
+    _hourly_params = inspect.signature(render_hourly_strength_screener).parameters
+    if len(_hourly_params) >= 2:
+        render_hourly_strength_screener(SECTOR_TICKERS, MICRO_SECTORS)
+    else:
+        render_hourly_strength_screener()
 
 if active_page == "Breakout Scanners":
     from explosive_breakout_scanner import render_explosive_breakout_scanner
