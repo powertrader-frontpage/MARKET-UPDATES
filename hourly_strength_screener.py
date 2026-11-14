@@ -194,8 +194,8 @@ def _pocket_pivot_labels(frame: pd.DataFrame) -> pd.Series:
 
 
 def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
-    """Find a compact hourly base or a breakout from the immediately preceding base."""
-    # Keep enough history for the 50-hour volume average and 10 prior down-hours.
+    """Find a compact 2-hour base or a breakout from the immediately preceding base."""
+    # Keep enough history for the 50-bar volume average on 2-hour candles and 10 prior down-bars.
     frame = frame.sort_values("Datetime").drop_duplicates("Datetime").tail(120).copy()
     for col in ("High", "Low", "Close", "Volume"):
         frame[col] = pd.to_numeric(frame[col], errors="coerce")
@@ -203,7 +203,7 @@ def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
     if len(frame) < 13:
         return None
 
-    # Evaluate the last 12 completed 2-hour candles as a base; breakout tests the 12 hours before it.
+    # Evaluate the last 12 completed 2-hour candles as a base; breakout tests the 12 candles before it.
     base = frame.tail(12).copy().reset_index(drop=True)
     labels = _pocket_pivot_labels(frame)
     base_labels = labels.iloc[-12:].reset_index(drop=True)
@@ -257,12 +257,12 @@ def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
     latest_label = labels.iloc[-1]
     return {
         "2H setup": setup,
-        "PPV bars (12H)": dark_count,
-        "Light-blue bars (12H)": light_count,
-        "Grey · Green price (12H)": grey_green_count,
-        "Grey · Red price (12H)": grey_red_count,
-        "Grey · Neutral (12H)": grey_neutral_count,
-        "Red bars (12H)": red_count,
+        "PPV bars (12 × 2H)": dark_count,
+        "Light-blue bars (12 × 2H)": light_count,
+        "Grey · Green price (12 × 2H)": grey_green_count,
+        "Grey · Red price (12 × 2H)": grey_red_count,
+        "Grey · Neutral (12 × 2H)": grey_neutral_count,
+        "Red bars (12 × 2H)": red_count,
         "Blue / Red volume": round(blue_volume / red_volume, 2) if red_volume > 0 else (np.inf if blue_volume > 0 else np.nan),
         "Base range %": round(base_range_pct, 2) if pd.notna(base_range_pct) else np.nan,
         "Volume contraction ratio": round(contraction_ratio, 2) if pd.notna(contraction_ratio) else np.nan,
@@ -401,12 +401,12 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     with st.spinner(f"Loading completed 2-hour candles for up to {len(tickers)} NSE 500 stocks…"):
         data, failures = _download_hourly(tickers)
     if data.empty:
-        st.error("No usable hourly OHLCV data was returned. The source may be temporarily unavailable or throttling requests. No sample data is shown.")
+        st.error("No usable 2-hour OHLCV data was returned. The source may be temporarily unavailable or throttling requests. No sample data is shown.")
         return
 
     completed = _completed_bars(data)
     if completed.empty:
-        st.warning("No completed 2-hour candles are available yet. Check again after the next hourly candle closes.")
+        st.warning("No completed 2-hour candles are available yet. Check again after the next 2-hour candle closes.")
         return
 
     lookup = universe.set_index("Ticker")[["Symbol", "Company", "Sector", "Industry"]].to_dict("index")
@@ -421,7 +421,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
                      **metrics})
     result = pd.DataFrame(rows)
     if result.empty:
-        st.warning("Hourly history was returned, but not enough completed candles were available to classify stocks.")
+        st.warning("2-hour history was returned, but not enough completed candles were available to classify stocks.")
         return
 
     # Use existing rotation zones where available. A failure in this optional context
@@ -464,7 +464,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         col.metric(signal, int((result["Signal"] == signal).sum()))
     st.caption("Strong = higher-high/higher-low structure, EMA momentum, stronger bullish participation and quieter pullbacks. Emerging = improving momentum/volume without every structural condition. These are heuristic labels, not calibrated probabilities.")
     if view.empty:
-        st.info("No stocks match the selected hourly signal categories.")
+        st.info("No stocks match the selected 2-hour signal categories.")
     else:
         cols = ["Symbol", "Company", "Weekly Stage", "Sector", "Sector strength", "Strength source",
                 "Price", "Signal", "2H Volume / Prior 20 x 2H Avg",
@@ -517,7 +517,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         base_result = base_result[base_result["2H setup"].isin(["2H Base Forming", "2H Base Breakout"])]
         base_result["_setup_rank"] = base_result["2H setup"].map({"2H Base Breakout": 0, "2H Base Forming": 1})
         base_result = base_result.sort_values(
-            ["_setup_rank", "PPV bars (12H)", "Light-blue bars (12H)", "Red bars (12H)", "Blue / Red volume"],
+            ["_setup_rank", "PPV bars (12 × 2H)", "Light-blue bars (12 × 2H)", "Red bars (12 × 2H)", "Blue / Red volume"],
             ascending=[True, False, False, True, False], na_position="last"
         ).drop(columns="_setup_rank")
         if base_result.empty:
@@ -525,7 +525,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         else:
             st.dataframe(base_result, use_container_width=True, hide_index=True, height=440)
             st.download_button(
-                "Download hourly base & PPV watchlist (CSV)",
+                "Download 2-hour base & PPV watchlist (CSV)",
                 base_result.to_csv(index=False).encode("utf-8"),
                 "nse500_2h_base_pocket_pivot_watchlist.csv", "text/csv",
                 key="download_2h_base_ppv"
@@ -540,6 +540,6 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         Sector_strength=("Sector strength", "first"),
     ).reset_index().rename(columns={"Sector_strength": "Sector strength"})
     sector_summary = sector_summary.sort_values(["Strong", "Emerging", "Stocks"], ascending=False)
-    st.caption("Sector strength is taken from the terminal's existing Sector Rotation or Micro Sector Rotation zone classifications. It is context only and does not filter stocks or change hourly stock rankings.")
-    with st.expander("Sector participation in hourly strength", expanded=False):
+    st.caption("Sector strength is taken from the terminal's existing Sector Rotation or Micro Sector Rotation zone classifications. It is context only and does not filter stocks or change 2-hour stock rankings.")
+    with st.expander("Sector participation in 2-hour strength", expanded=False):
         st.dataframe(sector_summary, use_container_width=True, hide_index=True)
