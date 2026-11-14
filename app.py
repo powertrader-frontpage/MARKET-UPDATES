@@ -11,7 +11,6 @@ import plotly.graph_objects as go
 import plotly.express as px
 import requests
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 import streamlit.components.v1 as components
 import yfinance as yf
 import nse500_screener as nse500_data
@@ -513,7 +512,13 @@ with st.sidebar:
     auto_refresh_enabled = st.checkbox("Automatic refresh", value=True, key="market_auto_refresh_enabled", help="Refreshes the dashboard every 5 minutes by default. Some upstream sources may still publish delayed data.")
     if auto_refresh_enabled:
         auto_refresh_minutes = st.selectbox("Refresh interval", [1, 5, 10, 15, 30], index=1, format_func=lambda n: f"Every {n} minutes", key="market_auto_refresh_minutes")
-        st_autorefresh(interval=auto_refresh_minutes * 60 * 1000, limit=None, key="market_auto_refresh_timer")
+        @st.fragment(run_every=f"{auto_refresh_minutes}m")
+        def _native_market_auto_refresh():
+            # Use Streamlit's native fragment scheduler instead of the
+            # streamlit-autorefresh iframe component, which can lose its server connection.
+            st.rerun()
+
+        _native_market_auto_refresh()
         st.caption(f"Automatic page refresh enabled · every {auto_refresh_minutes} minutes. Data freshness depends on each source and its cache.")
     else:
         st.caption("Automatic refresh is off. Use Refresh market data for a manual refresh.")
