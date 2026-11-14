@@ -143,7 +143,7 @@ def _classify_symbol(frame: pd.DataFrame) -> dict | None:
 def _rotation_zone_lookup(sector_tickers: tuple, micro_members: tuple):
     """Reuse the daily/weekly rotation-zone definitions used by the terminal's rotation tabs."""
     micro_symbols = sorted({symbol for _, _, symbols in micro_members for symbol in symbols})
-    all_tickers = sorted(set(sector_tickers) | set(micro_symbols) | {"^NSEI", "^CRSLDX"})
+    all_tickers = sorted({ticker for _, ticker in sector_tickers} | set(micro_symbols) | {"^NSEI", "^CRSLDX"})
     try:
         raw = yf.download(all_tickers, period="6mo", interval="1d", auto_adjust=False,
                           group_by="ticker", threads=False, progress=False, timeout=35)
@@ -182,19 +182,23 @@ def _rotation_zone_lookup(sector_tickers: tuple, micro_members: tuple):
 
     micro = {}
     for name, group, symbols in micro_members:
-        series = [close_for(symbol) for symbol in symbols]
-        series = [item for item in series if len(item) >= 22]
-        if len(series) < 3 or len(nifty) < 22:
+        constituent_returns = []
+        for symbol in symbols:
+            close = close_for(symbol)
+            if len(close) < 22:
+                continue
+            last = float(close.iloc[-1])
+            ret1 = (last / float(close.iloc[-min(22, len(close))]) - 1) * 100
+            ret3 = (last / float(close.iloc[-min(64, len(close))]) - 1) * 100 if len(close) >= 64 else np.nan
+            constituent_returns.append((ret1, ret3))
+        if len(constituent_returns) < 3 or len(nifty) < 22:
             continue
-        constituent = pd.concat(series, axis=1).dropna(how="all")
-        basket = constituent.pct_change().add(1).cumprod().mean(axis=1).dropna()
-        aligned = pd.concat([basket.rename("micro"), nifty.rename("nifty")], axis=1).dropna()
-        if len(aligned) < 22:
-            continue
-        rel1 = ((aligned["micro"].iloc[-1] / aligned["micro"].iloc[-22] - 1) -
-                (aligned["nifty"].iloc[-1] / aligned["nifty"].iloc[-22] - 1)) * 100
-        rel3 = ((aligned["micro"].iloc[-1] / aligned["micro"].iloc[-min(64, len(aligned))] - 1) -
-                (aligned["nifty"].iloc[-1] / aligned["nifty"].iloc[-min(64, len(aligned))] - 1)) * 100 if len(aligned) >= 64 else np.nan
+        avg1 = float(np.nanmean([item[0] for item in constituent_returns]))
+        avg3 = float(np.nanmean([item[1] for item in constituent_returns])) if any(pd.notna(item[1]) for item in constituent_returns) else np.nan
+        bench1 = (float(nifty.iloc[-1]) / float(nifty.iloc[-22]) - 1) * 100
+        bench3 = (float(nifty.iloc[-1]) / float(nifty.iloc[-min(64, len(nifty))]) - 1) * 100 if len(nifty) >= 64 else np.nan
+        rel1 = avg1 - bench1
+        rel3 = avg3 - bench3 if pd.notna(avg3) and pd.notna(bench3) else np.nan
         if pd.notna(rel1) and pd.notna(rel3):
             micro[name] = ("Leading" if rel3 >= 0 and rel1 >= 0 else
                            "Weakening" if rel3 >= 0 else
