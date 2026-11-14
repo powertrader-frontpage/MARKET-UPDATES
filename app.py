@@ -3585,7 +3585,7 @@ if active_page == "Main Dashboard":
         
         
 if active_page == "1-Hour Strength Screener":
-    render_hourly_strength_screener()
+    render_hourly_strength_screener(SECTOR_TICKERS, MICRO_SECTORS)
 
 if active_page == "Breakout Scanners":
     from explosive_breakout_scanner import render_explosive_breakout_scanner
