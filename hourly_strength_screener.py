@@ -13,7 +13,6 @@ HOURLY_TTL_SECONDS = 900
 WEEKLY_STAGES = ["Stage 1 · Base", "Stage 2 · Uptrend", "Stage 3 · Top", "Stage 4 · Downtrend"]
 
 
-@st.cache_data(ttl=900, show_spinner=False)
 def _weekly_stage_and_rs_lookup(fyers_app_id: str, fyers_access_token: str):
     """Reuse the NSE 500 screener's exact weekly Stage and RS results when available."""
     results = st.session_state.get("nse500_rs_stage_results")
