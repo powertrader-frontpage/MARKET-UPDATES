@@ -34,21 +34,20 @@ def _nse500_universe():
 
 @st.cache_data(ttl=HOURLY_TTL_SECONDS, show_spinner=False)
 def _download_hourly(tickers: tuple[str, ...]):
-    """Download Yahoo 60-minute bars and aggregate them into NSE-session 2-hour candles."""
+    """Yahoo 60-minute OHLCV. Fetch in modest batches to avoid oversized requests."""
     parts = []
     failures = []
     for start in range(0, len(tickers), 40):
         batch = list(tickers[start:start + 40])
         try:
             raw = yf.download(
-                tickers=batch, period="60d", interval="60m",
+                tickers=batch, period="30d", interval="60m",
                 auto_adjust=False, group_by="ticker", threads=False,
                 progress=False, timeout=30, prepost=False,
             )
             if raw is None or raw.empty:
                 failures.extend(batch)
                 continue
-            frames = {}
             if isinstance(raw.columns, pd.MultiIndex):
                 level0 = set(map(str, raw.columns.get_level_values(0)))
                 level1 = set(map(str, raw.columns.get_level_values(1)))
@@ -56,59 +55,33 @@ def _download_hourly(tickers: tuple[str, ...]):
                     try:
                         frame = raw[ticker] if ticker in level0 else raw.xs(ticker, axis=1, level=1) if ticker in level1 else None
                         if frame is not None and {"Open", "High", "Low", "Close", "Volume"}.issubset(frame.columns):
-                            frames[ticker] = frame[["Open", "High", "Low", "Close", "Volume"]].copy()
+                            frame = frame[["Open", "High", "Low", "Close", "Volume"]].copy()
+                            frame["Ticker"] = ticker
+                            parts.append(frame.reset_index().rename(columns={frame.index.name or "Datetime": "Datetime"}))
+                        else:
+                            failures.append(ticker)
                     except Exception:
-                        pass
+                        failures.append(ticker)
             elif len(batch) == 1 and {"Open", "High", "Low", "Close", "Volume"}.issubset(raw.columns):
-                frames[batch[0]] = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
-
-            for ticker in batch:
-                frame = frames.get(ticker)
-                if frame is None or frame.empty:
-                    failures.append(ticker)
-                    continue
-                frame = frame.reset_index()
-                dt_col = next((c for c in frame.columns if str(c).lower() in {"datetime", "date"}), frame.columns[0])
-                frame = frame.rename(columns={dt_col: "Datetime"})
-                frame["Datetime"] = pd.to_datetime(frame["Datetime"], errors="coerce")
-                if frame["Datetime"].dt.tz is None:
-                    frame["Datetime"] = frame["Datetime"].dt.tz_localize("UTC").dt.tz_convert(IST)
-                else:
-                    frame["Datetime"] = frame["Datetime"].dt.tz_convert(IST)
-                frame = frame.dropna(subset=["Datetime", "Close"])
-                # NSE regular-session 60m bars open at 09:15, 10:15, ... 14:15.
-                # Pair them into 09:15–11:15, 11:15–13:15 and 13:15–15:15.
-                frame = frame[frame["Datetime"].dt.strftime("%H:%M").isin(
-                    ["09:15", "10:15", "11:15", "12:15", "13:15", "14:15"]
-                )].copy()
-                frame["SessionDate"] = frame["Datetime"].dt.date
-                minutes_from_open = (
-                    frame["Datetime"].dt.hour * 60 + frame["Datetime"].dt.minute
-                    - (9 * 60 + 15)
-                )
-                frame["Group"] = (minutes_from_open // 120).astype(int)
-                aggregated = frame.sort_values("Datetime").groupby(
-                    ["SessionDate", "Group"], as_index=False, sort=True
-                ).agg(
-                    Datetime=("Datetime", "first"),
-                    Open=("Open", "first"),
-                    High=("High", "max"),
-                    Low=("Low", "min"),
-                    Close=("Close", "last"),
-                    Volume=("Volume", "sum"),
-                    SourceBars=("Close", "count"),
-                )
-                aggregated = aggregated[aggregated["SourceBars"] == 2].drop(columns=["SessionDate", "Group", "SourceBars"])
-                if aggregated.empty:
-                    failures.append(ticker)
-                    continue
-                aggregated["Ticker"] = ticker
-                parts.append(aggregated)
+                frame = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
+                frame["Ticker"] = batch[0]
+                parts.append(frame.reset_index().rename(columns={frame.index.name or "Datetime": "Datetime"}))
+            else:
+                failures.extend(batch)
         except Exception:
             failures.extend(batch)
     if not parts:
         return pd.DataFrame(), sorted(set(failures))
     data = pd.concat(parts, ignore_index=True)
+    if "Datetime" not in data.columns:
+        date_col = next((c for c in data.columns if str(c).lower() in {"datetime", "date"}), None)
+        if date_col:
+            data = data.rename(columns={date_col: "Datetime"})
+    data["Datetime"] = pd.to_datetime(data["Datetime"], errors="coerce")
+    if data["Datetime"].dt.tz is None:
+        data["Datetime"] = data["Datetime"].dt.tz_localize("UTC").dt.tz_convert(IST)
+    else:
+        data["Datetime"] = data["Datetime"].dt.tz_convert(IST)
     return data.dropna(subset=["Datetime", "Close"]).sort_values(["Ticker", "Datetime"]), sorted(set(failures))
 
 
@@ -116,9 +89,9 @@ def _completed_bars(data: pd.DataFrame) -> pd.DataFrame:
     if data.empty:
         return data
     now = pd.Timestamp(datetime.now(IST))
-    # Aggregated candles are timestamped at their first 60m bar; only expose
-    # them once the complete 120-minute NSE session window has elapsed.
-    out = data[(data["Datetime"] + pd.Timedelta(minutes=120) <= now)].copy()
+    # Yahoo labels 60-minute candles by their opening timestamp. Exclude any bar
+    # whose full 60 minutes have not elapsed; this also excludes the live candle.
+    out = data[(data["Datetime"] + pd.Timedelta(minutes=60) <= now) & (data["Datetime"].dt.strftime("%H:%M") != "15:15")].copy()
     return out
 
 
@@ -170,9 +143,9 @@ def _classify_symbol(frame: pd.DataFrame) -> dict | None:
     return {
         "Price": round(float(last["Close"]), 2),
         "Last completed candle": last["Datetime"].strftime("%d %b %H:%M"),
-        "2H Volume / Prior 20 x 2H Avg": round(volume_ratio, 2) if pd.notna(volume_ratio) else np.nan,
+        "1H Volume / Prior 20H Avg": round(volume_ratio, 2) if pd.notna(volume_ratio) else np.nan,
         "Bull / Bear Volume": round(bull_bear_ratio, 2) if np.isfinite(bull_bear_ratio) else (np.inf if bull_bear_ratio == np.inf else np.nan),
-        "Bullish candles (12 x 2H)": bullish_count,
+        "Bullish candles (12H)": bullish_count,
         "Quiet pullbacks": "Yes" if quiet_pullbacks else "No",
         "Higher highs & lows": "Yes" if structure else "No",
         "EMA momentum": "Yes" if momentum else "No",
@@ -221,8 +194,8 @@ def _pocket_pivot_labels(frame: pd.DataFrame) -> pd.Series:
 
 
 def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
-    """Find a compact 2-hour base or a breakout from the immediately preceding base."""
-    # Keep enough history for the 50-bar volume average on 2-hour candles and 10 prior down-bars.
+    """Find a compact hourly base or a breakout from the immediately preceding base."""
+    # Keep enough history for the 50-hour volume average and 10 prior down-hours.
     frame = frame.sort_values("Datetime").drop_duplicates("Datetime").tail(120).copy()
     for col in ("High", "Low", "Close", "Volume"):
         frame[col] = pd.to_numeric(frame[col], errors="coerce")
@@ -230,7 +203,7 @@ def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
     if len(frame) < 13:
         return None
 
-    # Evaluate the last 12 completed 2-hour candles as a base; breakout tests the 12 candles before it.
+    # Evaluate the last 12 completed hours as a base; breakout tests the 12 hours before it.
     base = frame.tail(12).copy().reset_index(drop=True)
     labels = _pocket_pivot_labels(frame)
     base_labels = labels.iloc[-12:].reset_index(drop=True)
@@ -254,7 +227,7 @@ def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
     compact_base = pd.notna(base_range_pct) and base_range_pct <= 8.0
     volume_contracting = pd.notna(contraction_ratio) and contraction_ratio <= 1.0
 
-    # A breakout must close above the preceding 12-candle range on expanded volume.
+    # A breakout must close above the preceding 12-hour range on expanded volume.
     prior_base = frame.iloc[-13:-1].copy().reset_index(drop=True)
     prior_high = float(prior_base["High"].max())
     latest = frame.iloc[-1]
@@ -275,21 +248,21 @@ def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
                     and prior_10_avg > 0 and latest["Volume"] >= 1.3 * prior_10_avg)
 
     if breakout:
-        setup = "2H Base Breakout"
+        setup = "Hourly Base Breakout"
     elif compact_base and volume_contracting and participation_ok:
-        setup = "2H Base Forming"
+        setup = "Hourly Base Forming"
     else:
         setup = "No qualifying base"
 
     latest_label = labels.iloc[-1]
     return {
-        "2H setup": setup,
-        "PPV bars (12 × 2H)": dark_count,
-        "Light-blue bars (12 × 2H)": light_count,
-        "Grey · Green price (12 × 2H)": grey_green_count,
-        "Grey · Red price (12 × 2H)": grey_red_count,
-        "Grey · Neutral (12 × 2H)": grey_neutral_count,
-        "Red bars (12 × 2H)": red_count,
+        "Hourly setup": setup,
+        "PPV bars (12H)": dark_count,
+        "Light-blue bars (12H)": light_count,
+        "Grey · Green price (12H)": grey_green_count,
+        "Grey · Red price (12H)": grey_red_count,
+        "Grey · Neutral (12H)": grey_neutral_count,
+        "Red bars (12H)": red_count,
         "Blue / Red volume": round(blue_volume / red_volume, 2) if red_volume > 0 else (np.inf if blue_volume > 0 else np.nan),
         "Base range %": round(base_range_pct, 2) if pd.notna(base_range_pct) else np.nan,
         "Volume contraction ratio": round(contraction_ratio, 2) if pd.notna(contraction_ratio) else np.nan,
@@ -415,25 +388,25 @@ def _sector_strength_columns(result: pd.DataFrame, sector_tickers: dict, micro_s
 
 
 def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
-    st.title("2-Hour Price–Volume Strength Screener")
-    st.caption("NSE 500 · Completed 2-hour candles only · Yahoo Finance intraday data · Research watchlist, not a buy signal")
-    st.info("This page is independent of the weekly Stage 2 screener. It looks for 2-hour demand and momentum, including stocks that may still be in weekly Stage 1.")
+    st.title("1-Hour Price–Volume Strength Screener")
+    st.caption("NSE 500 · Completed 60-minute candles only · Yahoo Finance intraday data · Research watchlist, not a buy signal")
+    st.info("This page is independent of the weekly Stage 2 screener. It looks for hourly demand and momentum, including stocks that may still be in weekly Stage 1.")
 
     universe = _nse500_universe()
     tickers = tuple(universe["Ticker"].dropna().astype(str).unique())
-    refresh = st.button("↻ Refresh 2-hour data", key="2h_strength_refresh")
+    refresh = st.button("↻ Refresh hourly data", key="hourly_strength_refresh")
     if refresh:
         _download_hourly.clear()
 
-    with st.spinner(f"Loading completed 2-hour candles for up to {len(tickers)} NSE 500 stocks…"):
+    with st.spinner(f"Loading completed 1-hour candles for up to {len(tickers)} NSE 500 stocks…"):
         data, failures = _download_hourly(tickers)
     if data.empty:
-        st.error("No usable 2-hour OHLCV data was returned. The source may be temporarily unavailable or throttling requests. No sample data is shown.")
+        st.error("No usable hourly OHLCV data was returned. The source may be temporarily unavailable or throttling requests. No sample data is shown.")
         return
 
     completed = _completed_bars(data)
     if completed.empty:
-        st.warning("No completed 2-hour candles are available yet. Check again after the next 2-hour candle closes.")
+        st.warning("No completed hourly candles are available yet. Check again after the next hourly candle closes.")
         return
 
     lookup = universe.set_index("Ticker")[["Symbol", "Company", "Sector", "Industry"]].to_dict("index")
@@ -448,7 +421,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
                      **metrics})
     result = pd.DataFrame(rows)
     if result.empty:
-        st.warning("2-hour history was returned, but not enough completed candles were available to classify stocks.")
+        st.warning("Hourly history was returned, but not enough completed candles were available to classify stocks.")
         return
 
     # Use existing rotation zones where available. A failure in this optional context
@@ -459,7 +432,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         result = result.copy()
         result["Sector strength"] = "Unavailable"
         result["Strength source"] = "Unavailable"
-        st.warning(f"Sector-rotation context is temporarily unavailable; 2-hour stock signals are unaffected. ({type(exc).__name__})")
+        st.warning(f"Sector-rotation context is temporarily unavailable; hourly stock signals are unaffected. ({type(exc).__name__})")
 
     # Attach the exact weekly Weinstein stage classification used by the NSE 500 screener.
     try:
@@ -477,11 +450,11 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     latest = completed["Datetime"].max()
     st.caption(f"Latest completed candle in dataset: {latest.strftime('%d %b %Y, %I:%M %p IST')} · Stocks classified: {len(result)} / {len(tickers)} · Unavailable/failed tickers: {len(failures)}")
     if failures:
-        st.caption("Some symbols did not return 2-hour history. Missing data is excluded, not replaced.")
+        st.caption("Some symbols did not return hourly history. Missing data is excluded, not replaced.")
 
     order = {"Strong": 0, "Emerging": 1, "Developing": 2, "Weakening": 3}
     result["_rank"] = result["Signal"].map(order).fillna(4)
-    result = result.sort_values(["_rank", "2H Volume / Prior 20 x 2H Avg", "Bull / Bear Volume"], ascending=[True, False, False]).drop(columns="_rank")
+    result = result.sort_values(["_rank", "1H Volume / Prior 20H Avg", "Bull / Bear Volume"], ascending=[True, False, False]).drop(columns="_rank")
     selected = st.multiselect("Signal categories", ["Strong", "Emerging", "Developing", "Weakening"], default=["Strong", "Emerging"], key="hourly_strength_categories")
     selected_stages = st.multiselect("Weekly Weinstein stages", WEEKLY_STAGES, default=WEEKLY_STAGES, format_func=lambda value: value.replace(" · ", " — "), key="hourly_strength_weekly_stages")
     view = result[result["Signal"].isin(selected) & result["Weekly Stage"].isin(selected_stages)].copy()
@@ -491,11 +464,11 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         col.metric(signal, int((result["Signal"] == signal).sum()))
     st.caption("Strong = higher-high/higher-low structure, EMA momentum, stronger bullish participation and quieter pullbacks. Emerging = improving momentum/volume without every structural condition. These are heuristic labels, not calibrated probabilities.")
     if view.empty:
-        st.info("No stocks match the selected 2-hour signal categories.")
+        st.info("No stocks match the selected hourly signal categories.")
     else:
         cols = ["Symbol", "Company", "Weekly Stage", "Sector", "Sector strength", "Strength source",
-                "Price", "Signal", "2H Volume / Prior 20 x 2H Avg",
-                "Bull / Bear Volume", "Bullish candles (12 x 2H)", "Quiet pullbacks",
+                "Price", "Signal", "1H Volume / Prior 20H Avg",
+                "Bull / Bear Volume", "Bullish candles (12H)", "Quiet pullbacks",
                 "Higher highs & lows", "EMA momentum", "Last completed candle"]
         def _sector_status_style(value):
             colors = {
@@ -510,13 +483,13 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
 
         styled_view = view[cols].style.map(_sector_status_style, subset=["Sector strength"])
         st.dataframe(styled_view, use_container_width=True, hide_index=True, height=560)
-        st.download_button("Download 2-hour strength watchlist (CSV)", view[cols].to_csv(index=False).encode("utf-8"),
-                           "nse500_2h_price_volume_strength.csv", "text/csv", key="download_2h_strength")
+        st.download_button("Download hourly strength watchlist (CSV)", view[cols].to_csv(index=False).encode("utf-8"),
+                           "nse500_1h_price_volume_strength.csv", "text/csv", key="download_hourly_strength")
 
     st.divider()
-    st.subheader("2-Hour Base Formation & Pocket Pivot Scanner")
-    st.caption("12 completed 2-hour candles · Dark blue = PPV · Light blue = up-hour above 50-bar volume SMA on 2-hour candles · Red = down-hour above 50-bar volume SMA on 2-hour candles · Grey split by green/red/neutral price-candle body")
-    st.info("PPV: an up-hour whose volume exceeds the highest volume of the previous 10 down-bars. Light blue: other up-hours above the 50-bar volume SMA on 2-hour candles. Red: down-hours above the 50-bar volume SMA on 2-hour candles. Remaining grey volume bars are split into Grey · Green price and Grey · Red price using candle close versus open; unchanged-body candles are Grey · Neutral. Grey subtypes remain non-actionable for the blue-versus-red participation test.")
+    st.subheader("Hourly Base Formation & Pocket Pivot Scanner")
+    st.caption("12 completed 1-hour candles · Dark blue = PPV · Light blue = up-hour above 50-hour volume SMA · Red = down-hour above 50-hour volume SMA · Grey split by green/red/neutral price-candle body")
+    st.info("PPV: an up-hour whose volume exceeds the highest volume of the previous 10 down-hours. Light blue: other up-hours above the 50-hour volume SMA. Red: down-hours above the 50-hour volume SMA. Remaining grey volume bars are split into Grey · Green price and Grey · Red price using candle close versus open; unchanged-body candles are Grey · Neutral. Grey subtypes remain non-actionable for the blue-versus-red participation test.")
     base_rows = []
     for ticker, group in completed.groupby("Ticker", sort=False):
         setup_metrics = _base_setup_for_symbol(group)
@@ -536,26 +509,26 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         eligible_stages = ["Stage 1 · Base", "Stage 2 · Uptrend"]
         base_result = base_result[base_result["Weekly Stage"].isin(eligible_stages)].copy()
         base_view_choice = st.radio(
-            "2-hour base view", ["2H Base Forming", "2H Base Breakout", "All qualifying setups"],
-            horizontal=True, key="2h_base_view"
+            "Hourly base view", ["Hourly Base Forming", "Hourly Base Breakout", "All qualifying setups"],
+            horizontal=True, key="hourly_base_view"
         )
         if base_view_choice != "All qualifying setups":
-            base_result = base_result[base_result["2H setup"] == base_view_choice]
-        base_result = base_result[base_result["2H setup"].isin(["2H Base Forming", "2H Base Breakout"])]
-        base_result["_setup_rank"] = base_result["2H setup"].map({"2H Base Breakout": 0, "2H Base Forming": 1})
+            base_result = base_result[base_result["Hourly setup"] == base_view_choice]
+        base_result = base_result[base_result["Hourly setup"].isin(["Hourly Base Forming", "Hourly Base Breakout"])]
+        base_result["_setup_rank"] = base_result["Hourly setup"].map({"Hourly Base Breakout": 0, "Hourly Base Forming": 1})
         base_result = base_result.sort_values(
-            ["_setup_rank", "PPV bars (12 × 2H)", "Light-blue bars (12 × 2H)", "Red bars (12 × 2H)", "Blue / Red volume"],
+            ["_setup_rank", "PPV bars (12H)", "Light-blue bars (12H)", "Red bars (12H)", "Blue / Red volume"],
             ascending=[True, False, False, True, False], na_position="last"
         ).drop(columns="_setup_rank")
         if base_result.empty:
-            st.info("No qualifying 2-hour bases or breakouts match the selected view and weekly stages.")
+            st.info("No qualifying hourly bases or breakouts match the selected view and weekly stages.")
         else:
             st.dataframe(base_result, use_container_width=True, hide_index=True, height=440)
             st.download_button(
-                "Download 2-hour base & PPV watchlist (CSV)",
+                "Download hourly base & PPV watchlist (CSV)",
                 base_result.to_csv(index=False).encode("utf-8"),
-                "nse500_2h_base_pocket_pivot_watchlist.csv", "text/csv",
-                key="download_2h_base_ppv"
+                "nse500_hourly_base_pocket_pivot_watchlist.csv", "text/csv",
+                key="download_hourly_base_ppv"
             )
     else:
         st.info("Not enough completed hourly candles to evaluate base formation.")
@@ -567,6 +540,6 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         Sector_strength=("Sector strength", "first"),
     ).reset_index().rename(columns={"Sector_strength": "Sector strength"})
     sector_summary = sector_summary.sort_values(["Strong", "Emerging", "Stocks"], ascending=False)
-    st.caption("Sector strength is taken from the terminal's existing Sector Rotation or Micro Sector Rotation zone classifications. It is context only and does not filter stocks or change 2-hour stock rankings.")
-    with st.expander("Sector participation in 2-hour strength", expanded=False):
+    st.caption("Sector strength is taken from the terminal's existing Sector Rotation or Micro Sector Rotation zone classifications. It is context only and does not filter stocks or change hourly stock rankings.")
+    with st.expander("Sector participation in hourly strength", expanded=False):
         st.dataframe(sector_summary, use_container_width=True, hide_index=True)
