@@ -153,7 +153,10 @@ def _rotation_zone_lookup(sector_tickers: tuple, micro_members: tuple):
         try:
             frame = raw[ticker] if isinstance(raw.columns, pd.MultiIndex) and ticker in raw.columns.get_level_values(0) else raw.xs(ticker, axis=1, level=1) if isinstance(raw.columns, pd.MultiIndex) and ticker in raw.columns.get_level_values(1) else raw
             close = pd.to_numeric(frame["Close"], errors="coerce").dropna()
-            close.index = pd.to_datetime(close.index).tz_localize(None).normalize()
+            index = pd.DatetimeIndex(pd.to_datetime(close.index))
+            if index.tz is not None:
+                index = index.tz_localize(None)
+            close.index = index.normalize()
             return close[~close.index.duplicated(keep="last")].sort_index()
         except Exception:
             return pd.Series(dtype=float)
@@ -229,8 +232,18 @@ def _sector_strength_columns(result: pd.DataFrame, sector_tickers: dict, micro_s
             zone = sorted(micro_zones, key=lambda value: order[value])[0]
             source = "Microsector rotation"
         else:
-            sector = str(row.get("Sector", ""))
-            zone = broad.get(sector)
+            sector = str(row.get("Sector", "")).strip()
+            sector_aliases = {
+                "Information Technology": "IT", "IT Services": "IT",
+                "Pharmaceuticals": "Pharma", "Healthcare": "Pharma",
+                "Automobile": "Auto", "Automobiles": "Auto",
+                "Metals & Mining": "Metal", "Metals": "Metal",
+                "Oil Gas & Consumable Fuels": "Energy", "Oil & Gas": "Energy",
+                "FMCG": "FMCG", "Consumer Goods": "FMCG",
+                "Real Estate": "Realty", "Financials": "Financial Services",
+                "Media": "Media", "Infrastructure": "Infrastructure",
+            }
+            zone = broad.get(sector_aliases.get(sector, sector))
             source = "Sector rotation" if zone else "Unavailable"
         values.append((zone or "Unavailable", source if zone else "Unavailable"))
     result = result.copy()
@@ -306,7 +319,8 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
                 "Leading": "background-color: #14532d; color: #bbf7d0; font-weight: 700;",
                 "Improving": "background-color: #164e63; color: #a5f3fc; font-weight: 700;",
                 "Neutral": "background-color: #374151; color: #e5e7eb;",
-                "Weakening": "background-color: #7f1d1d; color: #fecaca; font-weight: 700;",
+                "Weakening": "background-color: #92400e; color: #fde68a; font-weight: 700;",
+                "Lagging": "background-color: #7f1d1d; color: #fecaca; font-weight: 700;",
                 "Unavailable": "background-color: #374151; color: #9ca3af;",
             }
             return colors.get(str(value), "")
