@@ -139,51 +139,107 @@ def _classify_symbol(frame: pd.DataFrame) -> dict | None:
     }
 
 
-def _sector_strength(completed: pd.DataFrame) -> pd.DataFrame:
-    """Estimate hourly sector leadership from constituent returns in the same completed-bar dataset."""
-    rows = []
-    for ticker, group in completed.groupby("Ticker", sort=False):
-        close = pd.to_numeric(group.sort_values("Datetime")["Close"], errors="coerce").dropna()
-        if len(close) < 11:
-            continue
-        current_5h = (float(close.iloc[-1]) / float(close.iloc[-6]) - 1) * 100
-        previous_5h = (float(close.iloc[-6]) / float(close.iloc[-11]) - 1) * 100
-        rows.append({"Ticker": ticker, "Current 5H return %": current_5h,
-                     "Previous 5H return %": previous_5h})
-    stock_returns = pd.DataFrame(rows)
-    if stock_returns.empty:
-        return pd.DataFrame(columns=["Sector", "Sector strength", "Sector relative 5H (pp)", "Sector breadth 5H %"])
+@st.cache_data(ttl=21600, show_spinner=False)
+def _rotation_zone_lookup(sector_tickers: tuple, micro_members: tuple):
+    """Reuse the daily/weekly rotation-zone definitions used by the terminal's rotation tabs."""
+    micro_symbols = sorted({symbol for _, _, symbols in micro_members for symbol in symbols})
+    all_tickers = sorted(set(sector_tickers) | set(micro_symbols) | {"^NSEI", "^CRSLDX"})
+    try:
+        raw = yf.download(all_tickers, period="6mo", interval="1d", auto_adjust=False,
+                          group_by="ticker", threads=False, progress=False, timeout=35)
+    except Exception:
+        return {}, {}
+    def close_for(ticker):
+        try:
+            frame = raw[ticker] if isinstance(raw.columns, pd.MultiIndex) and ticker in raw.columns.get_level_values(0) else raw.xs(ticker, axis=1, level=1) if isinstance(raw.columns, pd.MultiIndex) and ticker in raw.columns.get_level_values(1) else raw
+            close = pd.to_numeric(frame["Close"], errors="coerce").dropna()
+            close.index = pd.to_datetime(close.index).tz_localize(None).normalize()
+            return close[~close.index.duplicated(keep="last")].sort_index()
+        except Exception:
+            return pd.Series(dtype=float)
 
-    market_current = float(stock_returns["Current 5H return %"].median())
-    market_previous = float(stock_returns["Previous 5H return %"].median())
-    stock_returns = stock_returns.merge(
-        _nse500_universe()[["Ticker", "Sector"]].drop_duplicates("Ticker"),
-        on="Ticker", how="left"
+    nifty = close_for("^NSEI")
+    if nifty.empty:
+        nifty = close_for("^CRSLDX")
+    broad = {}
+    for name, ticker in sector_tickers:
+        sec = close_for(ticker)
+        aligned = pd.concat([sec.rename("sector"), nifty.rename("nifty")], axis=1).dropna()
+        if len(aligned) < 12:
+            continue
+        relative = aligned["sector"] / aligned["nifty"] * 100
+        rs_mean = relative.rolling(20, min_periods=8).mean()
+        rs_momentum = relative.pct_change(5) * 100
+        if pd.isna(rs_mean.iloc[-1]) or pd.isna(rs_momentum.iloc[-1]):
+            continue
+        strong = relative.iloc[-1] >= rs_mean.iloc[-1]
+        accelerating = rs_momentum.iloc[-1] >= 0
+        broad[name] = ("Leading" if strong and accelerating else
+                       "Weakening" if strong else "Improving" if accelerating else "Lagging")
+
+    micro = {}
+    for name, group, symbols in micro_members:
+        series = [close_for(symbol) for symbol in symbols]
+        series = [item for item in series if len(item) >= 22]
+        if len(series) < 3 or len(nifty) < 22:
+            continue
+        constituent = pd.concat(series, axis=1).dropna(how="all")
+        basket = constituent.pct_change().add(1).cumprod().mean(axis=1).dropna()
+        aligned = pd.concat([basket.rename("micro"), nifty.rename("nifty")], axis=1).dropna()
+        if len(aligned) < 22:
+            continue
+        rel1 = ((aligned["micro"].iloc[-1] / aligned["micro"].iloc[-22] - 1) -
+                (aligned["nifty"].iloc[-1] / aligned["nifty"].iloc[-22] - 1)) * 100
+        rel3 = ((aligned["micro"].iloc[-1] / aligned["micro"].iloc[-min(64, len(aligned))] - 1) -
+                (aligned["nifty"].iloc[-1] / aligned["nifty"].iloc[-min(64, len(aligned))] - 1)) * 100 if len(aligned) >= 64 else np.nan
+        if pd.notna(rel1) and pd.notna(rel3):
+            micro[name] = ("Leading" if rel3 >= 0 and rel1 >= 0 else
+                           "Weakening" if rel3 >= 0 else
+                           "Improving" if rel1 >= 0 else "Lagging")
+    return broad, micro
+
+
+def _sector_strength_columns(result: pd.DataFrame, sector_tickers: dict, micro_sectors: dict) -> pd.DataFrame:
+    broad, micro = _rotation_zone_lookup(
+        tuple(sorted(sector_tickers.items())),
+        tuple((name, group, tuple(symbols)) for name, (group, symbols) in sorted(micro_sectors.items()))
     )
-    output = []
-    for sector, group in stock_returns.groupby("Sector", dropna=False):
-        if len(group) < 3:
-            continue
-        current = float(group["Current 5H return %"].median())
-        previous = float(group["Previous 5H return %"].median())
-        relative = current - market_current
-        relative_change = relative - (previous - market_previous)
-        breadth = float((group["Current 5H return %"] > 0).mean() * 100)
-        if relative >= 0.15 and breadth >= 55:
-            status = "Leading"
-        elif relative_change > 0 and breadth >= 45:
-            status = "Improving"
-        elif relative < 0 and relative_change <= 0:
-            status = "Weakening"
+    symbol_to_micro = {}
+    for name, (_, symbols) in micro_sectors.items():
+        for symbol in symbols:
+            symbol_to_micro.setdefault(symbol.replace(".NS", ""), []).append(name)
+    group_to_broad = {
+        "Pharma": "Pharma", "Technology": "IT", "Industrials": "Infrastructure",
+        "Media & Services": "Media", "Financials": "Financial Services",
+        "Consumer": "Consumption", "Consumer Durables": "Consumption",
+        "Power": "Energy", "Auto": "Auto", "Construction": "Infrastructure",
+        "Real Estate": "Realty", "Chemicals": None, "Healthcare": "Pharma",
+        "Textiles": None, "Energy": "Energy", "Materials": "Metal",
+        "Agri": None, "Services": None, "Transport": None, "Travel": None,
+        "Defence": None, "Utilities": None, "Niche": None,
+    }
+    values = []
+    for _, row in result.iterrows():
+        symbol = str(row.get("Symbol", "")).strip()
+        micro_names = symbol_to_micro.get(symbol, [])
+        micro_zones = [micro[name] for name in micro_names if name in micro]
+        if micro_zones:
+            # Prefer strongest available existing microsector rotation zone for shared memberships.
+            order = {"Leading": 0, "Improving": 1, "Weakening": 2, "Lagging": 3}
+            zone = sorted(micro_zones, key=lambda value: order[value])[0]
+            source = "Microsector rotation"
         else:
-            status = "Neutral"
-        output.append({"Sector": sector, "Sector strength": status,
-                       "Sector relative 5H (pp)": round(relative, 2),
-                       "Sector breadth 5H %": round(breadth, 1)})
-    return pd.DataFrame(output)
+            sector = str(row.get("Sector", ""))
+            zone = broad.get(sector)
+            source = "Sector rotation" if zone else "Unavailable"
+        values.append((zone or "Unavailable", source if zone else "Unavailable"))
+    result = result.copy()
+    result["Sector strength"] = [item[0] for item in values]
+    result["Strength source"] = [item[1] for item in values]
+    return result
 
 
-def render_hourly_strength_screener():
+def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     st.title("1-Hour Price–Volume Strength Screener")
     st.caption("NSE 500 · Completed 60-minute candles only · Yahoo Finance intraday data · Research watchlist, not a buy signal")
     st.info("This page is independent of the weekly Stage 2 screener. It looks for hourly demand and momentum, including stocks that may still be in weekly Stage 1.")
@@ -220,15 +276,8 @@ def render_hourly_strength_screener():
         st.warning("Hourly history was returned, but not enough completed candles were available to classify stocks.")
         return
 
-    # Sector context uses the same completed hourly constituent data as this screener.
-    sector_strength = _sector_strength(completed)
-    if not sector_strength.empty:
-        result = result.merge(sector_strength, on="Sector", how="left")
-    else:
-        result["Sector strength"] = "Unavailable"
-        result["Sector relative 5H (pp)"] = np.nan
-        result["Sector breadth 5H %"] = np.nan
-    result["Sector strength"] = result["Sector strength"].fillna("Unavailable")
+    # Use the existing terminal Sector Rotation / Micro Sector Rotation zone definitions.
+    result = _sector_strength_columns(result, sector_tickers, micro_sectors)
 
     latest = completed["Datetime"].max()
     st.caption(f"Latest completed candle in dataset: {latest.strftime('%d %b %Y, %I:%M %p IST')} · Stocks classified: {len(result)} / {len(tickers)} · Unavailable/failed tickers: {len(failures)}")
@@ -248,8 +297,8 @@ def render_hourly_strength_screener():
     if view.empty:
         st.info("No stocks match the selected hourly signal categories.")
     else:
-        cols = ["Symbol", "Company", "Sector", "Sector strength", "Sector relative 5H (pp)",
-                "Sector breadth 5H %", "Price", "Signal", "1H Volume / Prior 20H Avg",
+        cols = ["Symbol", "Company", "Sector", "Sector strength", "Strength source",
+                "Price", "Signal", "1H Volume / Prior 20H Avg",
                 "Bull / Bear Volume", "Bullish candles (12H)", "Quiet pullbacks",
                 "Higher highs & lows", "EMA momentum", "Last completed candle"]
         def _sector_status_style(value):
@@ -271,12 +320,8 @@ def render_hourly_strength_screener():
         Strong=("Signal", lambda x: int((x == "Strong").sum())),
         Emerging=("Signal", lambda x: int((x == "Emerging").sum())),
         Sector_strength=("Sector strength", "first"),
-        Relative_5H_pp=("Sector relative 5H (pp)", "first"),
-        Breadth_5H_pct=("Sector breadth 5H %", "first"),
-    ).reset_index().rename(columns={"Sector_strength": "Sector strength",
-                                    "Relative_5H_pp": "Relative 5H (pp)",
-                                    "Breadth_5H_pct": "Breadth 5H %"})
+    ).reset_index().rename(columns={"Sector_strength": "Sector strength"})
     sector_summary = sector_summary.sort_values(["Strong", "Emerging", "Stocks"], ascending=False)
-    st.caption("Sector strength is a separate context signal calculated from the median 5-hour return of available sector constituents versus the NSE 500 median, plus sector breadth. It does not filter stocks or change the hourly stock-signal ranking.")
+    st.caption("Sector strength is taken from the terminal's existing Sector Rotation or Micro Sector Rotation zone classifications. It is context only and does not filter stocks or change hourly stock rankings.")
     with st.expander("Sector participation in hourly strength", expanded=False):
         st.dataframe(sector_summary, use_container_width=True, hide_index=True)
