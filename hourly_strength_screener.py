@@ -34,20 +34,21 @@ def _nse500_universe():
 
 @st.cache_data(ttl=HOURLY_TTL_SECONDS, show_spinner=False)
 def _download_hourly(tickers: tuple[str, ...]):
-    """Yahoo 2-hour OHLCV. Fetch in modest batches to avoid oversized requests."""
+    """Download Yahoo 60-minute bars and aggregate them into NSE-session 2-hour candles."""
     parts = []
     failures = []
     for start in range(0, len(tickers), 40):
         batch = list(tickers[start:start + 40])
         try:
             raw = yf.download(
-                tickers=batch, period="60d", interval="2h",
+                tickers=batch, period="60d", interval="60m",
                 auto_adjust=False, group_by="ticker", threads=False,
                 progress=False, timeout=30, prepost=False,
             )
             if raw is None or raw.empty:
                 failures.extend(batch)
                 continue
+            frames = {}
             if isinstance(raw.columns, pd.MultiIndex):
                 level0 = set(map(str, raw.columns.get_level_values(0)))
                 level1 = set(map(str, raw.columns.get_level_values(1)))
@@ -55,33 +56,59 @@ def _download_hourly(tickers: tuple[str, ...]):
                     try:
                         frame = raw[ticker] if ticker in level0 else raw.xs(ticker, axis=1, level=1) if ticker in level1 else None
                         if frame is not None and {"Open", "High", "Low", "Close", "Volume"}.issubset(frame.columns):
-                            frame = frame[["Open", "High", "Low", "Close", "Volume"]].copy()
-                            frame["Ticker"] = ticker
-                            parts.append(frame.reset_index().rename(columns={frame.index.name or "Datetime": "Datetime"}))
-                        else:
-                            failures.append(ticker)
+                            frames[ticker] = frame[["Open", "High", "Low", "Close", "Volume"]].copy()
                     except Exception:
-                        failures.append(ticker)
+                        pass
             elif len(batch) == 1 and {"Open", "High", "Low", "Close", "Volume"}.issubset(raw.columns):
-                frame = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
-                frame["Ticker"] = batch[0]
-                parts.append(frame.reset_index().rename(columns={frame.index.name or "Datetime": "Datetime"}))
-            else:
-                failures.extend(batch)
+                frames[batch[0]] = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
+
+            for ticker in batch:
+                frame = frames.get(ticker)
+                if frame is None or frame.empty:
+                    failures.append(ticker)
+                    continue
+                frame = frame.reset_index()
+                dt_col = next((c for c in frame.columns if str(c).lower() in {"datetime", "date"}), frame.columns[0])
+                frame = frame.rename(columns={dt_col: "Datetime"})
+                frame["Datetime"] = pd.to_datetime(frame["Datetime"], errors="coerce")
+                if frame["Datetime"].dt.tz is None:
+                    frame["Datetime"] = frame["Datetime"].dt.tz_localize("UTC").dt.tz_convert(IST)
+                else:
+                    frame["Datetime"] = frame["Datetime"].dt.tz_convert(IST)
+                frame = frame.dropna(subset=["Datetime", "Close"])
+                # NSE regular-session 60m bars open at 09:15, 10:15, ... 14:15.
+                # Pair them into 09:15–11:15, 11:15–13:15 and 13:15–15:15.
+                frame = frame[frame["Datetime"].dt.strftime("%H:%M").isin(
+                    ["09:15", "10:15", "11:15", "12:15", "13:15", "14:15"]
+                )].copy()
+                frame["SessionDate"] = frame["Datetime"].dt.date
+                minutes_from_open = (
+                    frame["Datetime"].dt.hour * 60 + frame["Datetime"].dt.minute
+                    - (9 * 60 + 15)
+                )
+                frame["Group"] = (minutes_from_open // 120).astype(int)
+                aggregated = frame.sort_values("Datetime").groupby(
+                    ["SessionDate", "Group"], as_index=False, sort=True
+                ).agg(
+                    Datetime=("Datetime", "first"),
+                    Open=("Open", "first"),
+                    High=("High", "max"),
+                    Low=("Low", "min"),
+                    Close=("Close", "last"),
+                    Volume=("Volume", "sum"),
+                    SourceBars=("Close", "count"),
+                )
+                aggregated = aggregated[aggregated["SourceBars"] == 2].drop(columns=["SessionDate", "Group", "SourceBars"])
+                if aggregated.empty:
+                    failures.append(ticker)
+                    continue
+                aggregated["Ticker"] = ticker
+                parts.append(aggregated)
         except Exception:
             failures.extend(batch)
     if not parts:
         return pd.DataFrame(), sorted(set(failures))
     data = pd.concat(parts, ignore_index=True)
-    if "Datetime" not in data.columns:
-        date_col = next((c for c in data.columns if str(c).lower() in {"datetime", "date"}), None)
-        if date_col:
-            data = data.rename(columns={date_col: "Datetime"})
-    data["Datetime"] = pd.to_datetime(data["Datetime"], errors="coerce")
-    if data["Datetime"].dt.tz is None:
-        data["Datetime"] = data["Datetime"].dt.tz_localize("UTC").dt.tz_convert(IST)
-    else:
-        data["Datetime"] = data["Datetime"].dt.tz_convert(IST)
     return data.dropna(subset=["Datetime", "Close"]).sort_values(["Ticker", "Datetime"]), sorted(set(failures))
 
 
@@ -89,8 +116,8 @@ def _completed_bars(data: pd.DataFrame) -> pd.DataFrame:
     if data.empty:
         return data
     now = pd.Timestamp(datetime.now(IST))
-    # Yahoo labels 2-hour candles by their opening timestamp. Exclude any bar
-    # whose full 120 minutes have not elapsed; this also excludes the live candle.
+    # Aggregated candles are timestamped at their first 60m bar; only expose
+    # them once the complete 120-minute NSE session window has elapsed.
     out = data[(data["Datetime"] + pd.Timedelta(minutes=120) <= now)].copy()
     return out
 
