@@ -14,14 +14,16 @@ WEEKLY_STAGES = ["Stage 1 · Base", "Stage 2 · Uptrend", "Stage 3 · Top", "Sta
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def _weekly_stage_lookup(fyers_app_id: str, fyers_access_token: str):
-    """Use the exact weekly Weinstein classifications from the existing NSE 500 screener."""
+def _weekly_stage_and_rs_lookup(fyers_app_id: str, fyers_access_token: str):
+    """Reuse weekly NSE 500 stage and RS Rank values without applying an RS filter."""
     from nse500_screener import _calculate
     results = _calculate(fyers_app_id, fyers_access_token)[0]
-    if results is None or results.empty or not {"Symbol", "Stage"}.issubset(results.columns):
-        return {}
-    return dict(zip(results["Symbol"].astype(str).str.replace(".NS", "", regex=False),
-                    results["Stage"].astype(str)))
+    if results is None or results.empty or not {"Symbol", "Stage", "RS Rank"}.issubset(results.columns):
+        return {}, {}
+    symbols = results["Symbol"].astype(str).str.replace(".NS", "", regex=False)
+    stage_map = dict(zip(symbols, results["Stage"].astype(str)))
+    rs_map = dict(zip(symbols, pd.to_numeric(results["RS Rank"], errors="coerce")))
+    return stage_map, rs_map
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -439,10 +441,10 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         fyers_app_id = ""
     fyers_access_token = str(st.session_state.get("fyers_access_token", "") or "")
     try:
-        stage_map = _weekly_stage_lookup(fyers_app_id, fyers_access_token)
+        stage_map, rs_map = _weekly_stage_and_rs_lookup(fyers_app_id, fyers_access_token)
     except Exception as exc:
-        stage_map = {}
-        st.warning(f"Weekly stage data is temporarily unavailable; stage filtering is not applied. ({type(exc).__name__})")
+        stage_map, rs_map = {}, {}
+        st.warning(f"Weekly stage / RS context is temporarily unavailable; stage filtering is not applied. ({type(exc).__name__})")
     result["Weekly Stage"] = result["Symbol"].astype(str).map(stage_map).fillna("Unavailable")
 
     latest = completed["Datetime"].max()
@@ -499,6 +501,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
             "Symbol": symbol, "Company": meta.get("Company", ""),
             "Sector": meta.get("Sector", "Unclassified"),
             "Weekly Stage": stage_map.get(symbol, "Unavailable"),
+            "RS Rank (1–99)": rs_map.get(symbol, np.nan),
             **setup_metrics,
         })
     base_result = pd.DataFrame(base_rows)
