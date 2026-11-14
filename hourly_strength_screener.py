@@ -446,6 +446,8 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         stage_map, rs_map = {}, {}
         st.warning(f"Weekly stage / RS context is temporarily unavailable; stage filtering is not applied. ({type(exc).__name__})")
     result["Weekly Stage"] = result["Symbol"].astype(str).map(stage_map).fillna("Unavailable")
+    # Show RS rank as reference information only; it is not used to filter or rank stocks.
+    result["RS Rank (1–99)"] = result["Symbol"].astype(str).map(rs_map)
 
     # Display only stocks classified as weekly Stage 1 or Stage 2.
     # Keep unclassified stocks out rather than guessing their stage.
@@ -474,7 +476,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     if view.empty:
         st.info("No stocks match the selected hourly signal categories.")
     else:
-        cols = ["Symbol", "Company", "Weekly Stage", "Sector", "Sector strength", "Strength source",
+        cols = ["Symbol", "Company", "Weekly Stage", "RS Rank (1–99)", "Sector", "Sector strength", "Strength source",
                 "Price", "Signal", "1H Volume / Prior 20H Avg",
                 "Bull / Bear Volume", "Bullish candles (12H)", "Quiet pullbacks",
                 "Higher highs & lows", "EMA momentum", "Last completed candle"]
