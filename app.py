@@ -1308,48 +1308,6 @@ if active_page == "Main Dashboard":
     st.caption("Actual source candle dates · " + "  |  ".join(headline_dates))
 
 if active_page == "Main Dashboard":
-    # Compact market-news ticker and weekly sector leadership snapshot.
-    st.markdown("""
-    <style>
-    .mit-news-wrap{overflow:hidden;white-space:nowrap;border:1px solid #303846;border-left:4px solid #22c55e;border-radius:9px;background:#101820;padding:10px 0;margin:0 0 12px}
-    .mit-news-track{display:inline-block;padding-left:100%;animation:mit-news-scroll 85s linear infinite}
-    .mit-news-track:hover{animation-play-state:paused}
-    .mit-news-item{display:inline-block;margin-right:42px;color:#e5edf5;font-size:14px}
-    .mit-news-item b{color:#22c55e;margin-right:8px}
-    .mit-news-item a{color:#e5edf5;text-decoration:none}
-    .mit-news-item a:hover{color:#38bdf8;text-decoration:underline}
-    @keyframes mit-news-scroll{0%{transform:translateX(0)}100%{transform:translateX(-100%)}}
-    @media(prefers-reduced-motion:reduce){.mit-news-track{animation:none;padding-left:10px;white-space:normal}}
-    </style>
-    """, unsafe_allow_html=True)
-    try:
-        _market_news, _market_news_error = get_news_rss(
-            "India stock market NSE BSE Nifty Sensex stocks business", limit=15
-        )
-        if not _market_news.empty:
-            _news_items = []
-            for _, _news in _market_news.iterrows():
-                _headline = html.escape(str(_news.get("Headline", "")))
-                _publisher = html.escape(str(_news.get("Publisher", "Market news")))
-                _url = html.escape(str(_news.get("Source link", "")), quote=True)
-                if _headline and _url:
-                    _news_items.append(
-                        f'<span class="mit-news-item"><b>{_publisher}</b>'
-                        f'<a href="{_url}" target="_blank" rel="noopener">{_headline}</a></span>'
-                    )
-            if _news_items:
-                _ticker_content = "".join(_news_items)
-                st.markdown(
-                    '<div class="mit-news-wrap"><div class="mit-news-track">'
-                    + _ticker_content + _ticker_content +
-                    '</div></div>',
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.caption("Market news ticker temporarily unavailable; headlines will appear when the news feed responds.")
-    except Exception:
-        st.caption("Market news ticker temporarily unavailable.")
-
     # Weekly sector snapshot: use the same relative-strength rotation framework as the
     # Sector Leadership page. "Leading" = positive 1M relative strength and momentum;
     # "Improving" = negative 1M relative strength but positive short-term momentum.
