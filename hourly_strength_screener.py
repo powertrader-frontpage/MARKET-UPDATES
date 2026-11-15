@@ -275,6 +275,7 @@ def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
         "Grey · Red price (12H)": grey_red_count,
         "Grey · Neutral (12H)": grey_neutral_count,
         "Red bars (12H)": red_count,
+        "Blue bars % (12H)": round(blue_count / 12 * 100, 1),
         "Blue / Red volume": round(blue_volume / red_volume, 2) if red_volume > 0 else (np.inf if blue_volume > 0 else np.nan),
         "Base range %": round(base_range_pct, 2) if pd.notna(base_range_pct) else np.nan,
         "Volume contraction ratio": round(contraction_ratio, 2) if pd.notna(contraction_ratio) else np.nan,
@@ -573,15 +574,27 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         if base_view_choice != "All qualifying setups":
             base_result = base_result[base_result["Hourly setup"] == base_view_choice]
         base_result = base_result[base_result["Hourly setup"].isin(["Hourly Base Forming", "Hourly Base Breakout"])]
+        base_result["_blue_priority"] = (base_result["Blue bars % (12H)"] > 60).astype(int)
         base_result["_setup_rank"] = base_result["Hourly setup"].map({"Hourly Base Breakout": 0, "Hourly Base Forming": 1})
         base_result = base_result.sort_values(
-            ["_setup_rank", "PPV bars (12H)", "Light-blue bars (12H)", "Red bars (12H)", "Blue / Red volume"],
-            ascending=[True, False, False, True, False], na_position="last"
-        ).drop(columns="_setup_rank")
+            ["_blue_priority", "_setup_rank", "Blue bars % (12H)", "PPV bars (12H)", "Light-blue bars (12H)", "Red bars (12H)", "Blue / Red volume"],
+            ascending=[False, True, False, False, False, True, False], na_position="last"
+        ).drop(columns=["_blue_priority", "_setup_rank"])
         if base_result.empty:
             st.info("No qualifying hourly bases or breakouts match the selected view and weekly stages.")
         else:
-            st.dataframe(base_result, use_container_width=True, hide_index=True, height=440)
+            def _highlight_blue_majority_symbol(value, blue_pct):
+                return "color: #22c55e; font-weight: 800;" if pd.notna(blue_pct) and blue_pct > 60 else ""
+
+            styled_base = base_result.style.apply(
+                lambda row: [
+                    _highlight_blue_majority_symbol(row.get("Symbol"), row.get("Blue bars % (12H)"))
+                    if col == "Symbol" else ""
+                    for col in row.index
+                ],
+                axis=1
+            )
+            st.dataframe(styled_base, use_container_width=True, hide_index=True, height=440)
             st.download_button(
                 "Download hourly base & PPV watchlist (CSV)",
                 base_result.to_csv(index=False).encode("utf-8"),
