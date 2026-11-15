@@ -404,12 +404,37 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     st.info("This page is independent of the weekly Stage 2 screener. It looks for hourly demand and momentum, including stocks that may still be in weekly Stage 1.")
 
     universe = _nse500_universe()
-    tickers = tuple(universe["Ticker"].dropna().astype(str).unique())
+
+    # Resolve the existing weekly Stage 1/Stage 2 universe BEFORE requesting
+    # intraday data. This avoids downloading hourly candles for stocks that
+    # would be discarded from both hourly tables anyway.
+    try:
+        fyers_app_id = str(st.secrets.get("FYERS_APP_ID", "")).strip()
+    except Exception:
+        fyers_app_id = ""
+    fyers_access_token = str(st.session_state.get("fyers_access_token", "") or "")
+    try:
+        stage_map, rs_map = _weekly_stage_and_rs_lookup(fyers_app_id, fyers_access_token)
+    except Exception as exc:
+        stage_map, rs_map = {}, {}
+        st.warning(f"Weekly stage / RS context is temporarily unavailable. Hourly download is paused to avoid fetching an unfiltered NSE 500 universe. ({type(exc).__name__})")
+    eligible_stages = ["Stage 1 · Base", "Stage 2 · Uptrend"]
+    if not stage_map:
+        st.info("Weekly Stage 1/Stage 2 data is not available yet. Load the weekly NSE 500 screener first, then return here.")
+        return
+
+    eligible_symbols = {symbol for symbol, stage in stage_map.items() if stage in eligible_stages}
+    eligible_universe = universe[universe["Symbol"].astype(str).isin(eligible_symbols)].copy()
+    tickers = tuple(eligible_universe["Ticker"].dropna().astype(str).unique())
+    if not tickers:
+        st.info("No NSE 500 stocks currently have a confirmed weekly Stage 1 or Stage 2 classification.")
+        return
+
     refresh = st.button("↻ Refresh hourly data", key="hourly_strength_refresh")
     if refresh:
         _download_hourly.clear()
 
-    with st.spinner(f"Loading completed 1-hour candles for up to {len(tickers)} NSE 500 stocks…"):
+    with st.spinner(f"Loading completed 1-hour candles for {len(tickers)} weekly Stage 1/2 stocks (from NSE 500)…"):
         data, failures = _download_hourly(tickers)
     if data.empty:
         st.error("No usable hourly OHLCV data was returned. The source may be temporarily unavailable or throttling requests. No sample data is shown.")
@@ -420,7 +445,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         st.warning("No completed hourly candles are available yet. Check again after the next hourly candle closes.")
         return
 
-    lookup = universe.set_index("Ticker")[["Symbol", "Company", "Sector", "Industry"]].to_dict("index")
+    lookup = eligible_universe.set_index("Ticker")[["Symbol", "Company", "Sector", "Industry"]].to_dict("index")
     rows = []
     for ticker, group in completed.groupby("Ticker", sort=False):
         metrics = _classify_symbol(group)
@@ -442,34 +467,20 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     except Exception as exc:
         result = result.copy()
         result["Sector strength"] = "Unavailable"
-        result["Strength source"] = "Unavailable"
+        result["Microsector"] = "Unavailable"
+        result["Microsector strength"] = "Unavailable"
         st.warning(f"Sector-rotation context is temporarily unavailable; hourly stock signals are unaffected. ({type(exc).__name__})")
 
-    # Attach the exact weekly Weinstein stage classification used by the NSE 500 screener.
-    try:
-        fyers_app_id = str(st.secrets.get("FYERS_APP_ID", "")).strip()
-    except Exception:
-        fyers_app_id = ""
-    fyers_access_token = str(st.session_state.get("fyers_access_token", "") or "")
-    try:
-        stage_map, rs_map = _weekly_stage_and_rs_lookup(fyers_app_id, fyers_access_token)
-    except Exception as exc:
-        stage_map, rs_map = {}, {}
-        st.warning(f"Weekly stage / RS context is temporarily unavailable; stage filtering is not applied. ({type(exc).__name__})")
     result["Weekly Stage"] = result["Symbol"].astype(str).map(stage_map).fillna("Unavailable")
     # Show RS rank as reference information only; it is not used to filter or rank stocks.
     result["RS Rank (1–99)"] = result["Symbol"].astype(str).map(rs_map)
-
-    # Display only stocks classified as weekly Stage 1 or Stage 2.
-    # Keep unclassified stocks out rather than guessing their stage.
-    eligible_stages = ["Stage 1 · Base", "Stage 2 · Uptrend"]
     result = result[result["Weekly Stage"].isin(eligible_stages)].copy()
     if result.empty:
-        st.info("No NSE 500 stocks with a confirmed weekly Stage 1 or Stage 2 classification are available. Weekly stage data may be temporarily unavailable.")
+        st.info("No NSE 500 stocks with a confirmed weekly Stage 1 or Stage 2 classification are available.")
         return
 
     latest = completed["Datetime"].max()
-    st.caption(f"Latest completed candle in dataset: {latest.strftime('%d %b %Y, %I:%M %p IST')} · Stocks classified: {len(result)} / {len(tickers)} · Unavailable/failed tickers: {len(failures)}")
+    st.caption(f"Latest completed candle in dataset: {latest.strftime('%d %b %Y, %I:%M %p IST')} · Stocks classified: {len(result)} / {len(tickers)} eligible Stage 1/2 stocks · Unavailable/failed tickers: {len(failures)}")
     if failures:
         st.caption("Some symbols did not return hourly history. Missing data is excluded, not replaced.")
 
