@@ -556,7 +556,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         meta = lookup.get(ticker, {})
         symbol = str(meta.get("Symbol", ticker))
         base_rows.append({
-            "Symbol": symbol, "Company": meta.get("Company", ""),
+            "Symbol": symbol,
             "Sector": meta.get("Sector", "Unclassified"),
             "Weekly Stage": stage_map.get(symbol, "Unavailable"),
             "RS Rank (1–99)": rs_map.get(symbol, np.nan),
