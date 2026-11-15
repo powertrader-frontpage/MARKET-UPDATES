@@ -24,17 +24,75 @@ SCREENER_DATA_TTL_SECONDS = 900
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def _constituents():
-    url = "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv"
-    response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=25)
-    response.raise_for_status()
-    frame = pd.read_csv(StringIO(response.text))
+    """Load the official Nifty 500 universe with a browser-like request and NSE fallback."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/csv,application/json,text/plain,*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.niftyindices.com/",
+        "Origin": "https://www.niftyindices.com",
+        "Connection": "keep-alive",
+    }
+    errors = []
+
+    # Primary: official Nifty Indices constituent CSV. Retry transient blocks/timeouts.
+    try:
+        response = requests.get(
+            "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv",
+            headers=headers, timeout=25,
+        )
+        response.raise_for_status()
+        frame = pd.read_csv(StringIO(response.text))
+        if not any(str(c).strip().lower() == "symbol" for c in frame.columns):
+            raise ValueError("Nifty Indices response did not contain a Symbol column.")
+        return _normalise_constituents(frame)
+    except Exception as exc:
+        errors.append(f"Nifty Indices CSV: {type(exc).__name__} ({getattr(exc, 'response', None).status_code if getattr(exc, 'response', None) is not None else 'request/parse'})")
+
+    # Fallback: NSE's official NIFTY 500 index API, with a homepage visit to obtain cookies.
+    try:
+        session = requests.Session()
+        nse_headers = {
+            **headers,
+            "Referer": "https://www.nseindia.com/",
+            "Origin": "https://www.nseindia.com",
+            "Accept": "application/json,text/plain,*/*",
+        }
+        session.get("https://www.nseindia.com/", headers=nse_headers, timeout=20)
+        response = session.get(
+            "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20500",
+            headers=nse_headers, timeout=25,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        records = payload.get("data", []) if isinstance(payload, dict) else []
+        if not records:
+            raise ValueError("NSE API returned no constituent records.")
+        frame = pd.DataFrame(records).rename(columns={
+            "symbol": "Symbol", "companyName": "Company Name",
+            "industry": "Industry", "meta": "Meta",
+        })
+        if "Company Name" not in frame.columns and "Meta" in frame.columns:
+            frame["Company Name"] = frame["Meta"].map(
+                lambda item: item.get("companyName", "") if isinstance(item, dict) else ""
+            )
+        if "Industry" not in frame.columns:
+            frame["Industry"] = "Unclassified"
+        frame["Sector"] = frame["Industry"]
+        return _normalise_constituents(frame)
+    except Exception as exc:
+        errors.append(f"NSE API: {type(exc).__name__}")
+    raise RuntimeError("Unable to retrieve the official Nifty 500 constituents from either source. " + "; ".join(errors))
+
+
+def _normalise_constituents(frame: pd.DataFrame) -> pd.DataFrame:
     cols = {str(c).strip().lower(): c for c in frame.columns}
     symbol_col = cols.get("symbol")
     company_col = cols.get("company name") or cols.get("companyname")
     industry_col = cols.get("industry")
     sector_col = cols.get("sector")
     if symbol_col is None:
-        raise ValueError("Official Nifty 500 file has no Symbol column.")
+        raise ValueError("Official Nifty 500 data has no Symbol column.")
     symbols = frame[symbol_col].astype(str).str.strip()
     industry_values = frame[industry_col].astype(str).str.strip() if industry_col else (
         frame[sector_col].astype(str).str.strip() if sector_col else pd.Series("Unclassified", index=frame.index)
@@ -47,6 +105,8 @@ def _constituents():
         "Industry": industry_values,
     })
     out = out[out["Symbol"].ne("") & out["Symbol"].str.lower().ne("nan")].drop_duplicates("Symbol")
+    if len(out) < 450:
+        raise ValueError(f"Constituent response looks incomplete ({len(out)} symbols).")
     out["Ticker"] = out["Symbol"] + ".NS"
     return out.reset_index(drop=True)
 
