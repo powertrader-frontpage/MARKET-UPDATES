@@ -364,11 +364,14 @@ def _sector_strength_columns(result: pd.DataFrame, sector_tickers: dict, micro_s
         "Information Technology": "IT", "IT Services": "IT",
         "Pharmaceuticals": "Pharma", "Healthcare": "Pharma",
         "Automobile": "Auto", "Automobiles": "Auto",
+        "Automobile and Auto Components": "Auto",
         "Metals & Mining": "Metal", "Metals": "Metal",
         "Oil Gas & Consumable Fuels": "Energy", "Oil & Gas": "Energy",
         "FMCG": "FMCG", "Consumer Goods": "FMCG",
+        "Fast Moving Consumer Goods": "FMCG",
         "Real Estate": "Realty", "Financials": "Financial Services",
-        "Media": "Media", "Infrastructure": "Infrastructure",
+        "Media": "Media", "Media Entertainment & Publication": "Media",
+        "Capital Goods": "Infrastructure",
     }
     rows = []
     zone_order = {"Leading": 0, "Improving": 1, "Weakening": 2, "Lagging": 3}
@@ -380,13 +383,18 @@ def _sector_strength_columns(result: pd.DataFrame, sector_tickers: dict, micro_s
 
         # A stock can be present in more than one configured microsector.
         # Select the strongest available membership for its displayed microsector label.
-        memberships = [(name, micro[name]) for name in symbol_to_micro.get(symbol, []) if name in micro]
+        configured_memberships = symbol_to_micro.get(symbol, [])
+        memberships = [(name, micro[name]) for name in configured_memberships if name in micro]
         if memberships:
             micro_name, micro_zone = min(
                 memberships, key=lambda item: zone_order.get(item[1], 99)
             )
+        elif configured_memberships:
+            # The stock is mapped, but its group did not have enough valid price
+            # history to calculate a rotation zone. Do not mislabel it as unmapped.
+            micro_name, micro_zone = configured_memberships[0], "Insufficient Data"
         else:
-            micro_name, micro_zone = "Unavailable", "Unavailable"
+            micro_name, micro_zone = "Unmapped", "Unmapped"
 
         rows.append((sector_name, sector_zone, micro_name, micro_zone))
 
@@ -517,6 +525,8 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
                 "Weakening": "background-color: #92400e; color: #fde68a; font-weight: 700;",
                 "Lagging": "background-color: #7f1d1d; color: #fecaca; font-weight: 700;",
                 "Unavailable": "background-color: #374151; color: #9ca3af;",
+                "Insufficient Data": "background-color: #374151; color: #d1d5db;",
+                "Unmapped": "background-color: #4b5563; color: #e5e7eb;",
             }
             return colors.get(str(value), "")
 
