@@ -350,53 +350,52 @@ def _rotation_zone_lookup(sector_tickers: tuple, micro_members: tuple):
 
 
 def _sector_strength_columns(result: pd.DataFrame, sector_tickers: dict, micro_sectors: dict) -> pd.DataFrame:
+    """Attach broad-sector and microsector names with their independent rotation zones."""
     broad, micro = _rotation_zone_lookup(
         tuple(sorted(sector_tickers.items())),
         tuple((name, group, tuple(symbols)) for name, (group, symbols) in sorted(micro_sectors.items()))
     )
     symbol_to_micro = {}
-    for name, (_, symbols) in micro_sectors.items():
+    for name, (_, symbols) in sorted(micro_sectors.items()):
         for symbol in symbols:
             symbol_to_micro.setdefault(symbol.replace(".NS", ""), []).append(name)
-    group_to_broad = {
-        "Pharma": "Pharma", "Technology": "IT", "Industrials": "Infrastructure",
-        "Media & Services": "Media", "Financials": "Financial Services",
-        "Consumer": "Consumption", "Consumer Durables": "Consumption",
-        "Power": "Energy", "Auto": "Auto", "Construction": "Infrastructure",
-        "Real Estate": "Realty", "Chemicals": None, "Healthcare": "Pharma",
-        "Textiles": None, "Energy": "Energy", "Materials": "Metal",
-        "Agri": None, "Services": None, "Transport": None, "Travel": None,
-        "Defence": None, "Utilities": None, "Niche": None,
+
+    sector_aliases = {
+        "Information Technology": "IT", "IT Services": "IT",
+        "Pharmaceuticals": "Pharma", "Healthcare": "Pharma",
+        "Automobile": "Auto", "Automobiles": "Auto",
+        "Metals & Mining": "Metal", "Metals": "Metal",
+        "Oil Gas & Consumable Fuels": "Energy", "Oil & Gas": "Energy",
+        "FMCG": "FMCG", "Consumer Goods": "FMCG",
+        "Real Estate": "Realty", "Financials": "Financial Services",
+        "Media": "Media", "Infrastructure": "Infrastructure",
     }
-    values = []
+    rows = []
+    zone_order = {"Leading": 0, "Improving": 1, "Weakening": 2, "Lagging": 3}
     for _, row in result.iterrows():
         symbol = str(row.get("Symbol", "")).strip()
-        micro_names = symbol_to_micro.get(symbol, [])
-        micro_zones = [micro[name] for name in micro_names if name in micro]
-        if micro_zones:
-            # Prefer strongest available existing microsector rotation zone for shared memberships.
-            order = {"Leading": 0, "Improving": 1, "Weakening": 2, "Lagging": 3}
-            zone = sorted(micro_zones, key=lambda value: order[value])[0]
-            source = "Microsector rotation"
+        sector_name = str(row.get("Sector", "")).strip() or "Unavailable"
+        broad_key = sector_aliases.get(sector_name, sector_name)
+        sector_zone = broad.get(broad_key, "Unavailable")
+
+        # A stock can be present in more than one configured microsector.
+        # Select the strongest available membership for its displayed microsector label.
+        memberships = [(name, micro[name]) for name in symbol_to_micro.get(symbol, []) if name in micro]
+        if memberships:
+            micro_name, micro_zone = min(
+                memberships, key=lambda item: zone_order.get(item[1], 99)
+            )
         else:
-            sector = str(row.get("Sector", "")).strip()
-            sector_aliases = {
-                "Information Technology": "IT", "IT Services": "IT",
-                "Pharmaceuticals": "Pharma", "Healthcare": "Pharma",
-                "Automobile": "Auto", "Automobiles": "Auto",
-                "Metals & Mining": "Metal", "Metals": "Metal",
-                "Oil Gas & Consumable Fuels": "Energy", "Oil & Gas": "Energy",
-                "FMCG": "FMCG", "Consumer Goods": "FMCG",
-                "Real Estate": "Realty", "Financials": "Financial Services",
-                "Media": "Media", "Infrastructure": "Infrastructure",
-            }
-            zone = broad.get(sector_aliases.get(sector, sector))
-            source = "Sector rotation" if zone else "Unavailable"
-        values.append((zone or "Unavailable", source if zone else "Unavailable"))
-    result = result.copy()
-    result["Sector strength"] = [item[0] for item in values]
-    result["Strength source"] = [item[1] for item in values]
-    return result
+            micro_name, micro_zone = "Unavailable", "Unavailable"
+
+        rows.append((sector_name, sector_zone, micro_name, micro_zone))
+
+    out = result.copy()
+    out["Sector"] = [x[0] for x in rows]
+    out["Sector strength"] = [x[1] for x in rows]
+    out["Microsector"] = [x[2] for x in rows]
+    out["Microsector strength"] = [x[3] for x in rows]
+    return out
 
 
 def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
@@ -474,9 +473,8 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     if failures:
         st.caption("Some symbols did not return hourly history. Missing data is excluded, not replaced.")
 
-    # Group the watchlist by existing sector-rotation strength first:
-    # Leading → Improving → Weakening → Lagging → Unavailable.
-    # Preserve hourly signal and volume ranking within each sector-strength group.
+    # Prioritise broad-sector rotation only. Microsector strength is displayed
+    # as context and deliberately does not influence the row order.
     sector_order = {"Leading": 0, "Improving": 1, "Weakening": 2, "Lagging": 3, "Neutral": 4, "Unavailable": 5}
     signal_order = {"Strong": 0, "Emerging": 1, "Developing": 2, "Weakening": 3}
     result["_sector_rank"] = result["Sector strength"].map(sector_order).fillna(5)
@@ -496,11 +494,11 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     if view.empty:
         st.info("No stocks match the selected hourly signal categories.")
     else:
-        cols = ["Symbol", "Company", "Weekly Stage", "RS Rank (1–99)", "Sector", "Sector strength", "Strength source",
+        cols = ["Symbol", "Sector", "Microsector", "RS Rank (1–99)", "Weekly Stage",
                 "Price", "Signal", "1H Volume / Prior 20H Avg",
                 "Bull / Bear Volume", "Bullish candles (12H)", "Quiet pullbacks",
                 "Higher highs & lows", "EMA momentum", "Last completed candle"]
-        def _sector_status_style(value):
+        def _zone_style(value):
             colors = {
                 "Leading": "background-color: #14532d; color: #bbf7d0; font-weight: 700;",
                 "Improving": "background-color: #164e63; color: #a5f3fc; font-weight: 700;",
@@ -511,7 +509,16 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
             }
             return colors.get(str(value), "")
 
-        styled_view = view[cols].style.map(_sector_status_style, subset=["Sector strength"])
+        def _style_strength_names(row):
+            return [
+                _zone_style(row.get("Sector strength")) if col == "Sector" else
+                _zone_style(row.get("Microsector strength")) if col == "Microsector" else ""
+                for col in row.index
+            ]
+
+        styled_view = view[cols + ["Sector strength", "Microsector strength"]].style.apply(
+            _style_strength_names, axis=1
+        ).hide(axis="columns", subset=["Sector strength", "Microsector strength"])
         st.dataframe(styled_view, use_container_width=True, hide_index=True, height=560)
         st.download_button("Download hourly strength watchlist (CSV)", view[cols].to_csv(index=False).encode("utf-8"),
                            "nse500_1h_price_volume_strength.csv", "text/csv", key="download_hourly_strength")
