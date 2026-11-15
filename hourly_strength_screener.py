@@ -574,24 +574,35 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         if base_view_choice != "All qualifying setups":
             base_result = base_result[base_result["Hourly setup"] == base_view_choice]
         base_result = base_result[base_result["Hourly setup"].isin(["Hourly Base Forming", "Hourly Base Breakout"])]
-        base_result["_blue_priority"] = (base_result["Blue bars % (12H)"] > 60).astype(int)
+        # A minimum of 4 blue bars out of the 12 completed candles is compulsory.
+        # Colour tiers: Green 8-12, Blue 6-7, Orange 4-5. Fewer than 4 are excluded.
+        base_result = base_result[base_result["PPV bars (12H)"] + base_result["Light-blue bars (12H)"] >= 4].copy()
+        base_result["_blue_count"] = base_result["PPV bars (12H)"] + base_result["Light-blue bars (12H)"]
+        base_result["_blue_tier"] = base_result["_blue_count"].map(
+            lambda count: 0 if count >= 8 else 1 if count >= 6 else 2
+        )
         base_result["_setup_rank"] = base_result["Hourly setup"].map({"Hourly Base Breakout": 0, "Hourly Base Forming": 1})
         base_result = base_result.sort_values(
-            ["_blue_priority", "_setup_rank", "Blue bars % (12H)", "PPV bars (12H)", "Light-blue bars (12H)", "Red bars (12H)", "Blue / Red volume"],
-            ascending=[False, True, False, False, False, True, False], na_position="last"
-        ).drop(columns=["_blue_priority", "_setup_rank"])
+            ["_blue_tier", "_blue_count", "_setup_rank", "Red bars (12H)", "Blue / Red volume"],
+            ascending=[True, False, True, True, False], na_position="last"
+        ).drop(columns=["_blue_tier", "_setup_rank", "_blue_count"])
         if base_result.empty:
             st.info("No qualifying hourly bases or breakouts match the selected view and weekly stages.")
         else:
-            def _highlight_blue_majority_symbol(value, blue_pct):
-                return "color: #22c55e; font-weight: 800;" if pd.notna(blue_pct) and blue_pct > 60 else ""
+            def _blue_tier_symbol_style(row, col):
+                if col != "Symbol":
+                    return ""
+                blue_count = int(row.get("PPV bars (12H)", 0)) + int(row.get("Light-blue bars (12H)", 0))
+                if blue_count >= 8:
+                    return "color: #22c55e; font-weight: 800;"  # Green: 8-12
+                if blue_count >= 6:
+                    return "color: #3b82f6; font-weight: 800;"  # Blue: 6-7
+                if blue_count >= 4:
+                    return "color: #f59e0b; font-weight: 800;"  # Orange: 4-5
+                return ""
 
             styled_base = base_result.style.apply(
-                lambda row: [
-                    _highlight_blue_majority_symbol(row.get("Symbol"), row.get("Blue bars % (12H)"))
-                    if col == "Symbol" else ""
-                    for col in row.index
-                ],
+                lambda row: [_blue_tier_symbol_style(row, col) for col in row.index],
                 axis=1
             )
             st.dataframe(styled_base, use_container_width=True, hide_index=True, height=440)
