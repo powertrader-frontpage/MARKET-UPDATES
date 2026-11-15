@@ -412,7 +412,11 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     st.caption("NSE 500 · Completed 60-minute candles only · Yahoo Finance intraday data · Research watchlist, not a buy signal")
     st.info("This page is independent of the weekly Stage 2 screener. It looks for hourly demand and momentum, including stocks that may still be in weekly Stage 1.")
 
-    universe = _nse500_universe()
+    try:
+        universe = _nse500_universe()
+    except Exception as exc:
+        st.error("The Nifty 500 constituent list could not be fetched. The hourly scanner has stopped safely instead of crashing. Please retry shortly; the official Nifty Indices CSV and NSE API are both attempted. (" + str(exc) + ")")
+        return
 
     # Resolve the existing weekly Stage 1/Stage 2 universe BEFORE requesting
     # intraday data. This avoids downloading hourly candles for stocks that
