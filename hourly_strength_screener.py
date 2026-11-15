@@ -474,9 +474,17 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     if failures:
         st.caption("Some symbols did not return hourly history. Missing data is excluded, not replaced.")
 
-    order = {"Strong": 0, "Emerging": 1, "Developing": 2, "Weakening": 3}
-    result["_rank"] = result["Signal"].map(order).fillna(4)
-    result = result.sort_values(["_rank", "1H Volume / Prior 20H Avg", "Bull / Bear Volume"], ascending=[True, False, False]).drop(columns="_rank")
+    # Group the watchlist by existing sector-rotation strength first:
+    # Leading → Improving → Weakening → Lagging → Unavailable.
+    # Preserve hourly signal and volume ranking within each sector-strength group.
+    sector_order = {"Leading": 0, "Improving": 1, "Weakening": 2, "Lagging": 3, "Neutral": 4, "Unavailable": 5}
+    signal_order = {"Strong": 0, "Emerging": 1, "Developing": 2, "Weakening": 3}
+    result["_sector_rank"] = result["Sector strength"].map(sector_order).fillna(5)
+    result["_signal_rank"] = result["Signal"].map(signal_order).fillna(4)
+    result = result.sort_values(
+        ["_sector_rank", "_signal_rank", "1H Volume / Prior 20H Avg", "Bull / Bear Volume"],
+        ascending=[True, True, False, False]
+    ).drop(columns=["_sector_rank", "_signal_rank"])
     selected = st.multiselect("Signal categories", ["Strong", "Emerging", "Developing", "Weakening"], default=["Strong", "Emerging"], key="hourly_strength_categories")
     selected_stages = st.multiselect("Weekly Weinstein stages", eligible_stages, default=eligible_stages, format_func=lambda value: value.replace(" · ", " — "), key="hourly_strength_weekly_stages")
     view = result[result["Signal"].isin(selected) & result["Weekly Stage"].isin(selected_stages)].copy()
