@@ -350,6 +350,72 @@ def _rotation_zone_lookup(sector_tickers: tuple, micro_members: tuple):
     return broad, micro
 
 
+@st.cache_data(ttl=21600, show_spinner=False)
+def _industry_rotation_zone_lookup(industry_members: tuple):
+    """Estimate industry rotation from the median return of its available hourly-universe constituents."""
+    symbols = sorted({symbol for _, members in industry_members for symbol in members})
+    if not symbols:
+        return {}
+    tickers = [symbol if symbol.endswith(".NS") else f"{symbol}.NS" for symbol in symbols]
+    try:
+        raw = yf.download(
+            tickers + ["^CRSLDX"], period="6mo", interval="1d",
+            auto_adjust=False, group_by="ticker", threads=False,
+            progress=False, timeout=35
+        )
+    except Exception:
+        return {}
+
+    def _close(ticker):
+        try:
+            if isinstance(raw.columns, pd.MultiIndex):
+                if ticker in raw.columns.get_level_values(0):
+                    frame = raw[ticker]
+                elif ticker in raw.columns.get_level_values(1):
+                    frame = raw.xs(ticker, axis=1, level=1)
+                else:
+                    return pd.Series(dtype=float)
+            else:
+                frame = raw
+            values = pd.to_numeric(frame["Close"], errors="coerce").dropna()
+            idx = pd.DatetimeIndex(pd.to_datetime(values.index))
+            if idx.tz is not None:
+                idx = idx.tz_localize(None)
+            values.index = idx.normalize()
+            return values[~values.index.duplicated(keep="last")].sort_index()
+        except Exception:
+            return pd.Series(dtype=float)
+
+    benchmark = _close("^CRSLDX")
+    if len(benchmark) < 22:
+        return {}
+    benchmark_1m = (float(benchmark.iloc[-1]) / float(benchmark.iloc[-22]) - 1) * 100
+    benchmark_3m = (float(benchmark.iloc[-1]) / float(benchmark.iloc[-min(64, len(benchmark))]) - 1) * 100 if len(benchmark) >= 64 else np.nan
+
+    zones = {}
+    for industry, members in industry_members:
+        returns_1m, returns_3m = [], []
+        for symbol in members:
+            ticker = symbol if symbol.endswith(".NS") else f"{symbol}.NS"
+            close = _close(ticker)
+            if len(close) < 22:
+                continue
+            returns_1m.append((float(close.iloc[-1]) / float(close.iloc[-22]) - 1) * 100)
+            if len(close) >= 64:
+                returns_3m.append((float(close.iloc[-1]) / float(close.iloc[-64]) - 1) * 100)
+        # Require a minimally useful cross-section; never infer an industry zone from one or two names.
+        if len(returns_1m) < 3 or len(returns_3m) < 3 or pd.isna(benchmark_3m):
+            continue
+        relative_1m = float(np.median(returns_1m)) - benchmark_1m
+        relative_3m = float(np.median(returns_3m)) - benchmark_3m
+        zones[industry] = (
+            "Leading" if relative_3m >= 0 and relative_1m >= 0 else
+            "Weakening" if relative_3m >= 0 else
+            "Improving" if relative_1m >= 0 else "Lagging"
+        )
+    return zones
+
+
 def _sector_strength_columns(result: pd.DataFrame, sector_tickers: dict, micro_sectors: dict) -> pd.DataFrame:
     """Attach broad-sector and microsector names with their independent rotation zones."""
     broad, micro = _rotation_zone_lookup(
@@ -376,11 +442,21 @@ def _sector_strength_columns(result: pd.DataFrame, sector_tickers: dict, micro_s
     }
     rows = []
     zone_order = {"Leading": 0, "Improving": 1, "Weakening": 2, "Lagging": 3}
+    industry_members = tuple(
+        (str(industry), tuple(sorted(group["Symbol"].dropna().astype(str).unique())))
+        for industry, group in result.groupby("Sector")
+        if str(industry).strip() and sector_aliases.get(str(industry).strip(), str(industry).strip()) not in broad
+    )
+    industry_zones = _industry_rotation_zone_lookup(industry_members)
     for _, row in result.iterrows():
         symbol = str(row.get("Symbol", "")).strip()
         sector_name = str(row.get("Sector", "")).strip() or "Unavailable"
         broad_key = sector_aliases.get(sector_name, sector_name)
-        sector_zone = broad.get(broad_key, "Unavailable")
+        sector_zone = broad.get(broad_key)
+        if sector_zone is None:
+            # For industries without a dedicated tracked index, use the median
+            # performance of their available hourly-universe constituents.
+            sector_zone = industry_zones.get(sector_name, "Insufficient Data")
 
         # A stock can be present in more than one configured microsector.
         # Select the strongest available membership for its displayed microsector label.
@@ -628,8 +704,9 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     sector_summary = sector_summary.sort_values(["Strong", "Emerging", "Stocks"], ascending=False)
     st.caption(
         "Stocks = eligible hourly-screened stocks in each sector. Strong and Emerging count the corresponding hourly signals. "
-        "Sector strength is the existing rotation-zone classification; Unavailable means no matching, valid sector-zone data is available, "
-        "not that the sector is weak. This context does not filter stocks or change hourly stock rankings."
+        "Sector strength uses tracked sector indices where available. Other industry groups use the median 1M/3M return "
+        "of their available hourly-universe constituents versus NIFTY 500; at least three constituents with sufficient history are required. "
+        "Insufficient Data means that minimum was not met. This context does not filter stocks or change hourly stock rankings."
     )
 
     def _style_sector_participation(row):
