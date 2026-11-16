@@ -626,6 +626,19 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         Sector_strength=("Sector strength", "first"),
     ).reset_index().rename(columns={"Sector_strength": "Sector strength"})
     sector_summary = sector_summary.sort_values(["Strong", "Emerging", "Stocks"], ascending=False)
-    st.caption("Sector strength is taken from the terminal's existing Sector Rotation or Micro Sector Rotation zone classifications. It is context only and does not filter stocks or change hourly stock rankings.")
+    st.caption(
+        "Stocks = eligible hourly-screened stocks in each sector. Strong and Emerging count the corresponding hourly signals. "
+        "Sector strength is the existing rotation-zone classification; Unavailable means no matching, valid sector-zone data is available, "
+        "not that the sector is weak. This context does not filter stocks or change hourly stock rankings."
+    )
+
+    def _style_sector_participation(row):
+        zone_style = _zone_style(row.get("Sector strength", "Unavailable"))
+        return [
+            zone_style if column in ("Sector", "Sector strength") else ""
+            for column in row.index
+        ]
+
     with st.expander("Sector participation in hourly strength", expanded=False):
-        st.dataframe(sector_summary, use_container_width=True, hide_index=True)
+        styled_sector_summary = sector_summary.style.apply(_style_sector_participation, axis=1)
+        st.dataframe(styled_sector_summary, use_container_width=True, hide_index=True)
