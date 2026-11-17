@@ -2773,7 +2773,7 @@ if active_page == "Main Dashboard":
                     st.markdown('<div style="background:rgba(80,120,200,.07);border-radius:24px;padding:18px;">' + "".join(pills) + '</div>', unsafe_allow_html=True)
                     with st.expander("View all current rotation zones", expanded=False):
                         current_zones = sorted(rotation_rows, key=lambda x: (zone_order.get(x["Current zone"], 4), -float(x.get("Relative return vs NIFTY (pp)", -999))))
-                        current_zones = pd.DataFrame(current_zones)[["Sector", "Zone entry date", "Days in current zone", "Previous zone", "Current zone", "Relative return vs NIFTY (pp)", "Last source bar"]]
+                        current_zones = pd.DataFrame(current_zones)[["Sector", "Zone entry date", "Days in current zone", "Previous zone", "Current zone", "Signal", "Relative return vs NIFTY (pp)", "Last source bar"]]
                         st.dataframe(_style_rotation_table(pd.DataFrame(current_zones), zone_columns=("Previous zone", "Current zone"), transition_columns=("Signal",)), use_container_width=True, hide_index=True)
                 else:
                     st.warning("Not enough overlapping daily sector and NIFTY data to calculate rotation zones. No values have been substituted.")
