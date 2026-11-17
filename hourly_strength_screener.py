@@ -182,8 +182,19 @@ def _pocket_pivot_labels(frame: pd.DataFrame) -> pd.Series:
         green_price = closes.iloc[i] > opens.iloc[i]
         red_price = closes.iloc[i] < opens.iloc[i]
         if up_hour:
-            prior_down = volumes.iloc[:i][closes.iloc[:i].diff() < 0].dropna().tail(10)
-            is_ppv = len(prior_down) == 10 and volumes.iloc[i] > prior_down.max()
+            # TradingView's published definition uses the prior 10 chart bars,
+            # then compares the current up-bar volume with the highest down-bar
+            # volume found inside that 10-bar window (not the last 10 down-bars).
+            window_start = max(0, i - 10)
+            prior_window_closes = closes.iloc[window_start:i]
+            prior_window_volumes = volumes.iloc[window_start:i]
+            prior_window_down = prior_window_volumes[
+                closes.diff().iloc[window_start:i] < 0
+            ].dropna()
+            is_ppv = (
+                len(prior_window_down) > 0
+                and volumes.iloc[i] > prior_window_down.max()
+            )
             if is_ppv:
                 labels.append("Dark blue · PPV")
             elif pd.notna(volume_sma50.iloc[i]) and volumes.iloc[i] > volume_sma50.iloc[i]:
@@ -207,7 +218,7 @@ def _pocket_pivot_labels(frame: pd.DataFrame) -> pd.Series:
 
 def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
     """Find a compact hourly base or a breakout from the immediately preceding base."""
-    # Keep enough history for the 50-hour volume average and 10 prior down-hours.
+    # Keep enough history for the 50-hour volume average and prior 10-bar PPV window.
     frame = frame.sort_values("Datetime").drop_duplicates("Datetime").tail(120).copy()
     for col in ("High", "Low", "Close", "Volume"):
         frame[col] = pd.to_numeric(frame[col], errors="coerce")
