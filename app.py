@@ -2690,7 +2690,7 @@ if active_page == "Main Dashboard":
                         return ((sample["sector"].iloc[-1] / sample["sector"].iloc[0] - 1) -
                                 (sample["nifty"].iloc[-1] / sample["nifty"].iloc[0] - 1)) * 100
                     sector_rows.append({
-                        "Sector": sector, "Ticker": ticker, "Period return %": perf,
+                        "Sector": sector, "Zone entry date": zone_entry_date, "Days in current zone": zone_days, "Current zone": current_zone, "Ticker": ticker, "Period return %": perf,
                         "NIFTY return %": base_perf, "Relative return vs NIFTY (pp)": relative_pp,
                         "1D vs NIFTY (pp)": _relative_window(2),
                         "1W vs NIFTY (pp)": _relative_window(6),
@@ -2773,6 +2773,7 @@ if active_page == "Main Dashboard":
                     st.markdown('<div style="background:rgba(80,120,200,.07);border-radius:24px;padding:18px;">' + "".join(pills) + '</div>', unsafe_allow_html=True)
                     with st.expander("View all current rotation zones", expanded=False):
                         current_zones = sorted(rotation_rows, key=lambda x: (zone_order.get(x["Current zone"], 4), -float(x.get("Relative return vs NIFTY (pp)", -999))))
+                        current_zones = pd.DataFrame(current_zones)[["Sector", "Zone entry date", "Days in current zone", "Previous zone", "Current zone", "Relative return vs NIFTY (pp)", "Last source bar"]]
                         st.dataframe(_style_rotation_table(pd.DataFrame(current_zones), zone_columns=("Previous zone", "Current zone"), transition_columns=("Signal",)), use_container_width=True, hide_index=True)
                 else:
                     st.warning("Not enough overlapping daily sector and NIFTY data to calculate rotation zones. No values have been substituted.")
@@ -2899,7 +2900,7 @@ if active_page == "Main Dashboard":
                         change = f"{prior_stock_zone} → {current_stock_zone}" if prior_stock_zone and current_stock_zone and prior_stock_zone != current_stock_zone else "No zone change"
                         if prior_stock_zone and current_stock_zone and prior_stock_zone != current_stock_zone:
                             constituent_transitions.append({"Stock":symbol.replace(".NS",""),"Transition":change})
-                        constituent_rows.append({"Stock":symbol.replace(".NS",""),"Rotation zone":current_stock_zone,"Days in current zone":stock_zone_days if stock_zone_days else "Insufficient history","Zone entry date":stock_zone_entry or "—","Zone change (5 sessions)":change,"1D %":(last_close/previous_close-1)*100 if previous_close else np.nan,"1M %":(last_close/float(close.iloc[-min(22,len(close))])-1)*100,"3M %":(last_close/float(close.iloc[-min(64,len(close))])-1)*100,"1M vs NIFTY 500 (pp)":rel1_now,"3M vs NIFTY 500 (pp)":rel3_now,"Above 50 EMA":bool(last_close>ema50) if pd.notna(ema50) else "Insufficient history"})
+                        constituent_rows.append({"Stock":symbol.replace(".NS",""),"Zone entry date":stock_zone_entry or "—","Days in current zone":stock_zone_days if stock_zone_days else "Insufficient history","Rotation zone":current_stock_zone,"Zone change (5 sessions)":change,"1D %":(last_close/previous_close-1)*100 if previous_close else np.nan,"1M %":(last_close/float(close.iloc[-min(22,len(close))])-1)*100,"3M %":(last_close/float(close.iloc[-min(64,len(close))])-1)*100,"1M vs NIFTY 500 (pp)":rel1_now,"3M vs NIFTY 500 (pp)":rel3_now,"Above 50 EMA":bool(last_close>ema50) if pd.notna(ema50) else "Insufficient history"})
                     if constituent_rows:
                         constituent_df = pd.DataFrame(constituent_rows)
                         st.caption(f"{sector_choice} · {len(constituent_df)} of {len(sector_symbols)} mapped constituents with usable price history. Stock zones compare relative 1M and 3M returns against NIFTY 500.")
@@ -3637,7 +3638,7 @@ if active_page == "Main Dashboard":
                             stock_transition_rows.append({"Stock":symbol.replace(".NS",""),"Transition":transition})
                         rel1_value = (last / float(close.iloc[-min(22,len(close))]) - 1) * 100 - (float(bench.iloc[-1]) / float(bench.iloc[-min(22,len(bench))]) - 1) * 100 if len(bench) >= 22 else np.nan
                         rel3_value = (last / float(close.iloc[-min(64,len(close))]) - 1) * 100 - (float(bench.iloc[-1]) / float(bench.iloc[-min(64,len(bench))]) - 1) * 100 if len(bench) >= 64 else np.nan
-                        drill_rows.append({"Stock":symbol.replace(".NS",""),"Rotation zone":current_zone,"Days in current zone":stock_zone_days if stock_zone_days else "Insufficient history","Zone entry date":stock_zone_entry or "—","Zone change (5 sessions)":transition,"Latest close":last,"1D %":(last/prev-1)*100 if prev else np.nan,"1M %":(last/close.iloc[-min(22,len(close))]-1)*100,"3M %":(last/close.iloc[-min(64,len(close))]-1)*100,"1M vs NIFTY 500 (pp)":rel1_value,"3M vs NIFTY 500 (pp)":rel3_value,"Above 50 EMA":bool(last>e50) if pd.notna(e50) else "Insufficient history"})
+                        drill_rows.append({"Stock":symbol.replace(".NS",""),"Zone entry date":stock_zone_entry or "—","Days in current zone":stock_zone_days if stock_zone_days else "Insufficient history","Rotation zone":current_zone,"Zone change (5 sessions)":transition,"Latest close":last,"1D %":(last/prev-1)*100 if prev else np.nan,"1M %":(last/close.iloc[-min(22,len(close))]-1)*100,"3M %":(last/close.iloc[-min(64,len(close))]-1)*100,"1M vs NIFTY 500 (pp)":rel1_value,"3M vs NIFTY 500 (pp)":rel3_value,"Above 50 EMA":bool(last>e50) if pd.notna(e50) else "Insufficient history"})
                     if drill_rows:
                         drill_df = pd.DataFrame(drill_rows)
                         st.markdown("**Constituent stock rotation** · each stock is classified against NIFTY 500 using relative 1M and 3M performance.")
