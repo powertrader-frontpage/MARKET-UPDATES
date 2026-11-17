@@ -663,7 +663,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         base_result = base_result[base_result["Weekly Stage"].isin(eligible_stages)].copy()
         base_view_choice = st.radio(
             "Hourly base view", ["Hourly Base Forming", "Hourly Base Breakout", "All qualifying setups"],
-            horizontal=True, key="hourly_base_view"
+            index=2, horizontal=True, key="hourly_base_view_all_default"
         )
         if base_view_choice != "All qualifying setups":
             base_result = base_result[base_result["Hourly setup"] == base_view_choice]
