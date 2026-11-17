@@ -637,6 +637,11 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
     st.subheader("Hourly Base Formation & Pocket Pivot Scanner")
     st.caption("12 completed 1-hour candles · Dark blue = PPV · Light blue = up-hour above 50-hour volume SMA · Red = down-hour above 50-hour volume SMA · Orange = volume below 1/5 of 50-hour SMA · Grey split by green/red/neutral price-candle body")
     st.info("PPV: an up-hour whose volume exceeds the highest down-hour volume within the previous 10 chart bars. Light blue: other up-hours above the 50-hour volume SMA. Red: down-hours above the 50-hour volume SMA. Orange: volume below 1/5 of the 50-hour volume SMA. Remaining grey bars are split by price-candle body. Only dark-blue PPV and light-blue high-up bars count toward total blue qualification.")
+    # Reuse the same sector-rotation strength already calculated for the full hourly universe.
+    sector_strength_map = (
+        result.groupby("Sector")["Sector strength"].first().to_dict()
+        if "Sector strength" in result.columns else {}
+    )
     base_rows = []
     for ticker, group in completed.groupby("Ticker", sort=False):
         setup_metrics = _base_setup_for_symbol(group)
@@ -647,6 +652,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
         base_rows.append({
             "Symbol": symbol,
             "Sector": meta.get("Sector", "Unclassified"),
+            "Sector strength": sector_strength_map.get(meta.get("Sector", "Unclassified"), "Unavailable"),
             "Weekly Stage": stage_map.get(symbol, "Unavailable"),
             "RS Rank (1–99)": rs_map.get(symbol, np.nan),
             **setup_metrics,
@@ -678,6 +684,8 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
             st.info("No qualifying hourly bases or breakouts match the selected view and weekly stages.")
         else:
             def _blue_tier_symbol_style(row, col):
+                if col == "Sector":
+                    return _zone_style(row.get("Sector strength", "Unavailable"))
                 if col != "Symbol":
                     return ""
                 blue_count = int(row.get("PPV bars (12H)", 0)) + int(row.get("Light-blue bars (12H)", 0))
@@ -692,7 +700,7 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
             styled_base = base_result.style.apply(
                 lambda row: [_blue_tier_symbol_style(row, col) for col in row.index],
                 axis=1
-            )
+            ).hide(axis="columns", subset=["Sector strength"])
             st.dataframe(styled_base, use_container_width=True, hide_index=True, height=440)
             st.download_button(
                 "Download hourly base & PPV watchlist (CSV)",
