@@ -247,12 +247,9 @@ def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
     base_high = float(base["High"].max())
     base_low = float(base["Low"].min())
     base_range_pct = ((base_high / base_low) - 1) * 100 if base_low > 0 else np.nan
-    first_half_vol = float(base["Volume"].iloc[:6].mean())
-    second_half_vol = float(base["Volume"].iloc[6:].mean())
-    contraction_ratio = second_half_vol / first_half_vol if first_half_vol > 0 else np.nan
-    compact_base = pd.notna(base_range_pct) and base_range_pct <= 8.0
-    volume_contracting = pd.notna(contraction_ratio) and contraction_ratio <= 1.0
 
+    # Base formation is determined by 12-hour blue/red participation only.
+    # Base-range and 6-vs-6 volume-contraction filters are intentionally not applied.
     # A breakout must close above the preceding 12-hour range on expanded volume.
     prior_base = frame.iloc[-13:-1].copy().reset_index(drop=True)
     prior_high = float(prior_base["High"].max())
@@ -263,19 +260,16 @@ def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
     prior_red_count = int((prior_labels == "Red").sum())
     prior_blue_volume = float(prior_base.loc[prior_labels.isin(["Dark blue · PPV", "Light blue"]), "Volume"].sum())
     prior_red_volume = float(prior_base.loc[prior_labels == "Red", "Volume"].sum())
-    prior_range_pct = ((float(prior_base["High"].max()) / float(prior_base["Low"].min())) - 1) * 100 if float(prior_base["Low"].min()) > 0 else np.nan
-    prior_volume_ratio = float(prior_base["Volume"].iloc[6:].mean() / prior_base["Volume"].iloc[:6].mean()) if prior_base["Volume"].iloc[:6].mean() > 0 else np.nan
     prior_base_valid = (
-        pd.notna(prior_range_pct) and prior_range_pct <= 8.0
-        and pd.notna(prior_volume_ratio) and prior_volume_ratio <= 1.0
-        and prior_blue_count > prior_red_count and prior_blue_volume > prior_red_volume
+        prior_blue_count > prior_red_count
+        and prior_blue_volume > prior_red_volume
     )
     breakout = bool(prior_base_valid and latest["Close"] > prior_high and pd.notna(prior_10_avg)
                     and prior_10_avg > 0 and latest["Volume"] >= 1.3 * prior_10_avg)
 
     if breakout:
         setup = "Hourly Base Breakout"
-    elif compact_base and volume_contracting and participation_ok:
+    elif participation_ok:
         setup = "Hourly Base Forming"
     else:
         setup = "No qualifying base"
@@ -293,7 +287,6 @@ def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
         "Blue bars % (12H)": round(blue_count / 12 * 100, 1),
         "Blue / Red volume": round(blue_volume / red_volume, 2) if red_volume > 0 else (np.inf if blue_volume > 0 else np.nan),
         "Base range %": round(base_range_pct, 2) if pd.notna(base_range_pct) else np.nan,
-        "Volume contraction ratio": round(contraction_ratio, 2) if pd.notna(contraction_ratio) else np.nan,
         "Latest volume bar": latest_label,
         "Last completed candle": latest["Datetime"].strftime("%d %b %H:%M"),
     }
