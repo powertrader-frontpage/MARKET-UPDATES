@@ -42,6 +42,28 @@ def _rotation_zone_cell_css(value):
     background, foreground = ROTATION_ZONE_CELL_COLORS[zone]
     return f"background-color: {background}; color: {foreground}; font-weight: 700;"
 
+def _zone_streak_details(zone_series):
+    """Return consecutive completed sessions and entry date for the latest valid zone."""
+    if zone_series is None:
+        return 0, None
+    series = pd.Series(zone_series).dropna()
+    series = series[series.astype(str).isin(["Leading", "Improving", "Weakening", "Lagging"])]
+    if series.empty:
+        return 0, None
+    current = str(series.iloc[-1])
+    streak = 0
+    for value in reversed(series.astype(str).tolist()):
+        if value != current:
+            break
+        streak += 1
+    entry_index = series.index[-streak]
+    try:
+        entry_date = pd.to_datetime(entry_index).strftime("%d %b %Y")
+    except Exception:
+        entry_date = str(entry_index)
+    return streak, entry_date
+
+
 def _style_rotation_table(frame, zone_columns=(), transition_columns=()):
     """Apply consistent positive/negative colors to rotation and confirmation data."""
     if not isinstance(frame, pd.DataFrame) or frame.empty:
@@ -2644,10 +2666,16 @@ if active_page == "Main Dashboard":
                             return "Improving"
                         return "Lagging"
         
+                    zone_history = pd.Series(
+                        [_rotation_zone(pos) for pos in range(len(aligned))],
+                        index=aligned.index,
+                        name="Zone",
+                    )
                     cur_pos = len(aligned) - 1
                     prev_pos = max(0, cur_pos - 5)
                     current_zone = _rotation_zone(cur_pos)
                     previous_zone = _rotation_zone(prev_pos)
+                    zone_days, zone_entry_date = _zone_streak_details(zone_history)
                     recent = aligned.iloc[-min(21, len(aligned)):]
                     perf = (recent["sector"].iloc[-1] / recent["sector"].iloc[0] - 1) * 100
                     base_perf = (recent["nifty"].iloc[-1] / recent["nifty"].iloc[0] - 1) * 100
@@ -2678,7 +2706,7 @@ if active_page == "Main Dashboard":
                         "Last source bar": last_date
                     })
                     if current_zone:
-                        rotation_rows.append({"Sector": sector, "Previous zone": previous_zone or current_zone, "Current zone": current_zone, "Relative return vs NIFTY (pp)": relative_pp, "Last source bar": last_date})
+                        rotation_rows.append({"Sector": sector, "Previous zone": previous_zone or current_zone, "Current zone": current_zone, "Days in current zone": zone_days, "Zone entry date": zone_entry_date, "Relative return vs NIFTY (pp)": relative_pp, "Last source bar": last_date})
         
                 if sector_rows:
                     sector_board = pd.DataFrame(sector_rows)
@@ -3067,6 +3095,18 @@ if active_page == "Main Dashboard":
                             stock_aligned_export = pd.concat([close.rename("stock"), bench.rename("bench")], axis=1).dropna() if not bench.empty else pd.DataFrame()
                             rel1_export = ((stock_aligned_export["stock"].iloc[-1] / stock_aligned_export["stock"].iloc[-min(22, len(stock_aligned_export))] - 1) - (stock_aligned_export["bench"].iloc[-1] / stock_aligned_export["bench"].iloc[-min(22, len(stock_aligned_export))] - 1)) * 100 if len(stock_aligned_export) >= 22 else np.nan
                             rel3_export = ((stock_aligned_export["stock"].iloc[-1] / stock_aligned_export["stock"].iloc[-min(64, len(stock_aligned_export))] - 1) - (stock_aligned_export["bench"].iloc[-1] / stock_aligned_export["bench"].iloc[-min(64, len(stock_aligned_export))] - 1)) * 100 if len(stock_aligned_export) >= 64 else np.nan
+                            stock_zone_history = pd.Series(index=stock_aligned_export.index, dtype="object")
+                            if len(stock_aligned_export) >= 64:
+                                stock_rel1 = (stock_aligned_export["stock"] / stock_aligned_export["stock"].shift(21) - 1) - (stock_aligned_export["bench"] / stock_aligned_export["bench"].shift(21) - 1)
+                                stock_rel3 = (stock_aligned_export["stock"] / stock_aligned_export["stock"].shift(63) - 1) - (stock_aligned_export["bench"] / stock_aligned_export["bench"].shift(63) - 1)
+                                stock_zone_history = pd.Series(
+                                    np.select(
+                                        [(stock_rel3 >= 0) & (stock_rel1 >= 0), (stock_rel3 >= 0) & (stock_rel1 < 0), (stock_rel3 < 0) & (stock_rel1 >= 0)],
+                                        ["Leading", "Weakening", "Improving"], default="Lagging"
+                                    ),
+                                    index=stock_aligned_export.index,
+                                ).where(stock_rel1.notna() & stock_rel3.notna())
+                            stock_zone_days, stock_zone_entry = _zone_streak_details(stock_zone_history)
                             micro_stock_export_rows.append({
                                 "Micro sector": micro_name, "Group": micro_group, "Stock": symbol.replace(".NS", ""),
                                 "Latest close": last, "1D %": ret1d, "1W %": ret1w, "1M %": ret1,
@@ -3079,6 +3119,8 @@ if active_page == "Main Dashboard":
                                     "Lagging" if pd.notna(rel1_export) and pd.notna(rel3_export) else
                                     "Insufficient data"
                                 ),
+                                "Days in current zone": stock_zone_days,
+                                "Zone entry date": stock_zone_entry,
                                 "Above 50 EMA": bool(last > ema50.iloc[-1]) if pd.notna(ema50.iloc[-1]) else None,
                                 "Daily 200 EMA distance (%)": daily_200_gap,
                                 "Daily 200 EMA signal": daily_200_signal,
@@ -3126,6 +3168,24 @@ if active_page == "Main Dashboard":
                         rising = pd.notna(row["1M vs NIFTY 500 (pp)"]) and row["1M vs NIFTY 500 (pp)"] >= 0
                         return "Leading" if ahead and rising else "Weakening" if ahead else "Improving" if rising else "Lagging"
                     micro_df["Zone"] = micro_df.apply(_micro_zone, axis=1)
+                    micro_zone_durations = {}
+                    for micro_name, history in micro_histories.items():
+                        aligned_micro = pd.concat([history.rename("micro"), bench.rename("bench")], axis=1).dropna()
+                        if len(aligned_micro) >= 64:
+                            rel1_hist = (aligned_micro["micro"] / aligned_micro["micro"].shift(21) - 1) - (aligned_micro["bench"] / aligned_micro["bench"].shift(21) - 1)
+                            rel3_hist = (aligned_micro["micro"] / aligned_micro["micro"].shift(63) - 1) - (aligned_micro["bench"] / aligned_micro["bench"].shift(63) - 1)
+                            hist_zones = pd.Series(
+                                np.select(
+                                    [(rel3_hist >= 0) & (rel1_hist >= 0), (rel3_hist >= 0) & (rel1_hist < 0), (rel3_hist < 0) & (rel1_hist >= 0)],
+                                    ["Leading", "Weakening", "Improving"], default="Lagging"
+                                ),
+                                index=aligned_micro.index,
+                            ).where(rel1_hist.notna() & rel3_hist.notna())
+                            micro_zone_durations[micro_name] = _zone_streak_details(hist_zones)
+                        else:
+                            micro_zone_durations[micro_name] = (0, None)
+                    micro_df["Days in current zone"] = micro_df["Micro sector"].map(lambda name: micro_zone_durations.get(name, (0, None))[0])
+                    micro_df["Zone entry date"] = micro_df["Micro sector"].map(lambda name: micro_zone_durations.get(name, (0, None))[1])
 
                     # Focused watchlist: NSE 500 Stage 2 stocks in B1/B2 bases,
                     # belonging to micro-sectors currently classified as Leading.
