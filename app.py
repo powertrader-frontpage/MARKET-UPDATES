@@ -3208,7 +3208,7 @@ if active_page == "Main Dashboard":
                     ):
                         micro_membership = micro_membership[
                             micro_membership["Micro sector"].astype(str).isin(leading_micro_names)
-                        ][["Micro sector", "Group", "Stock", "Stock Rotation Zone", "1M vs NIFTY 500 (pp)", "3M vs NIFTY 500 (pp)"]].drop_duplicates()
+                        ][["Micro sector", "Group", "Stock", "Stock Rotation Zone", "Days in current zone", "Zone entry date", "1M vs NIFTY 500 (pp)", "3M vs NIFTY 500 (pp)"]].drop_duplicates()
                         leading_stage2_bases = nse_stage_results[
                             (nse_stage_results["Stage"] == "Stage 2 · Uptrend")
                             & (nse_stage_results["Base Setup"].isin([
@@ -3224,7 +3224,7 @@ if active_page == "Main Dashboard":
                             )
                             # Put the fastest decision-making fields first for narrow screens.
                             watch_cols = [
-                                "Micro sector", "Symbol", "Base Setup", "Stock Rotation Zone",
+                                "Micro sector", "Symbol", "Zone entry date", "Days in current zone", "Base Setup", "Stock Rotation Zone",
                                 "RS Rank", "Price", "1M vs NIFTY 500 (pp)", "3M vs NIFTY 500 (pp)",
                                 "Company", "Group", "Stage", "Gap vs 30W %",
                                 "30W Slope %", "4W Return %", "12W Return %",
@@ -3514,7 +3514,7 @@ if active_page == "Main Dashboard":
                     st.subheader("All micro sectors · current rotation status")
                     zone_filter = st.selectbox("Filter micro sectors by rotation zone", ["All zones", "Leading", "Improving", "Weakening", "Lagging"], key="micro_zone_filter")
                     zone_view = micro_df if zone_filter == "All zones" else micro_df[micro_df["Zone"] == zone_filter]
-                    display_cols = ["Micro sector", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Weekly positive breadth %", "Weekly strong breadth %", "Above 20 DMA %", "Above 50 DMA %", "20 DMA breadth change (pp)", "50 DMA breadth change (pp)", "Avg. distance from Weekly 200 EMA (%)", "Stocks in preferred 3–8% zone (%)", "Stocks above Weekly 200 EMA (%)", "Weekly 200 EMA status", "Days in current zone", "Zone entry date", "Stocks available"]
+                    display_cols = ["Micro sector", "Zone entry date", "Days in current zone", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Weekly positive breadth %", "Weekly strong breadth %", "Above 20 DMA %", "Above 50 DMA %", "20 DMA breadth change (pp)", "50 DMA breadth change (pp)", "Avg. distance from Weekly 200 EMA (%)", "Stocks in preferred 3–8% zone (%)", "Stocks above Weekly 200 EMA (%)", "Weekly 200 EMA status", "Stocks available"]
                     st.dataframe(_style_rotation_table(zone_view[display_cols].sort_values("Score", ascending=False), zone_columns=("Zone",)), use_container_width=True, hide_index=True)
                     st.subheader("Visual ranking · micro-sectors with improving breadth")
                     micro_breadth_rank = micro_df.copy()
