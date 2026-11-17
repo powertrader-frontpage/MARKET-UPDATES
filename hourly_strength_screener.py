@@ -207,6 +207,8 @@ def _pocket_pivot_labels(frame: pd.DataFrame) -> pd.Series:
                 labels.append("Grey · Neutral")
         elif down_hour and pd.notna(volume_sma50.iloc[i]) and volumes.iloc[i] > volume_sma50.iloc[i]:
             labels.append("Red")
+        elif pd.notna(volume_sma50.iloc[i]) and volumes.iloc[i] < (volume_sma50.iloc[i] / 5):
+            labels.append("Orange · Dry")
         elif green_price:
             labels.append("Grey · Green price")
         elif red_price:
@@ -237,6 +239,7 @@ def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
     grey_green_count = int((base_labels == "Grey · Green price").sum())
     grey_red_count = int((base_labels == "Grey · Red price").sum())
     grey_neutral_count = int((base_labels == "Grey · Neutral").sum())
+    dry_count = int((base_labels == "Orange · Dry").sum())
     blue_volume = float(base.loc[base_labels.isin(["Dark blue · PPV", "Light blue"]), "Volume"].sum())
     red_volume = float(base.loc[base_labels == "Red", "Volume"].sum())
     participation_ok = blue_count > red_count and blue_volume > red_volume
@@ -285,6 +288,7 @@ def _base_setup_for_symbol(frame: pd.DataFrame) -> dict | None:
         "Grey · Green price (12H)": grey_green_count,
         "Grey · Red price (12H)": grey_red_count,
         "Grey · Neutral (12H)": grey_neutral_count,
+        "Dry bars (12H)": dry_count,
         "Red bars (12H)": red_count,
         "Blue bars % (12H)": round(blue_count / 12 * 100, 1),
         "Blue / Red volume": round(blue_volume / red_volume, 2) if red_volume > 0 else (np.inf if blue_volume > 0 else np.nan),
@@ -638,8 +642,8 @@ def render_hourly_strength_screener(sector_tickers: dict, micro_sectors: dict):
 
     st.divider()
     st.subheader("Hourly Base Formation & Pocket Pivot Scanner")
-    st.caption("12 completed 1-hour candles · Dark blue = PPV · Light blue = up-hour above 50-hour volume SMA · Red = down-hour above 50-hour volume SMA · Grey split by green/red/neutral price-candle body")
-    st.info("PPV: an up-hour whose volume exceeds the highest volume of the previous 10 down-hours. Light blue: other up-hours above the 50-hour volume SMA. Red: down-hours above the 50-hour volume SMA. Remaining grey volume bars are split into Grey · Green price and Grey · Red price using candle close versus open; unchanged-body candles are Grey · Neutral. Grey subtypes remain non-actionable for the blue-versus-red participation test.")
+    st.caption("12 completed 1-hour candles · Dark blue = PPV · Light blue = up-hour above 50-hour volume SMA · Red = down-hour above 50-hour volume SMA · Orange = volume below 1/5 of 50-hour SMA · Grey split by green/red/neutral price-candle body")
+    st.info("PPV: an up-hour whose volume exceeds the highest down-hour volume within the previous 10 chart bars. Light blue: other up-hours above the 50-hour volume SMA. Red: down-hours above the 50-hour volume SMA. Orange: volume below 1/5 of the 50-hour volume SMA. Remaining grey bars are split by price-candle body. Only dark-blue PPV and light-blue high-up bars count toward total blue qualification.")
     base_rows = []
     for ticker, group in completed.groupby("Ticker", sort=False):
         setup_metrics = _base_setup_for_symbol(group)
