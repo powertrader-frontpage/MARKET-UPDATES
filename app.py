@@ -2886,6 +2886,11 @@ if active_page == "Main Dashboard":
                             return "Leading" if rel3 >= 0 and rel1 >= 0 else "Weakening" if rel3 >= 0 else "Improving" if rel1 >= 0 else "Lagging"
                         current_stock_zone = _stock_rotation_zone(len(aligned_stock)-1)
                         prior_stock_zone = _stock_rotation_zone(len(aligned_stock)-6) if len(aligned_stock) >= 27 else None
+                        stock_zone_history = pd.Series(
+                            [_stock_rotation_zone(pos) for pos in range(len(aligned_stock))],
+                            index=aligned_stock.index,
+                        ) if len(aligned_stock) >= 64 else pd.Series(dtype="object")
+                        stock_zone_days, stock_zone_entry = _zone_streak_details(stock_zone_history)
                         last_close = float(close.iloc[-1])
                         previous_close = float(close.iloc[-2])
                         ema50 = close.ewm(span=50, adjust=False, min_periods=50).mean().iloc[-1]
@@ -2894,7 +2899,7 @@ if active_page == "Main Dashboard":
                         change = f"{prior_stock_zone} → {current_stock_zone}" if prior_stock_zone and current_stock_zone and prior_stock_zone != current_stock_zone else "No zone change"
                         if prior_stock_zone and current_stock_zone and prior_stock_zone != current_stock_zone:
                             constituent_transitions.append({"Stock":symbol.replace(".NS",""),"Transition":change})
-                        constituent_rows.append({"Stock":symbol.replace(".NS",""),"Rotation zone":current_stock_zone,"Zone change (5 sessions)":change,"1D %":(last_close/previous_close-1)*100 if previous_close else np.nan,"1M %":(last_close/float(close.iloc[-min(22,len(close))])-1)*100,"3M %":(last_close/float(close.iloc[-min(64,len(close))])-1)*100,"1M vs NIFTY 500 (pp)":rel1_now,"3M vs NIFTY 500 (pp)":rel3_now,"Above 50 EMA":bool(last_close>ema50) if pd.notna(ema50) else "Insufficient history"})
+                        constituent_rows.append({"Stock":symbol.replace(".NS",""),"Rotation zone":current_stock_zone,"Days in current zone":stock_zone_days if stock_zone_days else "Insufficient history","Zone entry date":stock_zone_entry or "—","Zone change (5 sessions)":change,"1D %":(last_close/previous_close-1)*100 if previous_close else np.nan,"1M %":(last_close/float(close.iloc[-min(22,len(close))])-1)*100,"3M %":(last_close/float(close.iloc[-min(64,len(close))])-1)*100,"1M vs NIFTY 500 (pp)":rel1_now,"3M vs NIFTY 500 (pp)":rel3_now,"Above 50 EMA":bool(last_close>ema50) if pd.notna(ema50) else "Insufficient history"})
                     if constituent_rows:
                         constituent_df = pd.DataFrame(constituent_rows)
                         st.caption(f"{sector_choice} · {len(constituent_df)} of {len(sector_symbols)} mapped constituents with usable price history. Stock zones compare relative 1M and 3M returns against NIFTY 500.")
@@ -3509,7 +3514,7 @@ if active_page == "Main Dashboard":
                     st.subheader("All micro sectors · current rotation status")
                     zone_filter = st.selectbox("Filter micro sectors by rotation zone", ["All zones", "Leading", "Improving", "Weakening", "Lagging"], key="micro_zone_filter")
                     zone_view = micro_df if zone_filter == "All zones" else micro_df[micro_df["Zone"] == zone_filter]
-                    display_cols = ["Micro sector", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Weekly positive breadth %", "Weekly strong breadth %", "Above 20 DMA %", "Above 50 DMA %", "20 DMA breadth change (pp)", "50 DMA breadth change (pp)", "Avg. distance from Weekly 200 EMA (%)", "Stocks in preferred 3–8% zone (%)", "Stocks above Weekly 200 EMA (%)", "Weekly 200 EMA status", "Stocks available"]
+                    display_cols = ["Micro sector", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Weekly positive breadth %", "Weekly strong breadth %", "Above 20 DMA %", "Above 50 DMA %", "20 DMA breadth change (pp)", "50 DMA breadth change (pp)", "Avg. distance from Weekly 200 EMA (%)", "Stocks in preferred 3–8% zone (%)", "Stocks above Weekly 200 EMA (%)", "Weekly 200 EMA status", "Days in current zone", "Zone entry date", "Stocks available"]
                     st.dataframe(_style_rotation_table(zone_view[display_cols].sort_values("Score", ascending=False), zone_columns=("Zone",)), use_container_width=True, hide_index=True)
                     st.subheader("Visual ranking · micro-sectors with improving breadth")
                     micro_breadth_rank = micro_df.copy()
@@ -3622,12 +3627,17 @@ if active_page == "Main Dashboard":
                             return "Leading" if rel3 >= 0 and rel1 >= 0 else "Weakening" if rel3 >= 0 else "Improving" if rel1 >= 0 else "Lagging"
                         current_zone = _stock_zone_at(stock_aligned, len(stock_aligned)-1) if len(stock_aligned) >= 22 else "Unclassified"
                         previous_zone = _stock_zone_at(stock_aligned, len(stock_aligned)-6) if len(stock_aligned) >= 27 else None
+                        stock_zone_history = pd.Series(
+                            [_stock_zone_at(stock_aligned, pos) for pos in range(len(stock_aligned))],
+                            index=stock_aligned.index,
+                        ) if len(stock_aligned) >= 64 else pd.Series(dtype="object")
+                        stock_zone_days, stock_zone_entry = _zone_streak_details(stock_zone_history)
                         transition = f"{previous_zone} → {current_zone}" if previous_zone and current_zone and previous_zone != current_zone else "No zone change"
                         if previous_zone and current_zone and previous_zone != current_zone:
                             stock_transition_rows.append({"Stock":symbol.replace(".NS",""),"Transition":transition})
                         rel1_value = (last / float(close.iloc[-min(22,len(close))]) - 1) * 100 - (float(bench.iloc[-1]) / float(bench.iloc[-min(22,len(bench))]) - 1) * 100 if len(bench) >= 22 else np.nan
                         rel3_value = (last / float(close.iloc[-min(64,len(close))]) - 1) * 100 - (float(bench.iloc[-1]) / float(bench.iloc[-min(64,len(bench))]) - 1) * 100 if len(bench) >= 64 else np.nan
-                        drill_rows.append({"Stock":symbol.replace(".NS",""),"Rotation zone":current_zone,"Zone change (5 sessions)":transition,"Latest close":last,"1D %":(last/prev-1)*100 if prev else np.nan,"1M %":(last/close.iloc[-min(22,len(close))]-1)*100,"3M %":(last/close.iloc[-min(64,len(close))]-1)*100,"1M vs NIFTY 500 (pp)":rel1_value,"3M vs NIFTY 500 (pp)":rel3_value,"Above 50 EMA":bool(last>e50) if pd.notna(e50) else "Insufficient history"})
+                        drill_rows.append({"Stock":symbol.replace(".NS",""),"Rotation zone":current_zone,"Days in current zone":stock_zone_days if stock_zone_days else "Insufficient history","Zone entry date":stock_zone_entry or "—","Zone change (5 sessions)":transition,"Latest close":last,"1D %":(last/prev-1)*100 if prev else np.nan,"1M %":(last/close.iloc[-min(22,len(close))]-1)*100,"3M %":(last/close.iloc[-min(64,len(close))]-1)*100,"1M vs NIFTY 500 (pp)":rel1_value,"3M vs NIFTY 500 (pp)":rel3_value,"Above 50 EMA":bool(last>e50) if pd.notna(e50) else "Insufficient history"})
                     if drill_rows:
                         drill_df = pd.DataFrame(drill_rows)
                         st.markdown("**Constituent stock rotation** · each stock is classified against NIFTY 500 using relative 1M and 3M performance.")
