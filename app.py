@@ -913,25 +913,42 @@ if "auth_code" in st.query_params:
         st.error("FYERS returned without an authorization code. Please retry the connection.")
         st.query_params.clear()
 
-# Keep the FYERS snapshot panel visible even while disconnected or reconnecting.
+# Keep one FYERS quote snapshot as the single source for both the table and benchmark headline cards.
+FYERS_BENCHMARK_SYMBOLS = {
+    "NIFTY 50": "NSE:NIFTY50-INDEX",
+    "BANK NIFTY": "NSE:NIFTYBANK-INDEX",
+    "India VIX": "NSE:INDIAVIX-INDEX",
+}
+FYERS_QUOTE_SYMBOLS = list(FYERS_BENCHMARK_SYMBOLS.values()) + [
+    "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:INFY-EQ"
+]
 with st.expander("FYERS live market snapshot · optional", expanded=False):
     fyers_config = fyers_credentials()
     fyers_active_token = st.session_state.get("fyers_access_token")
     if fyers_config and fyers_active_token:
         fyers_app_id = fyers_config[0]
-        fyers_symbols = ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:INFY-EQ"]
         if st.button("Fetch FYERS live quotes", key="fyers_fetch_quotes"):
-            quote_rows, quote_error = fyers_live_quotes(fyers_app_id, fyers_active_token, fyers_symbols)
-            if quote_error:
-                st.warning(f"FYERS quote data unavailable: {quote_error}")
-            elif not quote_rows:
-                st.info("FYERS returned no quote rows for the selected symbols.")
+            quote_rows, quote_error = fyers_live_quotes(fyers_app_id, fyers_active_token, FYERS_QUOTE_SYMBOLS)
+            if quote_error or not quote_rows:
+                st.session_state.pop("fyers_quote_snapshot", None)
+                st.session_state.pop("fyers_quote_snapshot_at", None)
+                if quote_error:
+                    st.warning(f"FYERS quote data unavailable: {quote_error}")
+                else:
+                    st.warning("FYERS returned no quote rows. Benchmark headline cards will show unavailable.")
             else:
+                quote_map = {}
                 normalized = []
                 for item in quote_rows:
                     values = item.get("v") or {}
+                    symbol = str(item.get("n", values.get("symbol", ""))).strip()
+                    quote_map[symbol] = {
+                        "Last price": values.get("lp"),
+                        "Change": values.get("ch"),
+                        "Change %": values.get("chp"),
+                    }
                     normalized.append({
-                        "Symbol": item.get("n", values.get("symbol", "Unknown")),
+                        "Symbol": symbol or "Unknown",
                         "Last price": values.get("lp"),
                         "Change": values.get("ch"),
                         "Change %": values.get("chp"),
@@ -941,12 +958,21 @@ with st.expander("FYERS live market snapshot · optional", expanded=False):
                         "Previous close": values.get("prev_close_price"),
                         "Volume": values.get("volume"),
                     })
-                st.dataframe(pd.DataFrame(normalized), use_container_width=True, hide_index=True)
-                st.caption("Fetched at " + datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"))
+                st.session_state["fyers_quote_snapshot"] = quote_map
+                st.session_state["fyers_quote_snapshot_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
     elif not fyers_config:
         st.info("Configure FYERS_APP_ID, FYERS_APP_SECRET and FYERS_REDIRECT_URI in Streamlit Secrets to enable live quotes.")
     else:
-        st.info("FYERS is not connected in this app session. Connect or reconnect FYERS, then reopen this panel to fetch live quotes.")
+        st.info("FYERS is not connected in this app session. Connect or reconnect FYERS, then fetch quotes to update the benchmark headline cards.")
+
+    saved_quotes = st.session_state.get("fyers_quote_snapshot", {})
+    if saved_quotes:
+        saved_rows = []
+        for symbol, values in saved_quotes.items():
+            saved_rows.append({"Symbol": symbol, **values})
+        st.dataframe(pd.DataFrame(saved_rows), use_container_width=True, hide_index=True)
+        st.caption("Same FYERS snapshot used by NIFTY 50, BANK NIFTY and India VIX headline cards · Fetched at " +
+                   str(st.session_state.get("fyers_quote_snapshot_at", "time unavailable")))
 
 
 
@@ -1527,15 +1553,36 @@ if active_page == "Main Dashboard":
     for col, name in zip(cols, headline_names):
         df = market_data[name]
         snap = quote_snapshot(df)
+        if name in FYERS_BENCHMARK_SYMBOLS:
+            symbol = FYERS_BENCHMARK_SYMBOLS[name]
+            fyers_snapshot = st.session_state.get("fyers_quote_snapshot", {})
+            quote = fyers_snapshot.get(symbol)
+            if not quote:
+                if not fyers_config:
+                    col.metric(name, "Unavailable", "FYERS not configured")
+                elif not st.session_state.get("fyers_access_token"):
+                    col.metric(name, "Unavailable", "Connect FYERS")
+                elif not fyers_snapshot:
+                    col.metric(name, "Fetch FYERS above", "Waiting for live quote")
+                else:
+                    col.metric(name, "Unavailable", "FYERS quote not returned")
+                continue
+            live_price = pd.to_numeric(quote.get("Last price"), errors="coerce")
+            live_change = pd.to_numeric(quote.get("Change"), errors="coerce")
+            live_pct = pd.to_numeric(quote.get("Change %"), errors="coerce")
+            if pd.isna(live_price):
+                col.metric(name, "Unavailable", "FYERS price missing")
+                continue
+            delta_text = f"{fmt(live_change)} ({fmt(live_pct)}%) · FYERS"
+            if name == "India VIX":
+                delta_text += " · volatility easing" if pd.notna(live_change) and live_change < 0 else (" · volatility rising" if pd.notna(live_change) and live_change > 0 else "")
+                col.metric(name, fmt(live_price), delta_text, delta_color="inverse")
+            else:
+                col.metric(name, fmt(live_price), delta_text)
+            continue
         if snap:
             last, change, pct = snap
             # Brent Crude is sourced exclusively from OilPrice.com; its public quote may be delayed.
-            if name in ("NIFTY 50", "BANK NIFTY", "India VIX"):
-                benchmark_date = pd.to_datetime(last["Date"], errors="coerce")
-                benchmark_age_days = (now_ist.date() - benchmark_date.date()).days if pd.notna(benchmark_date) else 999
-                if benchmark_age_days > 2:
-                    col.metric(name, "STALE", f"Last source date · {benchmark_date.strftime('%d %b %Y') if pd.notna(benchmark_date) else 'unknown'}", delta_color="off")
-                    continue
             if name == "Brent Crude":
                 brent_date = pd.to_datetime(last["Date"])
                 brent_age_days = (now_ist.date() - brent_date.date()).days
@@ -1544,29 +1591,19 @@ if active_page == "Main Dashboard":
                 if is_eia_source and brent_age_days > 3:
                     col.metric(name, fmt(last["Close"]), f"STALE · EIA date {brent_date.strftime('%d %b %Y')}", delta_color="off")
                     continue
-                # Prefer a source-provided daily move. Otherwise derive it from the latest two
-                # genuine observations; never display a fabricated zero when a percentage is missing.
                 if pd.isna(pct) and len(df) >= 2:
                     brent_closes = pd.to_numeric(df["Close"], errors="coerce").dropna()
                     if len(brent_closes) >= 2 and float(brent_closes.iloc[-2]) != 0:
                         change = float(brent_closes.iloc[-1] - brent_closes.iloc[-2])
                         pct = float(change / brent_closes.iloc[-2] * 100)
-            # Inverse-impact instruments: lower USD/INR (stronger rupee) and lower India VIX
-            # (less expected volatility) are generally supportive; higher values are headwinds.
             if name == "USD/INR":
                 delta_text = f"{fmt(change)} ({fmt(pct)}%)"
                 delta_text += " · INR stronger" if change < 0 else (" · INR weaker" if change > 0 else "")
                 col.metric(name, fmt(last["Close"]), delta_text, delta_color="inverse")
-            elif name == "India VIX":
-                delta_text = f"{fmt(change)} ({fmt(pct)}%)"
-                delta_text += " · volatility easing" if change < 0 else (" · volatility rising" if change > 0 else "")
-                col.metric(name, fmt(last["Close"]), delta_text, delta_color="inverse")
             else:
                 col.metric(name, fmt(last["Close"]), f"{fmt(change)} ({fmt(pct)}%)")
-            # Source-bar timestamp retained in data, but hidden from the compact headline display.
         else:
             col.metric(name, "Unavailable")
-            # Error details remain available in market_errors; avoid displaying extra helper text here.
 
     # Show the actual source-candle date so a page-refresh timestamp cannot disguise stale prices.
     headline_dates = []
