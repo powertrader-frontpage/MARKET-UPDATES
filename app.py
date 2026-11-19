@@ -922,13 +922,60 @@ FYERS_BENCHMARK_SYMBOLS = {
 FYERS_QUOTE_SYMBOLS = list(FYERS_BENCHMARK_SYMBOLS.values()) + [
     "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:INFY-EQ"
 ]
+
+def save_fyers_quote_snapshot(quote_rows):
+    quote_map = {}
+    normalized = []
+    for item in quote_rows:
+        values = item.get("v") or {}
+        symbol = str(item.get("n", values.get("symbol", ""))).strip()
+        quote_map[symbol] = {
+            "Last price": values.get("lp"),
+            "Change": values.get("ch"),
+            "Change %": values.get("chp"),
+        }
+        normalized.append({
+            "Symbol": symbol or "Unknown",
+            "Last price": values.get("lp"),
+            "Change": values.get("ch"),
+            "Change %": values.get("chp"),
+            "Open": values.get("open_price"),
+            "High": values.get("high_price"),
+            "Low": values.get("low_price"),
+            "Previous close": values.get("prev_close_price"),
+            "Volume": values.get("volume"),
+        })
+    st.session_state["fyers_quote_snapshot"] = quote_map
+    st.session_state["fyers_quote_snapshot_rows"] = normalized
+    st.session_state["fyers_quote_snapshot_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
+
+# Automatically fetch the shared quote snapshot on each dashboard run when FYERS is connected.
+@st.cache_data(ttl=10, show_spinner=False)
+def get_fyers_dashboard_quotes(app_id: str, access_token: str):
+    return fyers_live_quotes(app_id, access_token, FYERS_QUOTE_SYMBOLS)
+
+fyers_config = fyers_credentials()
+fyers_active_token = st.session_state.get("fyers_access_token")
+if fyers_config and fyers_active_token:
+    auto_quote_rows, auto_quote_error = get_fyers_dashboard_quotes(fyers_config[0], fyers_active_token)
+    if auto_quote_rows and not auto_quote_error:
+        save_fyers_quote_snapshot(auto_quote_rows)
+        st.session_state.pop("fyers_quote_error", None)
+    else:
+        st.session_state.pop("fyers_quote_snapshot", None)
+        st.session_state.pop("fyers_quote_snapshot_rows", None)
+        st.session_state.pop("fyers_quote_snapshot_at", None)
+        st.session_state["fyers_quote_error"] = auto_quote_error or "FYERS returned no quote rows."
+else:
+    st.session_state.pop("fyers_quote_error", None)
+
 with st.expander("FYERS live market snapshot · optional", expanded=False):
     fyers_config = fyers_credentials()
     fyers_active_token = st.session_state.get("fyers_access_token")
     if fyers_config and fyers_active_token:
         fyers_app_id = fyers_config[0]
         if st.button("Fetch FYERS live quotes", key="fyers_fetch_quotes"):
-            quote_rows, quote_error = fyers_live_quotes(fyers_app_id, fyers_active_token, FYERS_QUOTE_SYMBOLS)
+            quote_rows, quote_error = get_fyers_dashboard_quotes(fyers_app_id, fyers_active_token)
             if quote_error or not quote_rows:
                 st.session_state.pop("fyers_quote_snapshot", None)
                 st.session_state.pop("fyers_quote_snapshot_rows", None)
@@ -938,30 +985,8 @@ with st.expander("FYERS live market snapshot · optional", expanded=False):
                 else:
                     st.warning("FYERS returned no quote rows. Benchmark headline cards will show unavailable.")
             else:
-                quote_map = {}
-                normalized = []
-                for item in quote_rows:
-                    values = item.get("v") or {}
-                    symbol = str(item.get("n", values.get("symbol", ""))).strip()
-                    quote_map[symbol] = {
-                        "Last price": values.get("lp"),
-                        "Change": values.get("ch"),
-                        "Change %": values.get("chp"),
-                    }
-                    normalized.append({
-                        "Symbol": symbol or "Unknown",
-                        "Last price": values.get("lp"),
-                        "Change": values.get("ch"),
-                        "Change %": values.get("chp"),
-                        "Open": values.get("open_price"),
-                        "High": values.get("high_price"),
-                        "Low": values.get("low_price"),
-                        "Previous close": values.get("prev_close_price"),
-                        "Volume": values.get("volume"),
-                    })
-                st.session_state["fyers_quote_snapshot"] = quote_map
-                st.session_state["fyers_quote_snapshot_rows"] = normalized
-                st.session_state["fyers_quote_snapshot_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
+                save_fyers_quote_snapshot(quote_rows)
+                st.session_state.pop("fyers_quote_error", None)
     elif not fyers_config:
         st.info("Configure FYERS_APP_ID, FYERS_APP_SECRET and FYERS_REDIRECT_URI in Streamlit Secrets to enable live quotes.")
     else:
