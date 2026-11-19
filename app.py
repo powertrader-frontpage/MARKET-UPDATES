@@ -931,6 +931,7 @@ with st.expander("FYERS live market snapshot · optional", expanded=False):
             quote_rows, quote_error = fyers_live_quotes(fyers_app_id, fyers_active_token, FYERS_QUOTE_SYMBOLS)
             if quote_error or not quote_rows:
                 st.session_state.pop("fyers_quote_snapshot", None)
+                st.session_state.pop("fyers_quote_snapshot_rows", None)
                 st.session_state.pop("fyers_quote_snapshot_at", None)
                 if quote_error:
                     st.warning(f"FYERS quote data unavailable: {quote_error}")
@@ -959,6 +960,7 @@ with st.expander("FYERS live market snapshot · optional", expanded=False):
                         "Volume": values.get("volume"),
                     })
                 st.session_state["fyers_quote_snapshot"] = quote_map
+                st.session_state["fyers_quote_snapshot_rows"] = normalized
                 st.session_state["fyers_quote_snapshot_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
     elif not fyers_config:
         st.info("Configure FYERS_APP_ID, FYERS_APP_SECRET and FYERS_REDIRECT_URI in Streamlit Secrets to enable live quotes.")
@@ -967,9 +969,7 @@ with st.expander("FYERS live market snapshot · optional", expanded=False):
 
     saved_quotes = st.session_state.get("fyers_quote_snapshot", {})
     if saved_quotes:
-        saved_rows = []
-        for symbol, values in saved_quotes.items():
-            saved_rows.append({"Symbol": symbol, **values})
+        saved_rows = st.session_state.get("fyers_quote_snapshot_rows", [])
         st.dataframe(pd.DataFrame(saved_rows), use_container_width=True, hide_index=True)
         st.caption("Same FYERS snapshot used by NIFTY 50, BANK NIFTY and India VIX headline cards · Fetched at " +
                    str(st.session_state.get("fyers_quote_snapshot_at", "time unavailable")))
