@@ -3442,23 +3442,28 @@ if active_page == "Main Dashboard":
                     resilience_nifty_return = np.nan
                     resilience_date = None
                     if not resilience_nifty.empty and {"Date", "Close"}.issubset(resilience_nifty.columns):
-                        resilience_nifty = resilience_nifty.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
+                        resilience_nifty = resilience_nifty.dropna(subset=["Date", "Close"]).copy()
+                        resilience_nifty["_session"] = pd.to_datetime(resilience_nifty["Date"], errors="coerce").dt.date
+                        resilience_nifty = resilience_nifty.dropna(subset=["_session"]).sort_values("_session").drop_duplicates("_session", keep="last")
                         if len(resilience_nifty) >= 2:
                             resilience_nifty_return = (float(resilience_nifty["Close"].iloc[-1]) / float(resilience_nifty["Close"].iloc[-2]) - 1) * 100
-                            resilience_date = pd.to_datetime(resilience_nifty["Date"].iloc[-1]).strftime("%d %b %Y")
+                            resilience_date = pd.to_datetime(resilience_nifty["_session"].iloc[-1]).strftime("%d %b %Y")
                     resilience_rows = []
                     for item in sector_rows:
                         ticker = item.get("Ticker")
                         if not ticker:
                             continue
+                        # Reuse the same daily history already used by sector rotation where possible.
                         daily_frame, _daily_error = get_history(ticker, "1mo", "1d")
                         if daily_frame.empty or not {"Date", "Close"}.issubset(daily_frame.columns):
                             continue
-                        daily_frame = daily_frame.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
+                        daily_frame = daily_frame.dropna(subset=["Date", "Close"]).copy()
+                        daily_frame["_session"] = pd.to_datetime(daily_frame["Date"], errors="coerce").dt.date
+                        daily_frame = daily_frame.dropna(subset=["_session"]).sort_values("_session").drop_duplicates("_session", keep="last")
                         aligned_daily = pd.merge(
-                            daily_frame[["Date", "Close"]].rename(columns={"Close": "Sector close"}),
-                            resilience_nifty[["Date", "Close"]].rename(columns={"Close": "NIFTY close"}),
-                            on="Date", how="inner"
+                            daily_frame[["_session", "Close"]].rename(columns={"Close": "Sector close"}),
+                            resilience_nifty[["_session", "Close"]].rename(columns={"Close": "NIFTY close"}),
+                            on="_session", how="inner"
                         ) if not resilience_nifty.empty else pd.DataFrame()
                         if len(aligned_daily) < 2:
                             continue
@@ -3469,7 +3474,7 @@ if active_page == "Main Dashboard":
                             "NIFTY return %": nifty_day_return,
                             "Relative strength vs NIFTY (pp)": sector_day_return - nifty_day_return,
                             "Weekly rotation zone": item.get("Current zone", "Unavailable"),
-                            "Data date": pd.to_datetime(aligned_daily["Date"].iloc[-1]).strftime("%d %b %Y"),
+                            "Data date": pd.to_datetime(aligned_daily["_session"].iloc[-1]).strftime("%d %b %Y"),
                         })
                     resilience_df = pd.DataFrame(resilience_rows)
                     crash_day = pd.notna(resilience_nifty_return) and resilience_nifty_return <= -1.0
@@ -3546,6 +3551,16 @@ if active_page == "Main Dashboard":
                         for symbol in SECTOR_STOCKS.get(stock_sector_choice, []):
                             close_series = _sector_breadth_close(symbol)
                             close_series = pd.to_numeric(close_series, errors="coerce").dropna().sort_index()
+                            # The large multi-symbol Yahoo download can omit symbols; fall back to
+                            # the app's validated single-symbol history route for the selected basket.
+                            if len(close_series) < 2:
+                                fallback_frame, _fallback_error = get_history(symbol, "1mo", "1d")
+                                if not fallback_frame.empty and {"Date", "Close"}.issubset(fallback_frame.columns):
+                                    fallback_frame = fallback_frame.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
+                                    close_series = pd.Series(
+                                        pd.to_numeric(fallback_frame["Close"], errors="coerce").values,
+                                        index=pd.to.to_datetime(fallback_frame["Date"], errors="coerce")
+                                    ).dropna()
                             if len(close_series) < 2:
                                 continue
                             stock_return = (float(close_series.iloc[-1]) / float(close_series.iloc[-2]) - 1) * 100
