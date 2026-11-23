@@ -3559,7 +3559,7 @@ if active_page == "Main Dashboard":
                                     fallback_frame = fallback_frame.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
                                     close_series = pd.Series(
                                         pd.to_numeric(fallback_frame["Close"], errors="coerce").values,
-                                        index=pd.to.to_datetime(fallback_frame["Date"], errors="coerce")
+                                        index=pd.to_datetime(fallback_frame["Date"], errors="coerce")
                                     ).dropna()
                             if len(close_series) < 2:
                                 continue
