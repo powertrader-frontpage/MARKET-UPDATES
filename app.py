@@ -3576,7 +3576,6 @@ if active_page == "Main Dashboard":
                         st.info("Stock-level daily drilldown will appear when sector constituent prices are available.")
 
                     # Capture one dated snapshot per ISO week. Friday after market close is automatic;
- Friday after market close is automatic;
                     # the button also allows an initial baseline to be saved immediately.
                     sector_history_frame = sector_export.copy() if "sector_export" in locals() else pd.DataFrame(sector_rows)
                     ist_now = datetime.now(ZoneInfo("Asia/Kolkata"))
