@@ -3434,7 +3434,149 @@ if active_page == "Main Dashboard":
                     micro_export = micro_df.drop(columns=["_raw_score"], errors="ignore").copy()
                     micro_stock_export = pd.DataFrame(micro_stock_export_rows)
 
+                    # Daily resilience board: separate from the existing weekly rotation score and zones.
+                    st.markdown("---")
+                    st.markdown("## Daily Sector Strength & Resilience")
+                    st.caption("Ranks the latest completed daily session. Relative strength = sector return minus NIFTY 50 return, in percentage points (pp). This is a daily price-performance view, not a prediction or institutional-flow measure.")
+                    resilience_nifty = market_data.get("NIFTY 50", pd.DataFrame()).copy()
+                    resilience_nifty_return = np.nan
+                    resilience_date = None
+                    if not resilience_nifty.empty and {"Date", "Close"}.issubset(resilience_nifty.columns):
+                        resilience_nifty = resilience_nifty.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
+                        if len(resilience_nifty) >= 2:
+                            resilience_nifty_return = (float(resilience_nifty["Close"].iloc[-1]) / float(resilience_nifty["Close"].iloc[-2]) - 1) * 100
+                            resilience_date = pd.to_datetime(resilience_nifty["Date"].iloc[-1]).strftime("%d %b %Y")
+                    resilience_rows = []
+                    for item in sector_rows:
+                        ticker = item.get("Ticker")
+                        if not ticker:
+                            continue
+                        daily_frame, _daily_error = get_history(ticker, "1mo", "1d")
+                        if daily_frame.empty or not {"Date", "Close"}.issubset(daily_frame.columns):
+                            continue
+                        daily_frame = daily_frame.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last")
+                        aligned_daily = pd.merge(
+                            daily_frame[["Date", "Close"]].rename(columns={"Close": "Sector close"}),
+                            resilience_nifty[["Date", "Close"]].rename(columns={"Close": "NIFTY close"}),
+                            on="Date", how="inner"
+                        ) if not resilience_nifty.empty else pd.DataFrame()
+                        if len(aligned_daily) < 2:
+                            continue
+                        sector_day_return = (float(aligned_daily["Sector close"].iloc[-1]) / float(aligned_daily["Sector close"].iloc[-2]) - 1) * 100
+                        nifty_day_return = (float(aligned_daily["NIFTY close"].iloc[-1]) / float(aligned_daily["NIFTY close"].iloc[-2]) - 1) * 100
+                        resilience_rows.append({
+                            "Sector": item["Sector"], "Daily return %": sector_day_return,
+                            "NIFTY return %": nifty_day_return,
+                            "Relative strength vs NIFTY (pp)": sector_day_return - nifty_day_return,
+                            "Weekly rotation zone": item.get("Current zone", "Unavailable"),
+                            "Data date": pd.to_datetime(aligned_daily["Date"].iloc[-1]).strftime("%d %b %Y"),
+                        })
+                    resilience_df = pd.DataFrame(resilience_rows)
+                    crash_day = pd.notna(resilience_nifty_return) and resilience_nifty_return <= -1.0
+                    if pd.notna(resilience_nifty_return):
+                        crash_label = "CRASH-DAY MODE" if crash_day else "Normal session"
+                        crash_color = "#ef4444" if crash_day else "#22c55e"
+                        st.markdown(
+                            f'<div style="border:1px solid {crash_color};border-left:5px solid {crash_color};border-radius:10px;padding:10px 13px;margin:6px 0 10px;">'
+                            f'<b style="color:{crash_color};">{crash_label}</b> · NIFTY 50 {resilience_nifty_return:+.2f}%'
+                            + (f' · Latest session: {html.escape(str(resilience_date))}' if resilience_date else '')
+                            + (' · Crash threshold: NIFTY daily return ≤ −1.00%' if crash_day else ' · Crash highlight activates at NIFTY daily return ≤ −1.00%')
+                            + '</div>', unsafe_allow_html=True
+                        )
+                    else:
+                        st.warning("NIFTY daily return unavailable. Crash-day status and relative-strength ranking cannot be confirmed.")
+                    if not resilience_df.empty:
+                        resilience_df["Session classification"] = np.where(
+                            resilience_df["Daily return %"] > 0, "Positive",
+                            np.where(resilience_df["Relative strength vs NIFTY (pp)"] > 0, "Fell less than NIFTY", "Underperformed")
+                        )
+                        resilience_df = resilience_df.sort_values(
+                            ["Relative strength vs NIFTY (pp)", "Daily return %"],
+                            ascending=[False, False], na_position="last"
+                        ).reset_index(drop=True)
+                        resilience_df.insert(0, "Rank", np.arange(1, len(resilience_df) + 1))
+                        if crash_day:
+                            st.success("Crash-day leaders are ranked first by resilience versus NIFTY. A positive relative-strength value means the sector fell less than NIFTY; it does not necessarily mean the sector gained.")
+                        st.markdown("**Daily sector ranking · strongest relative performance first**")
+                        st.dataframe(_style_rotation_table(resilience_df, zone_columns=("Weekly rotation zone",)), use_container_width=True, hide_index=True)
+                        resilience_top = resilience_df.head(5)
+                        st.markdown("**Top resilient sectors**")
+                        st.dataframe(resilience_top[["Sector", "Daily return %", "Relative strength vs NIFTY (pp)", "Session classification", "Weekly rotation zone"]], use_container_width=True, hide_index=True)
+                        st.download_button(
+                            "⬇ Download daily sector resilience CSV",
+                            resilience_df.to_csv(index=False).encode("utf-8-sig"),
+                            file_name="daily_sector_strength_resilience.csv", mime="text/csv",
+                            key="download_daily_sector_resilience"
+                        )
+                    else:
+                        st.info("Daily sector index data is unavailable for this session. No sector rankings have been fabricated.")
+
+                    # Microsector daily confirmation uses the existing constituent-weighted daily returns.
+                    if isinstance(micro_df, pd.DataFrame) and not micro_df.empty and "1D %" in micro_df.columns:
+                        micro_daily = micro_df[["Micro sector", "Group", "1D %", "Zone", "Stocks available", "Stocks listed"]].copy()
+                        micro_daily["1D %"] = pd.to_numeric(micro_daily["1D %"], errors="coerce")
+                        micro_daily = micro_daily.dropna(subset=["1D %"]).sort_values("1D %", ascending=False)
+                        st.markdown("**Microsector confirmation · constituent-weighted daily performance**")
+                        st.caption("Microsector returns are equal-weight averages of available mapped constituent returns in the existing microsector pipeline. They are not official microsector index returns.")
+                        st.dataframe(_style_rotation_table(micro_daily, zone_columns=("Zone",)), use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Microsector daily confirmation is unavailable because constituent daily returns are incomplete.")
+
+                    # Stock drilldown uses the already-fetched conventional-sector constituent prices.
+                    if not resilience_df.empty and "sector_breadth_raw" in locals():
+                        resilient_sector_names = resilience_df["Sector"].tolist()
+                        stock_sector_choice = st.selectbox(
+                            "Show performing stocks within sector",
+                            resilient_sector_names,
+                            index=0,
+                            key="daily_resilience_stock_sector"
+                        )
+                        stock_rows = []
+                        stage_results_for_resilience = st.session_state.get("nse500_rs_stage_results", pd.DataFrame())
+                        stage2_lookup = {}
+                        if isinstance(stage_results_for_resilience, pd.DataFrame) and {"Symbol", "Stage", "Base Setup"}.issubset(stage_results_for_resilience.columns):
+                            stage2_frame = stage_results_for_resilience[
+                                (stage_results_for_resilience["Stage"] == "Stage 2 · Uptrend")
+                                & (stage_results_for_resilience["Base Setup"].isin(["B1 · First base phase", "B2 · Second base phase"]))
+                            ]
+                            stage2_lookup = dict(zip(stage2_frame["Symbol"].astype(str).str.replace(".NS", "", regex=False), stage2_frame["Base Setup"].astype(str)))
+                        stock_zone_lookup = {}
+                        if isinstance(micro_stock_export, pd.DataFrame) and not micro_stock_export.empty and {"Stock", "Stock Rotation Zone"}.issubset(micro_stock_export.columns):
+                            stock_zone_lookup = dict(zip(micro_stock_export["Stock"].astype(str), micro_stock_export["Stock Rotation Zone"].astype(str)))
+                        for symbol in SECTOR_STOCKS.get(stock_sector_choice, []):
+                            close_series = _sector_breadth_close(symbol)
+                            close_series = pd.to_numeric(close_series, errors="coerce").dropna().sort_index()
+                            if len(close_series) < 2:
+                                continue
+                            stock_return = (float(close_series.iloc[-1]) / float(close_series.iloc[-2]) - 1) * 100
+                            stock_rows.append({
+                                "Stock": symbol.replace(".NS", ""),
+                                "Daily return %": stock_return,
+                                "Relative strength vs NIFTY (pp)": stock_return - resilience_nifty_return if pd.notna(resilience_nifty_return) else np.nan,
+                                "Microsector rotation zone": stock_zone_lookup.get(symbol.replace(".NS", ""), "Unavailable"),
+                                "Stage 2 B1/B2": stage2_lookup.get(symbol.replace(".NS", ""), "No current B1/B2 match"),
+                                "Data date": pd.to_datetime(close_series.index[-1]).strftime("%d %b %Y"),
+                            })
+                        stock_resilience_df = pd.DataFrame(stock_rows)
+                        if not stock_resilience_df.empty:
+                            stock_resilience_df = stock_resilience_df.sort_values(
+                                ["Relative strength vs NIFTY (pp)", "Daily return %"], ascending=[False, False], na_position="last"
+                            )
+                            st.markdown(f"**Performing stocks · {html.escape(stock_sector_choice)}**")
+                            st.dataframe(_style_rotation_table(stock_resilience_df, zone_columns=("Microsector rotation zone",)), use_container_width=True, hide_index=True)
+                            st.download_button(
+                                "⬇ Download performing stocks CSV",
+                                stock_resilience_df.to_csv(index=False).encode("utf-8-sig"),
+                                file_name="daily_performing_stocks.csv", mime="text/csv",
+                                key="download_daily_performing_stocks"
+                            )
+                        else:
+                            st.info("No usable constituent daily prices were returned for this sector.")
+                    else:
+                        st.info("Stock-level daily drilldown will appear when sector constituent prices are available.")
+
                     # Capture one dated snapshot per ISO week. Friday after market close is automatic;
+ Friday after market close is automatic;
                     # the button also allows an initial baseline to be saved immediately.
                     sector_history_frame = sector_export.copy() if "sector_export" in locals() else pd.DataFrame(sector_rows)
                     ist_now = datetime.now(ZoneInfo("Asia/Kolkata"))
