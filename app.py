@@ -3733,7 +3733,9 @@ if active_page == "Main Dashboard":
                             volume_points = 10 if pd.notna(volume_ratio) and volume_ratio >= 1.5 else 7 if pd.notna(volume_ratio) and volume_ratio >= 1.2 else 3 if pd.notna(volume_ratio) and volume_ratio >= 1 else 0
                             stage_points = 10 if stage_setup in ("B1 · First base phase", "B2 · Second base phase") else 0
                             score = round(daily_points + rs1m_points + rs3m_points + micro_points + sector_points + weekly_points + daily_ema_points + volume_points + stage_points, 1)
-                            if "Fresh cross above" in daily_signal or "Fresh cross above" in weekly_signal:
+                            fresh_daily_cross = "Fresh cross above" in daily_signal
+                            fresh_weekly_cross = "Fresh cross above" in weekly_signal
+                            if fresh_daily_cross or fresh_weekly_cross:
                                 radar_status = "Fresh EMA Cross"
                             elif (micro_zone in ("Weakening", "Lagging") or main_zone in ("Weakening", "Lagging")) and score >= 55:
                                 radar_status = "Strong but Weakening"
@@ -3751,6 +3753,9 @@ if active_page == "Main Dashboard":
                                 "Main sector": main_sector, "Main sector zone": main_zone or ("Not mapped · micro-sector only" if main_sector == "Not mapped" else "Unavailable"),
                                 "Daily 200 EMA distance (%)": daily_gap, "Daily 200 EMA signal": daily_signal,
                                 "Weekly 200 EMA distance (%)": weekly_gap, "Weekly 200 EMA signal": weekly_signal,
+                                "EMA cross timeframe": "Daily + Weekly" if fresh_daily_cross and fresh_weekly_cross else "Fresh Daily" if fresh_daily_cross else "Fresh Weekly" if fresh_weekly_cross else "No fresh cross",
+                                "Overextension risk": "⚠ >12% above Daily & Weekly 200 EMA" if pd.notna(daily_gap) and daily_gap > 12 and pd.notna(weekly_gap) and weekly_gap > 12 else "⚠ >12% above Daily 200 EMA" if pd.notna(daily_gap) and daily_gap > 12 else "⚠ >12% above Weekly 200 EMA" if pd.notna(weekly_gap) and weekly_gap > 12 else "Within 12% / below / unavailable",
+                                "Broad-sector headwind": "⚠ Microsector strong, broad sector Lagging" if micro_zone in ("Leading", "Improving") and main_zone == "Lagging" else "No lagging-sector conflict",
                                 "Volume vs 20D avg": volume_ratio, "Stage 2 B1/B2": stage_setup,
                                 "Data date": best.get("Zone entry date") if False else (resilience_date or "Unavailable"),
                             })
@@ -3774,18 +3779,26 @@ if active_page == "Main Dashboard":
                                 lambda col: col.str.contains(radar_search.strip(), case=False, na=False)
                             ).any(axis=1)
                             radar_view = radar_view[radar_mask]
-                        st.caption(f"{len(radar_df)} unique stocks ranked · {len(radar_view)} shown · Data session: {resilience_date or 'unavailable'}. Multiple microsector memberships are combined into one stock row.")
+                        radar_view.insert(0, "Filtered rank", np.arange(1, len(radar_view) + 1))
+                        st.caption(f"{len(radar_df)} unique stocks ranked · {len(radar_view)} shown · Filtered rank is the visible-list position; Rank is the overall-universe position. Daily RS compares today's stock return with NIFTY today, while 1M/3M RS compares medium-term performance with NIFTY 500. Data session: {resilience_date or 'unavailable'}. Multiple microsector memberships are combined into one stock row.")
                         radar_display_cols = [
-                            "Rank", "Rank score", "Signal", "Stock", "Daily return %", "Daily RS vs NIFTY (pp)",
+                            "Filtered rank", "Rank", "Rank score", "Signal", "Stock", "Daily return %", "Daily RS vs NIFTY (pp)",
                             "1M RS vs NIFTY 500 (pp)", "3M RS vs NIFTY 500 (pp)", "Microsector",
-                            "Microsector zone", "Main sector", "Main sector zone", "Daily 200 EMA distance (%)",
-                            "Weekly 200 EMA distance (%)", "Volume vs 20D avg", "Stage 2 B1/B2"
+                            "Microsector zone", "Main sector", "Main sector zone", "Broad-sector headwind",
+                            "Daily 200 EMA distance (%)", "Weekly 200 EMA distance (%)", "Overextension risk",
+                            "EMA cross timeframe", "Volume vs 20D avg", "Stage 2 B1/B2"
                         ]
                         radar_display_cols = [column for column in radar_display_cols if column in radar_view.columns]
                         st.dataframe(
                             _style_rotation_table(radar_view[radar_display_cols], zone_columns=("Microsector zone", "Main sector zone")),
                             use_container_width=True, hide_index=True, height=520
                         )
+                        risk_count = int(radar_view["Overextension risk"].str.startswith("⚠").sum()) if not radar_view.empty else 0
+                        headwind_count = int(radar_view["Broad-sector headwind"].str.startswith("⚠").sum()) if not radar_view.empty else 0
+                        if risk_count:
+                            st.warning(f"{risk_count} displayed stock(s) are more than 12% above at least one 200 EMA. Check the Daily/Weekly columns and avoid treating a high score as an entry signal.")
+                        if headwind_count:
+                            st.info(f"{headwind_count} displayed stock(s) have a Leading/Improving microsector but a Lagging broad sector — a broad-market headwind to keep in view.")
                         st.download_button(
                             "⬇ Download Combined Strength & Breakout Radar CSV",
                             radar_view.to_csv(index=False).encode("utf-8-sig"),
