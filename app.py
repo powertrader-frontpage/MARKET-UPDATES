@@ -458,6 +458,8 @@ MICRO_SECTORS = {
     "Logistics & Warehousing": ("Transport", ["DELHIVERY.NS","TCI.NS","MAHLOG.NS","BLUEDART.NS","ALLCARGO.NS"]),
     "Ports & Marine Logistics": ("Transport", ["ADANIPORTS.NS","JSWINFRA.NS","GPPL.NS","COCHINSHIP.NS","GESHIP.NS"]),
     "Passenger Vehicles": ("Auto", ["M&M.NS","MARUTI.NS","TATAMOTORS.NS","HYUNDAI.NS"]),
+    "Two-Wheeler OEMs": ("Auto", ["EICHERMOT.NS","HEROMOTOCO.NS","BAJAJ-AUTO.NS","TVSMOTOR.NS"]),
+    "Commercial Vehicles": ("Auto", ["ASHOKLEY.NS"]),
     "Auto Components": ("Auto", ["BHARATFORG.NS","BOSCHLTD.NS","SONACOMS.NS","UNOMINDA.NS","MOTHERSON.NS","MINDACORP.NS","GABRIEL.NS","ASAHIINDIA.NS"]),
     "Tyres": ("Auto", ["MRF.NS","APOLLOTYRE.NS","BALKRISIND.NS","CEATLTD.NS"]),
     "EV Components": ("Auto", ["EXIDEIND.NS","AMARAJABAT.NS","SONACOMS.NS","UNOMINDA.NS","SANSERA.NS","ATHERENERG.NS"]),
@@ -3549,9 +3551,35 @@ if active_page == "Main Dashboard":
                                 & (stage_results_for_resilience["Base Setup"].isin(["B1 · First base phase", "B2 · Second base phase"]))
                             ]
                             stage2_lookup = dict(zip(stage2_frame["Symbol"].astype(str).str.replace(".NS", "", regex=False), stage2_frame["Base Setup"].astype(str)))
-                        stock_zone_lookup = {}
-                        if isinstance(micro_stock_export, pd.DataFrame) and not micro_stock_export.empty and {"Stock", "Stock Rotation Zone"}.issubset(micro_stock_export.columns):
-                            stock_zone_lookup = dict(zip(micro_stock_export["Stock"].astype(str), micro_stock_export["Stock Rotation Zone"].astype(str)))
+                        # Build a one-to-many stock → microsector membership map.
+                        # A stock can legitimately belong to more than one microsector;
+                        # never collapse memberships with dict(zip(stock, zone)).
+                        stock_microsector_memberships = {}
+                        for micro_name, (_micro_group, micro_symbols) in MICRO_SECTORS.items():
+                            for micro_symbol in micro_symbols:
+                                stock_key = str(micro_symbol).replace(".NS", "")
+                                stock_microsector_memberships.setdefault(stock_key, [])
+                                if micro_name not in stock_microsector_memberships[stock_key]:
+                                    stock_microsector_memberships[stock_key].append(micro_name)
+
+                        stock_microsector_zone_lookup = {}
+                        if isinstance(micro_stock_export, pd.DataFrame) and not micro_stock_export.empty and {"Stock", "Micro sector", "Stock Rotation Zone"}.issubset(micro_stock_export.columns):
+                            for _membership in micro_stock_export[["Stock", "Micro sector", "Stock Rotation Zone"]].dropna(subset=["Stock", "Micro sector"]).to_dict("records"):
+                                _stock_key = str(_membership["Stock"]).replace(".NS", "")
+                                _micro_key = str(_membership["Micro sector"])
+                                _zone_value = str(_membership["Stock Rotation Zone"])
+                                if _zone_value in {"Leading", "Improving", "Weakening", "Lagging"}:
+                                    stock_microsector_zone_lookup[(_stock_key, _micro_key)] = _zone_value
+
+                        def _stock_microsector_display(stock_key):
+                            memberships = stock_microsector_memberships.get(str(stock_key), [])
+                            if not memberships:
+                                return "Not mapped"
+                            labels = []
+                            for micro_name in sorted(memberships):
+                                zone = stock_microsector_zone_lookup.get((str(stock_key), micro_name))
+                                labels.append(f"{micro_name} ({zone})" if zone else f"{micro_name} (zone unavailable)")
+                            return "; ".join(labels)
                         resilience_previous_session = resilience_nifty["_session"].iloc[-2] if len(resilience_nifty) >= 2 else None
                         resilience_target_session = resilience_nifty["_session"].iloc[-1] if len(resilience_nifty) >= 2 else None
                         if resilience_previous_session is not None and resilience_target_session is not None:
@@ -3601,7 +3629,7 @@ if active_page == "Main Dashboard":
                                 "Stock": symbol.replace(".NS", ""),
                                 "Daily return %": stock_return,
                                 "Relative strength vs NIFTY (pp)": stock_return - resilience_nifty_return if pd.notna(resilience_nifty_return) else np.nan,
-                                "Microsector rotation zone": stock_zone_lookup.get(symbol.replace(".NS", ""), "Unavailable"),
+                                "Microsector membership / zone": _stock_microsector_display(symbol.replace(".NS", "")),
                                 "Stage 2 B1/B2": stage2_lookup.get(symbol.replace(".NS", ""), "No current B1/B2 match"),
                                 "Data date": pd.to_datetime(resilience_target_session).strftime("%d %b %Y"),
                             })
