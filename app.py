@@ -3714,6 +3714,18 @@ if active_page == "Main Dashboard":
                             rs3m = pd.to_numeric(best.get("3M vs NIFTY 500 (pp)"), errors="coerce")
                             weekly_gap = pd.to_numeric(best.get("Weekly 200 EMA distance (%)"), errors="coerce")
                             daily_gap = pd.to_numeric(best.get("Daily 200 EMA distance (%)"), errors="coerce")
+                            # Keep daily and weekly trend alignment separate from the score.
+                            if pd.notna(daily_gap) and pd.notna(weekly_gap):
+                                if daily_gap >= 0 and weekly_gap >= 0:
+                                    ema_alignment = "Bullish aligned"
+                                elif daily_gap >= 0 and weekly_gap < 0:
+                                    ema_alignment = "Early recovery"
+                                elif daily_gap < 0 and weekly_gap >= 0:
+                                    ema_alignment = "Pullback"
+                                else:
+                                    ema_alignment = "Bearish aligned"
+                            else:
+                                ema_alignment = "Insufficient data"
                             volume_ratio = pd.to_numeric(best.get("Volume vs 20D avg"), errors="coerce")
                             micro_zone = str(best.get("Stock Rotation Zone", "Insufficient data"))
                             daily_signal = str(best.get("Daily 200 EMA signal", "Unavailable"))
@@ -3753,6 +3765,7 @@ if active_page == "Main Dashboard":
                                 "Main sector": main_sector, "Main sector zone": main_zone or ("Not mapped · micro-sector only" if main_sector == "Not mapped" else "Unavailable"),
                                 "Daily 200 EMA distance (%)": daily_gap, "Daily 200 EMA signal": daily_signal,
                                 "Weekly 200 EMA distance (%)": weekly_gap, "Weekly 200 EMA signal": weekly_signal,
+                                "EMA Alignment": ema_alignment,
                                 "EMA cross timeframe": "Daily + Weekly" if fresh_daily_cross and fresh_weekly_cross else "Fresh Daily" if fresh_daily_cross else "Fresh Weekly" if fresh_weekly_cross else "No fresh cross",
                                 "Overextension risk": "⚠ >12% above Daily & Weekly 200 EMA" if pd.notna(daily_gap) and daily_gap > 12 and pd.notna(weekly_gap) and weekly_gap > 12 else "⚠ >12% above Daily 200 EMA" if pd.notna(daily_gap) and daily_gap > 12 else "⚠ >12% above Weekly 200 EMA" if pd.notna(weekly_gap) and weekly_gap > 12 else "Within 12% / below / unavailable",
                                 "Broad-sector headwind": "⚠ Microsector strong, broad sector Lagging" if micro_zone in ("Leading", "Improving") and main_zone == "Lagging" else "No lagging-sector conflict",
@@ -3780,12 +3793,12 @@ if active_page == "Main Dashboard":
                             ).any(axis=1)
                             radar_view = radar_view[radar_mask]
                         radar_view.insert(0, "Filtered rank", np.arange(1, len(radar_view) + 1))
-                        st.caption(f"{len(radar_df)} unique stocks ranked · {len(radar_view)} shown · Filtered rank is the visible-list position; Rank is the overall-universe position. Daily RS compares today's stock return with NIFTY today, while 1M/3M RS compares medium-term performance with NIFTY 500. Data session: {resilience_date or 'unavailable'}. Multiple microsector memberships are combined into one stock row.")
+                        st.caption(f"{len(radar_df)} unique stocks ranked · {len(radar_view)} shown · Filtered rank is the visible-list position; Rank is the overall-universe position. EMA Alignment compares the stock close independently with its Daily and Weekly 200 EMA: Bullish aligned = above both; Early recovery = above Daily but below Weekly; Pullback = below Daily but above Weekly; Bearish aligned = below both. Missing either EMA is marked Insufficient data. Daily RS compares today's stock return with NIFTY today, while 1M/3M RS compares medium-term performance with NIFTY 500. Data session: {resilience_date or 'unavailable'}. Multiple microsector memberships are combined into one stock row.")
                         radar_display_cols = [
                             "Filtered rank", "Rank", "Rank score", "Signal", "Stock", "Daily return %", "Daily RS vs NIFTY (pp)",
                             "1M RS vs NIFTY 500 (pp)", "3M RS vs NIFTY 500 (pp)", "Microsector",
                             "Microsector zone", "Main sector", "Main sector zone", "Broad-sector headwind",
-                            "Daily 200 EMA distance (%)", "Weekly 200 EMA distance (%)", "Overextension risk",
+                            "Daily 200 EMA distance (%)", "Weekly 200 EMA distance (%)", "EMA Alignment", "Overextension risk",
                             "EMA cross timeframe", "Volume vs 20D avg", "Stage 2 B1/B2"
                         ]
                         radar_display_cols = [column for column in radar_display_cols if column in radar_view.columns]
