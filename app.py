@@ -3548,6 +3548,15 @@ if active_page == "Main Dashboard":
                         stock_zone_lookup = {}
                         if isinstance(micro_stock_export, pd.DataFrame) and not micro_stock_export.empty and {"Stock", "Stock Rotation Zone"}.issubset(micro_stock_export.columns):
                             stock_zone_lookup = dict(zip(micro_stock_export["Stock"].astype(str), micro_stock_export["Stock Rotation Zone"].astype(str)))
+                        resilience_previous_session = resilience_nifty["_session"].iloc[-2] if len(resilience_nifty) >= 2 else None
+                        resilience_target_session = resilience_nifty["_session"].iloc[-1] if len(resilience_nifty) >= 2 else None
+                        if resilience_previous_session is not None and resilience_target_session is not None:
+                            st.caption(
+                                "Stock returns use the same two completed sessions as NIFTY: "
+                                f"{pd.to_datetime(resilience_previous_session).strftime('%d %b %Y')} → "
+                                f"{pd.to_datetime(resilience_target_session).strftime('%d %b %Y')}. "
+                                "Stocks without both exact daily closes are excluded."
+                            )
                         for symbol in SECTOR_STOCKS.get(stock_sector_choice, []):
                             close_series = _sector_breadth_close(symbol)
                             close_series = pd.to_numeric(close_series, errors="coerce").dropna().sort_index()
@@ -3561,16 +3570,36 @@ if active_page == "Main Dashboard":
                                         pd.to_numeric(fallback_frame["Close"], errors="coerce").values,
                                         index=pd.to_datetime(fallback_frame["Date"], errors="coerce")
                                     ).dropna()
-                            if len(close_series) < 2:
+                            if close_series.empty or resilience_target_session is None or resilience_previous_session is None:
                                 continue
-                            stock_return = (float(close_series.iloc[-1]) / float(close_series.iloc[-2]) - 1) * 100
+
+                            # Align every constituent to the exact NIFTY comparison sessions.
+                            # Never compare a stale constituent candle with a newer index candle.
+                            stock_daily = pd.DataFrame({
+                                "Date": pd.to_datetime(close_series.index, errors="coerce"),
+                                "Close": pd.to_numeric(close_series.values, errors="coerce"),
+                            }).dropna(subset=["Date", "Close"])
+                            if stock_daily.empty:
+                                continue
+                            if stock_daily["Date"].dt.tz is not None:
+                                stock_daily["Date"] = stock_daily["Date"].dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+                            stock_daily["_session"] = stock_daily["Date"].dt.date
+                            stock_daily = stock_daily.sort_values("Date").drop_duplicates("_session", keep="last")
+                            stock_prices = stock_daily.set_index("_session")["Close"]
+                            if resilience_previous_session not in stock_prices.index or resilience_target_session not in stock_prices.index:
+                                continue
+                            previous_close = float(stock_prices.loc[resilience_previous_session])
+                            target_close = float(stock_prices.loc[resilience_target_session])
+                            if not np.isfinite(previous_close) or not np.isfinite(target_close) or previous_close <= 0:
+                                continue
+                            stock_return = (target_close / previous_close - 1) * 100
                             stock_rows.append({
                                 "Stock": symbol.replace(".NS", ""),
                                 "Daily return %": stock_return,
                                 "Relative strength vs NIFTY (pp)": stock_return - resilience_nifty_return if pd.notna(resilience_nifty_return) else np.nan,
                                 "Microsector rotation zone": stock_zone_lookup.get(symbol.replace(".NS", ""), "Unavailable"),
                                 "Stage 2 B1/B2": stage2_lookup.get(symbol.replace(".NS", ""), "No current B1/B2 match"),
-                                "Data date": pd.to_datetime(close_series.index[-1]).strftime("%d %b %Y"),
+                                "Data date": pd.to_datetime(resilience_target_session).strftime("%d %b %Y"),
                             })
                         stock_resilience_df = pd.DataFrame(stock_rows)
                         if not stock_resilience_df.empty:
