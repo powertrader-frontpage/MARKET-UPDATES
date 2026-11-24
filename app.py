@@ -3659,6 +3659,154 @@ if active_page == "Main Dashboard":
                     else:
                         st.info("Stock-level daily drilldown will appear when sector constituent prices are available.")
 
+                    # Combined Strength & Breakout Radar
+                    # Built from the existing microsector constituent pipeline; no new data provider
+                    # and no changes to the established rotation or screener calculations.
+                    st.markdown("---")
+                    st.markdown("## Combined Strength & Breakout Radar")
+                    st.caption("Ranks unique stocks using daily relative strength, 1M/3M relative performance, microsector and broad-sector zones, daily/weekly 200 EMA position, volume confirmation and the existing NSE 500 Stage 2 B1/B2 results. This is a research ranking, not a buy signal.")
+
+                    radar_source = pd.DataFrame(micro_stock_export_rows)
+                    radar_rows = []
+                    radar_stage_frame = st.session_state.get("nse500_rs_stage_results", pd.DataFrame())
+                    radar_stage_lookup = {}
+                    if isinstance(radar_stage_frame, pd.DataFrame) and {"Symbol", "Stage", "Base Setup"}.issubset(radar_stage_frame.columns):
+                        radar_stage_valid = radar_stage_frame[
+                            (radar_stage_frame["Stage"] == "Stage 2 · Uptrend")
+                            & radar_stage_frame["Base Setup"].isin(["B1 · First base phase", "B2 · Second base phase"])
+                        ]
+                        radar_stage_lookup = dict(zip(
+                            radar_stage_valid["Symbol"].astype(str).str.replace(".NS", "", regex=False),
+                            radar_stage_valid["Base Setup"].astype(str)
+                        ))
+
+                    radar_group_to_sector = {
+                        "Pharma": "Pharma", "Technology": "IT", "Industrials": "Infrastructure",
+                        "Media & Services": "Media", "Financials": "Financial Services",
+                        "Consumer": "Consumption", "Consumer Durables": "Consumption",
+                        "Power": "Energy", "Auto": "Auto", "Construction": "Infrastructure",
+                        "Real Estate": "Realty",
+                    }
+                    radar_sector_zones = {item.get("Sector"): item.get("Current zone") for item in rotation_rows}
+                    radar_zone_points = {"Leading": 15, "Improving": 10, "Weakening": 4, "Lagging": 0, "Insufficient data": 0}
+                    radar_sector_points = {"Leading": 8, "Improving": 6, "Weakening": 2, "Lagging": 0}
+                    if not radar_source.empty and "Stock" in radar_source.columns:
+                        for symbol, memberships in radar_source.groupby("Stock", dropna=True):
+                            memberships = memberships.copy()
+                            memberships["Stock Rotation Zone"] = memberships["Stock Rotation Zone"].fillna("Insufficient data")
+                            zone_rank = {"Leading": 0, "Improving": 1, "Weakening": 2, "Lagging": 3, "Insufficient data": 4}
+                            memberships["_zone_rank"] = memberships["Stock Rotation Zone"].map(zone_rank).fillna(4)
+                            memberships = memberships.sort_values(
+                                ["_zone_rank", "3M vs NIFTY 500 (pp)", "1M vs NIFTY 500 (pp)"],
+                                ascending=[True, False, False], na_position="last"
+                            )
+                            best = memberships.iloc[0]
+                            group_names = sorted(set(memberships["Group"].dropna().astype(str)))
+                            micro_names = sorted(set(memberships["Micro sector"].dropna().astype(str)))
+                            micro_zones = sorted(set(memberships["Stock Rotation Zone"].dropna().astype(str)), key=lambda z: zone_rank.get(z, 4))
+                            main_sectors = sorted({radar_group_to_sector[g] for g in group_names if g in radar_group_to_sector})
+                            main_sector = main_sectors[0] if len(main_sectors) == 1 else ("Multiple" if main_sectors else "Not mapped")
+                            main_zone = radar_sector_zones.get(main_sector) if main_sector not in ("Multiple", "Not mapped") else None
+                            daily_return = pd.to_numeric(best.get("1D %"), errors="coerce")
+                            nifty_day = pd.to_numeric(resilience_nifty_return, errors="coerce")
+                            daily_rs = daily_return - nifty_day if pd.notna(daily_return) and pd.notna(nifty_day) else np.nan
+                            rs1m = pd.to_numeric(best.get("1M vs NIFTY 500 (pp)"), errors="coerce")
+                            rs3m = pd.to_numeric(best.get("3M vs NIFTY 500 (pp)"), errors="coerce")
+                            weekly_gap = pd.to_numeric(best.get("Weekly 200 EMA distance (%)"), errors="coerce")
+                            daily_gap = pd.to_numeric(best.get("Daily 200 EMA distance (%)"), errors="coerce")
+                            volume_ratio = pd.to_numeric(best.get("Volume vs 20D avg"), errors="coerce")
+                            micro_zone = str(best.get("Stock Rotation Zone", "Insufficient data"))
+                            daily_signal = str(best.get("Daily 200 EMA signal", "Unavailable"))
+                            weekly_signal = str(best.get("Weekly 200 EMA signal", "Unavailable"))
+                            stage_setup = radar_stage_lookup.get(str(symbol).replace(".NS", ""), "No current B1/B2 match")
+
+                            daily_points = float(np.clip(5 + daily_rs * 1.5, 0, 10)) if pd.notna(daily_rs) else 0
+                            rs1m_points = float(np.clip((rs1m + 10) / 20 * 12, 0, 12)) if pd.notna(rs1m) else 0
+                            rs3m_points = float(np.clip((rs3m + 10) / 20 * 12, 0, 12)) if pd.notna(rs3m) else 0
+                            micro_points = radar_zone_points.get(micro_zone, 0)
+                            sector_points = radar_sector_points.get(main_zone, 4 if main_sector == "Not mapped" else 0)
+                            if pd.notna(weekly_gap):
+                                weekly_points = 15 if 0 < weekly_gap <= 8 else 10 if 8 < weekly_gap <= 12 else 5 if weekly_gap > 12 else 0
+                            else:
+                                weekly_points = 0
+                            daily_ema_points = 8 if "Fresh cross above" in daily_signal else 5 if "Above 200 EMA" in daily_signal else 0
+                            volume_points = 10 if pd.notna(volume_ratio) and volume_ratio >= 1.5 else 7 if pd.notna(volume_ratio) and volume_ratio >= 1.2 else 3 if pd.notna(volume_ratio) and volume_ratio >= 1 else 0
+                            stage_points = 10 if stage_setup in ("B1 · First base phase", "B2 · Second base phase") else 0
+                            score = round(daily_points + rs1m_points + rs3m_points + micro_points + sector_points + weekly_points + daily_ema_points + volume_points + stage_points, 1)
+                            if "Fresh cross above" in daily_signal or "Fresh cross above" in weekly_signal:
+                                radar_status = "Fresh EMA Cross"
+                            elif (micro_zone in ("Weakening", "Lagging") or main_zone in ("Weakening", "Lagging")) and score >= 55:
+                                radar_status = "Strong but Weakening"
+                            elif (pd.notna(weekly_gap) and weekly_gap > 12) or (pd.notna(daily_gap) and daily_gap > 12):
+                                radar_status = "Extended · Avoid Chasing"
+                            elif score >= 65:
+                                radar_status = "Strong & Improving"
+                            else:
+                                radar_status = "Developing / Monitor"
+                            radar_rows.append({
+                                "Rank score": score, "Signal": radar_status, "Stock": str(symbol).replace(".NS", ""),
+                                "Daily return %": daily_return, "Daily RS vs NIFTY (pp)": daily_rs,
+                                "1M RS vs NIFTY 500 (pp)": rs1m, "3M RS vs NIFTY 500 (pp)": rs3m,
+                                "Microsector": "; ".join(micro_names), "Microsector zone": "; ".join(micro_zones),
+                                "Main sector": main_sector, "Main sector zone": main_zone or ("Not mapped · micro-sector only" if main_sector == "Not mapped" else "Unavailable"),
+                                "Daily 200 EMA distance (%)": daily_gap, "Daily 200 EMA signal": daily_signal,
+                                "Weekly 200 EMA distance (%)": weekly_gap, "Weekly 200 EMA signal": weekly_signal,
+                                "Volume vs 20D avg": volume_ratio, "Stage 2 B1/B2": stage_setup,
+                                "Data date": best.get("Zone entry date") if False else (resilience_date or "Unavailable"),
+                            })
+                    radar_df = pd.DataFrame(radar_rows)
+                    if not radar_df.empty:
+                        radar_df = radar_df.sort_values(
+                            ["Rank score", "Daily RS vs NIFTY (pp)", "3M RS vs NIFTY 500 (pp)"],
+                            ascending=[False, False, False], na_position="last"
+                        ).reset_index(drop=True)
+                        radar_df.insert(0, "Rank", np.arange(1, len(radar_df) + 1))
+                        radar_signal_choice = st.multiselect(
+                            "Filter radar signals",
+                            ["Strong & Improving", "Fresh EMA Cross", "Strong but Weakening", "Extended · Avoid Chasing", "Developing / Monitor"],
+                            default=["Strong & Improving", "Fresh EMA Cross", "Strong but Weakening"],
+                            key="combined_strength_signal_filter"
+                        )
+                        radar_search = st.text_input("Search stock / sector / microsector", key="combined_strength_search")
+                        radar_view = radar_df[radar_df["Signal"].isin(radar_signal_choice)].copy()
+                        if radar_search.strip():
+                            radar_mask = radar_view.astype(str).apply(
+                                lambda col: col.str.contains(radar_search.strip(), case=False, na=False)
+                            ).any(axis=1)
+                            radar_view = radar_view[radar_mask]
+                        st.caption(f"{len(radar_df)} unique stocks ranked · {len(radar_view)} shown · Data session: {resilience_date or 'unavailable'}. Multiple microsector memberships are combined into one stock row.")
+                        radar_display_cols = [
+                            "Rank", "Rank score", "Signal", "Stock", "Daily return %", "Daily RS vs NIFTY (pp)",
+                            "1M RS vs NIFTY 500 (pp)", "3M RS vs NIFTY 500 (pp)", "Microsector",
+                            "Microsector zone", "Main sector", "Main sector zone", "Daily 200 EMA distance (%)",
+                            "Weekly 200 EMA distance (%)", "Volume vs 20D avg", "Stage 2 B1/B2"
+                        ]
+                        radar_display_cols = [column for column in radar_display_cols if column in radar_view.columns]
+                        st.dataframe(
+                            _style_rotation_table(radar_view[radar_display_cols], zone_columns=("Microsector zone", "Main sector zone")),
+                            use_container_width=True, hide_index=True, height=520
+                        )
+                        st.download_button(
+                            "⬇ Download Combined Strength & Breakout Radar CSV",
+                            radar_view.to_csv(index=False).encode("utf-8-sig"),
+                            file_name="combined_strength_breakout_radar.csv", mime="text/csv",
+                            key="download_combined_strength_breakout_radar"
+                        )
+                        with st.expander("How the ranking score is calculated", expanded=False):
+                            st.markdown(
+                                "- Daily relative strength vs NIFTY: 10 points\n"
+                                "- 1M and 3M relative strength vs NIFTY 500: 12 points each\n"
+                                "- Microsector rotation zone: 15 points\n"
+                                "- Broad-sector rotation zone: 8 points\n"
+                                "- Weekly 200 EMA position: 15 points (preferred 0–8% above EMA)\n"
+                                "- Daily 200 EMA confirmation: 8 points\n"
+                                "- Volume vs prior 20-day average: 10 points\n"
+                                "- NSE 500 Stage 2 B1/B2 confirmation: 10 points\n\n"
+                                "Unavailable inputs receive zero points; they are not estimated. The score is a transparent ranking aid, not a probability of profit."
+                            )
+                    else:
+                        st.info("The Combined Strength & Breakout Radar will populate when the microsector constituent pipeline returns usable stock data.")
+
                     # Capture one dated snapshot per ISO week. Friday after market close is automatic;
                     # the button also allows an initial baseline to be saved immediately.
                     sector_history_frame = sector_export.copy() if "sector_export" in locals() else pd.DataFrame(sector_rows)
