@@ -3781,16 +3781,22 @@ if active_page == "Main Dashboard":
                                 crossed_ema_gaps.append(float(daily_gap))
                             if fresh_weekly_cross and pd.notna(weekly_gap):
                                 crossed_ema_gaps.append(float(weekly_gap))
-                            if crossed_ema_gaps:
-                                max_cross_gap = max(crossed_ema_gaps)
-                                if max_cross_gap > 12:
+                            if early_recovery_watch:
+                                breakout_class = "Early recovery · Daily cross"
+                            elif crossed_ema_gaps:
+                                # A fresh crossover can still be extended versus the other
+                                # 200 EMA, so use the larger positive Daily/Weekly distance.
+                                positive_ema_gaps = [
+                                    float(gap) for gap in (daily_gap, weekly_gap)
+                                    if pd.notna(gap) and float(gap) > 0
+                                ]
+                                max_extension_gap = max(positive_ema_gaps) if positive_ema_gaps else max(crossed_ema_gaps)
+                                if max_extension_gap > 12:
                                     breakout_class = "Extended breakout · Avoid chasing"
-                                elif max_cross_gap > 8:
+                                elif max_extension_gap > 8:
                                     breakout_class = "Fresh breakout · Stretched"
                                 else:
                                     breakout_class = "Fresh breakout · Healthy"
-                            elif early_recovery_watch:
-                                breakout_class = "Early recovery · Daily cross"
                             else:
                                 breakout_class = "No fresh breakout"
 
@@ -3869,7 +3875,7 @@ if active_page == "Main Dashboard":
                             ).any(axis=1)
                             radar_view = radar_view[radar_mask]
                         radar_view.insert(0, "Filtered rank", np.arange(1, len(radar_view) + 1))
-                        st.caption(f"{len(radar_df)} unique stocks ranked · {len(radar_view)} shown · View: {radar_view_choice}. High-conviction trend = Bullish aligned + Leading microsector + Leading broad sector. Early Recovery watch = fresh Daily 200 EMA cross while still below Weekly 200 EMA. Fresh breakout distance is measured from the EMA(s) actually crossed: Healthy ≤8%, Stretched >8–12%, Extended >12%. Filtered rank is the visible-list position; Rank is the overall-universe position. EMA Alignment compares the stock close independently with its Daily and Weekly 200 EMA: Bullish aligned = above both; Early recovery = above Daily but below Weekly; Pullback = below Daily but above Weekly; Bearish aligned = below both. Missing either EMA is marked Insufficient data. Daily RS compares today's stock return with NIFTY today, while 1M/3M RS compares medium-term performance with NIFTY 500. Data session: {resilience_date or 'unavailable'}. Multiple microsector memberships are combined into one stock row.")
+                        st.caption(f"{len(radar_df)} unique stocks ranked · {len(radar_view)} shown · View: {radar_view_choice}. High-conviction trend = Bullish aligned + Leading microsector + Leading broad sector. Early Recovery watch = fresh Daily 200 EMA cross while still below Weekly 200 EMA. Fresh breakout distance considers both positive Daily and Weekly 200 EMA gaps: Healthy ≤8%, Stretched >8–12%, Extended >12%; Early Recovery is shown separately. Filtered rank is the visible-list position; Rank is the overall-universe position. EMA Alignment compares the stock close independently with its Daily and Weekly 200 EMA: Bullish aligned = above both; Early recovery = above Daily but below Weekly; Pullback = below Daily but above Weekly; Bearish aligned = below both. Missing either EMA is marked Insufficient data. Daily RS compares today's stock return with NIFTY today, while 1M/3M RS compares medium-term performance with NIFTY 500. Data session: {resilience_date or 'unavailable'}. Multiple microsector memberships are combined into one stock row.")
                         radar_display_cols = [
                             "Filtered rank", "Rank", "Rank score", "Signal", "Stock", "Trend priority", "EMA Alignment",
                             "Early Recovery watch", "Breakout classification", "Daily return %", "Daily RS vs NIFTY (pp)",
