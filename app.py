@@ -3842,7 +3842,11 @@ if active_page == "Main Dashboard":
                             key="combined_strength_signal_filter"
                         )
                         radar_search = st.text_input("Search stock / sector / microsector", key="combined_strength_search")
-                        radar_view = radar_df[radar_df["Signal"].isin(radar_signal_choice)].copy()
+                        radar_view = (
+                            radar_df[radar_df["Signal"].isin(radar_signal_choice)].copy()
+                            if radar_view_choice == "Full ranked list"
+                            else radar_df.copy()
+                        )
                         if radar_view_choice == "High-conviction trend":
                             radar_view = radar_view[radar_view["Trend priority"] == "A · High-conviction trend"]
                         elif radar_view_choice == "Early Recovery watchlist":
