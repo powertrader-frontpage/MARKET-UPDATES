@@ -148,7 +148,11 @@ def _rotation_history_read():
             return {"snapshots": []}, None, None
         response.raise_for_status()
         payload = response.json()
-        raw = __import__("base64").b64decode(payload["content"]).decode("utf-8")
+        raw = __import__("base64").b64decode(payload.get("content", "")).decode("utf-8").strip()
+        # GitHub may return an existing zero-byte file with empty content.
+        # Treat it as a new archive so the first snapshot can initialise it safely.
+        if not raw:
+            return {"schema_version": 1, "updated_at": None, "snapshots": []}, payload.get("sha"), None
         data = json.loads(raw)
         if not isinstance(data, dict) or not isinstance(data.get("snapshots"), list):
             raise ValueError("History file has an unexpected format.")
