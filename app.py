@@ -3757,6 +3757,43 @@ if active_page == "Main Dashboard":
                             score = round(daily_points + rs1m_points + rs3m_points + micro_points + sector_points + weekly_points + daily_ema_points + volume_points + stage_points, 1)
                             fresh_daily_cross = "Fresh cross above" in daily_signal
                             fresh_weekly_cross = "Fresh cross above" in weekly_signal
+
+                            # Explicit trend-priority layer; this does not alter the existing score.
+                            high_conviction_trend = (
+                                ema_alignment == "Bullish aligned"
+                                and micro_zone == "Leading"
+                                and main_zone == "Leading"
+                            )
+                            trend_priority = (
+                                "A · High-conviction trend" if high_conviction_trend
+                                else "B · Bullish / partial confirmation" if ema_alignment == "Bullish aligned"
+                                else "C · Developing / mixed trend"
+                            )
+                            # Early Recovery watchlist is intentionally strict: a fresh daily
+                            # cross above Daily 200 EMA while price remains below Weekly 200 EMA.
+                            early_recovery_watch = (
+                                fresh_daily_cross and pd.notna(daily_gap) and daily_gap >= 0
+                                and pd.notna(weekly_gap) and weekly_gap < 0
+                            )
+                            # Classify fresh breakouts by distance from the EMA(s) actually crossed.
+                            crossed_ema_gaps = []
+                            if fresh_daily_cross and pd.notna(daily_gap):
+                                crossed_ema_gaps.append(float(daily_gap))
+                            if fresh_weekly_cross and pd.notna(weekly_gap):
+                                crossed_ema_gaps.append(float(weekly_gap))
+                            if crossed_ema_gaps:
+                                max_cross_gap = max(crossed_ema_gaps)
+                                if max_cross_gap > 12:
+                                    breakout_class = "Extended breakout · Avoid chasing"
+                                elif max_cross_gap > 8:
+                                    breakout_class = "Fresh breakout · Stretched"
+                                else:
+                                    breakout_class = "Fresh breakout · Healthy"
+                            elif early_recovery_watch:
+                                breakout_class = "Early recovery · Daily cross"
+                            else:
+                                breakout_class = "No fresh breakout"
+
                             if fresh_daily_cross or fresh_weekly_cross:
                                 radar_status = "Fresh EMA Cross"
                             elif (micro_zone in ("Weakening", "Lagging") or main_zone in ("Weakening", "Lagging")) and score >= 55:
@@ -3776,6 +3813,9 @@ if active_page == "Main Dashboard":
                                 "Daily 200 EMA distance (%)": daily_gap, "Daily 200 EMA signal": daily_signal,
                                 "Weekly 200 EMA distance (%)": weekly_gap, "Weekly 200 EMA signal": weekly_signal,
                                 "EMA Alignment": ema_alignment,
+                                "Trend priority": trend_priority,
+                                "Early Recovery watch": "Yes · Fresh Daily cross, below Weekly 200 EMA" if early_recovery_watch else "No",
+                                "Breakout classification": breakout_class,
                                 "EMA cross timeframe": "Daily + Weekly" if fresh_daily_cross and fresh_weekly_cross else "Fresh Daily" if fresh_daily_cross else "Fresh Weekly" if fresh_weekly_cross else "No fresh cross",
                                 "Overextension risk": "⚠ >12% above Daily & Weekly 200 EMA" if pd.notna(daily_gap) and daily_gap > 12 and pd.notna(weekly_gap) and weekly_gap > 12 else "⚠ >12% above Daily 200 EMA" if pd.notna(daily_gap) and daily_gap > 12 else "⚠ >12% above Weekly 200 EMA" if pd.notna(weekly_gap) and weekly_gap > 12 else "Within 12% / below / unavailable",
                                 "Broad-sector headwind": "⚠ Microsector strong, broad sector Lagging" if micro_zone in ("Leading", "Improving") and main_zone == "Lagging" else "No lagging-sector conflict",
@@ -3789,6 +3829,12 @@ if active_page == "Main Dashboard":
                             ascending=[False, False, False], na_position="last"
                         ).reset_index(drop=True)
                         radar_df.insert(0, "Rank", np.arange(1, len(radar_df) + 1))
+                        radar_view_choice = st.selectbox(
+                            "Radar research view",
+                            ["Full ranked list", "High-conviction trend", "Early Recovery watchlist", "Fresh vs Extended breakouts"],
+                            key="combined_strength_research_view",
+                            help="Focused views use the same underlying stock universe and unchanged score calculations."
+                        )
                         radar_signal_choice = st.multiselect(
                             "Filter radar signals",
                             ["Strong & Improving", "Fresh EMA Cross", "Strong but Weakening", "Extended · Avoid Chasing", "Developing / Monitor"],
@@ -3797,15 +3843,32 @@ if active_page == "Main Dashboard":
                         )
                         radar_search = st.text_input("Search stock / sector / microsector", key="combined_strength_search")
                         radar_view = radar_df[radar_df["Signal"].isin(radar_signal_choice)].copy()
+                        if radar_view_choice == "High-conviction trend":
+                            radar_view = radar_view[radar_view["Trend priority"] == "A · High-conviction trend"]
+                        elif radar_view_choice == "Early Recovery watchlist":
+                            radar_view = radar_view[radar_view["Early Recovery watch"].str.startswith("Yes")]
+                        elif radar_view_choice == "Fresh vs Extended breakouts":
+                            radar_view = radar_view[radar_view["Breakout classification"] != "No fresh breakout"]
+                        # Put the highest-confirmation combination first without changing the score or Rank.
+                        priority_order = {
+                            "A · High-conviction trend": 0,
+                            "B · Bullish / partial confirmation": 1,
+                            "C · Developing / mixed trend": 2,
+                        }
+                        radar_view["_priority_order"] = radar_view["Trend priority"].map(priority_order).fillna(3)
+                        radar_view = radar_view.sort_values(
+                            ["_priority_order", "Rank score"], ascending=[True, False]
+                        ).drop(columns=["_priority_order"])
                         if radar_search.strip():
                             radar_mask = radar_view.astype(str).apply(
                                 lambda col: col.str.contains(radar_search.strip(), case=False, na=False)
                             ).any(axis=1)
                             radar_view = radar_view[radar_mask]
                         radar_view.insert(0, "Filtered rank", np.arange(1, len(radar_view) + 1))
-                        st.caption(f"{len(radar_df)} unique stocks ranked · {len(radar_view)} shown · Filtered rank is the visible-list position; Rank is the overall-universe position. EMA Alignment compares the stock close independently with its Daily and Weekly 200 EMA: Bullish aligned = above both; Early recovery = above Daily but below Weekly; Pullback = below Daily but above Weekly; Bearish aligned = below both. Missing either EMA is marked Insufficient data. Daily RS compares today's stock return with NIFTY today, while 1M/3M RS compares medium-term performance with NIFTY 500. Data session: {resilience_date or 'unavailable'}. Multiple microsector memberships are combined into one stock row.")
+                        st.caption(f"{len(radar_df)} unique stocks ranked · {len(radar_view)} shown · View: {radar_view_choice}. High-conviction trend = Bullish aligned + Leading microsector + Leading broad sector. Early Recovery watch = fresh Daily 200 EMA cross while still below Weekly 200 EMA. Fresh breakout distance is measured from the EMA(s) actually crossed: Healthy ≤8%, Stretched >8–12%, Extended >12%. Filtered rank is the visible-list position; Rank is the overall-universe position. EMA Alignment compares the stock close independently with its Daily and Weekly 200 EMA: Bullish aligned = above both; Early recovery = above Daily but below Weekly; Pullback = below Daily but above Weekly; Bearish aligned = below both. Missing either EMA is marked Insufficient data. Daily RS compares today's stock return with NIFTY today, while 1M/3M RS compares medium-term performance with NIFTY 500. Data session: {resilience_date or 'unavailable'}. Multiple microsector memberships are combined into one stock row.")
                         radar_display_cols = [
-                            "Filtered rank", "Rank", "Rank score", "Signal", "Stock", "EMA Alignment", "Daily return %", "Daily RS vs NIFTY (pp)",
+                            "Filtered rank", "Rank", "Rank score", "Signal", "Stock", "Trend priority", "EMA Alignment",
+                            "Early Recovery watch", "Breakout classification", "Daily return %", "Daily RS vs NIFTY (pp)",
                             "1M RS vs NIFTY 500 (pp)", "3M RS vs NIFTY 500 (pp)", "Microsector",
                             "Microsector zone", "Main sector", "Main sector zone", "Broad-sector headwind",
                             "Daily 200 EMA distance (%)", "Weekly 200 EMA distance (%)", "Overextension risk",
@@ -3816,6 +3879,15 @@ if active_page == "Main Dashboard":
                             _style_rotation_table(radar_view[radar_display_cols], zone_columns=("Microsector zone", "Main sector zone")),
                             use_container_width=True, hide_index=True, height=520
                         )
+                        if radar_view_choice == "High-conviction trend":
+                            st.success(f"{len(radar_view)} stock(s) meet all three trend-confirmation conditions.")
+                        elif radar_view_choice == "Early Recovery watchlist":
+                            st.info(f"{len(radar_view)} stock(s) have a fresh Daily 200 EMA cross while remaining below Weekly 200 EMA.")
+                        elif radar_view_choice == "Fresh vs Extended breakouts":
+                            healthy_count = int(radar_view["Breakout classification"].eq("Fresh breakout · Healthy").sum())
+                            stretched_count = int(radar_view["Breakout classification"].eq("Fresh breakout · Stretched").sum())
+                            extended_count = int(radar_view["Breakout classification"].eq("Extended breakout · Avoid chasing").sum())
+                            st.caption(f"Healthy: {healthy_count} · Stretched: {stretched_count} · Extended: {extended_count}")
                         risk_count = int(radar_view["Overextension risk"].str.startswith("⚠").sum()) if not radar_view.empty else 0
                         headwind_count = int(radar_view["Broad-sector headwind"].str.startswith("⚠").sum()) if not radar_view.empty else 0
                         if risk_count:
