@@ -74,6 +74,16 @@ def _style_rotation_table(frame, zone_columns=(), transition_columns=()):
     neutral_css = "color: #d1d5db;"
     for column in frame.columns:
         label = str(column).strip().lower()
+        if column == "EMA Alignment":
+            alignment_colors = {
+                "Bullish aligned": "background-color: #166534; color: #ffffff; font-weight: 700;",
+                "Early recovery": "background-color: #a16207; color: #ffffff; font-weight: 700;",
+                "Pullback": "background-color: #c2410c; color: #ffffff; font-weight: 700;",
+                "Bearish aligned": "background-color: #b91c1c; color: #ffffff; font-weight: 700;",
+                "Insufficient data": "background-color: #4b5563; color: #ffffff; font-weight: 700;",
+            }
+            styles[column] = frame[column].map(lambda value: alignment_colors.get(str(value).strip(), ""))
+            continue
         if column in zone_columns:
             styles[column] = frame[column].map(_rotation_zone_cell_css)
             continue
@@ -3795,10 +3805,10 @@ if active_page == "Main Dashboard":
                         radar_view.insert(0, "Filtered rank", np.arange(1, len(radar_view) + 1))
                         st.caption(f"{len(radar_df)} unique stocks ranked · {len(radar_view)} shown · Filtered rank is the visible-list position; Rank is the overall-universe position. EMA Alignment compares the stock close independently with its Daily and Weekly 200 EMA: Bullish aligned = above both; Early recovery = above Daily but below Weekly; Pullback = below Daily but above Weekly; Bearish aligned = below both. Missing either EMA is marked Insufficient data. Daily RS compares today's stock return with NIFTY today, while 1M/3M RS compares medium-term performance with NIFTY 500. Data session: {resilience_date or 'unavailable'}. Multiple microsector memberships are combined into one stock row.")
                         radar_display_cols = [
-                            "Filtered rank", "Rank", "Rank score", "Signal", "Stock", "Daily return %", "Daily RS vs NIFTY (pp)",
+                            "Filtered rank", "Rank", "Rank score", "Signal", "Stock", "EMA Alignment", "Daily return %", "Daily RS vs NIFTY (pp)",
                             "1M RS vs NIFTY 500 (pp)", "3M RS vs NIFTY 500 (pp)", "Microsector",
                             "Microsector zone", "Main sector", "Main sector zone", "Broad-sector headwind",
-                            "Daily 200 EMA distance (%)", "Weekly 200 EMA distance (%)", "EMA Alignment", "Overextension risk",
+                            "Daily 200 EMA distance (%)", "Weekly 200 EMA distance (%)", "Overextension risk",
                             "EMA cross timeframe", "Volume vs 20D avg", "Stage 2 B1/B2"
                         ]
                         radar_display_cols = [column for column in radar_display_cols if column in radar_view.columns]
