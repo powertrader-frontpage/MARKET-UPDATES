@@ -84,6 +84,29 @@ def _style_rotation_table(frame, zone_columns=(), transition_columns=()):
             }
             styles[column] = frame[column].map(lambda value: alignment_colors.get(str(value).strip(), ""))
             continue
+        if column == "Trend priority":
+            priority_colors = {
+                "A · High-conviction trend": "background-color: #166534; color: #ffffff; font-weight: 700;",
+                "B · Bullish / partial confirmation": "background-color: #1d4ed8; color: #ffffff; font-weight: 700;",
+                "C · Developing / mixed trend": "background-color: #4b5563; color: #ffffff; font-weight: 700;",
+            }
+            styles[column] = frame[column].map(lambda value: priority_colors.get(str(value).strip(), ""))
+            continue
+        if column == "Breakout classification":
+            breakout_colors = {
+                "Fresh breakout · Healthy": "background-color: #166534; color: #ffffff; font-weight: 700;",
+                "Fresh breakout · Stretched": "background-color: #a16207; color: #ffffff; font-weight: 700;",
+                "Extended breakout · Avoid chasing": "background-color: #b91c1c; color: #ffffff; font-weight: 700;",
+                "Early recovery · Daily cross": "background-color: #1d4ed8; color: #ffffff; font-weight: 700;",
+            }
+            styles[column] = frame[column].map(lambda value: breakout_colors.get(str(value).strip(), ""))
+            continue
+        if column == "Early Recovery watch":
+            styles[column] = frame[column].astype(str).map(
+                lambda value: "background-color: #a16207; color: #ffffff; font-weight: 700;"
+                if value.startswith("Yes") else ""
+            )
+            continue
         if column in zone_columns:
             styles[column] = frame[column].map(_rotation_zone_cell_css)
             continue
