@@ -288,10 +288,14 @@ def render_news_intelligence() -> None:
     else:
         st.caption(f"Corporate RSS entries received: {len(announcement_feed)} · matching F&O companies: 0")
 
-    cutoff_24h = pd.Timestamp(now_ist - timedelta(hours=24))
-    cutoff_7d = pd.Timestamp(now_ist - timedelta(days=7))
+    # Normalize both feed timestamps and cutoffs to UTC before comparison.
+    # RSS timestamps may arrive with different timezone representations.
+    cutoff_24h = pd.Timestamp(now_ist - timedelta(hours=24)).tz_convert("UTC")
+    cutoff_7d = pd.Timestamp(now_ist - timedelta(days=7)).tz_convert("UTC")
     if not announcements.empty:
-        announcements["Published"] = pd.to_datetime(announcements["Published"], errors="coerce")
+        announcements["Published"] = pd.to_datetime(
+            announcements["Published"], errors="coerce", utc=True
+        )
         fresh = announcements[announcements["Published"] >= cutoff_24h].copy()
         developing = announcements[announcements["Published"] >= cutoff_7d].copy()
     else:
