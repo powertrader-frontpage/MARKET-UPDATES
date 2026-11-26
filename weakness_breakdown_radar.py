@@ -139,23 +139,41 @@ def _normalise_nse_symbol(value):
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _fo_symbols():
-    """Read and normalise NSE's published F&O market-lot universe."""
+    """Read NSE's official permitted-lot file and reject partial/challenge responses."""
     url = "https://nsearchives.nseindia.com/content/fo/fo_mktlots.csv"
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "text/csv,application/octet-stream,*/*",
+               "Referer": "https://www.nseindia.com/products-services/equity-derivatives-contract-information"}
     try:
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/csv,*/*"}, timeout=20)
+        response = requests.get(url, headers=headers, timeout=25)
         response.raise_for_status()
-        frame = pd.read_csv(pd.io.common.BytesIO(response.content), sep=None, engine="python")
-        frame.columns = [str(c).replace("\\ufeff", "").strip() for c in frame.columns]
-        symbol_col = next((c for c in frame.columns if c.strip().lower() in {"symbol", "underlying", "underlying_symbol"}), None)
-        if symbol_col is None:
-            return set(), f"NSE F&O file columns not recognised: {', '.join(map(str, frame.columns[:12]))}"
-        values = {_normalise_nse_symbol(x) for x in frame[symbol_col].dropna()}
-        values.discard(None)
-        if not values:
-            return set(), "NSE F&O file parsed, but no valid underlying symbols were found."
+        if len(response.content) < 500:
+            return set(), f"NSE F&O file response is unexpectedly small ({len(response.content)} bytes)."
+        parsed = None
+        parse_errors = []
+        for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin1"):
+            for skip in range(0, 4):
+                try:
+                    frame = pd.read_csv(pd.io.common.BytesIO(response.content), encoding=encoding,
+                                        skiprows=skip, dtype=str)
+                    frame.columns = [str(c).replace("\\ufeff", "").strip() for c in frame.columns]
+                    col = next((c for c in frame.columns if c.strip().lower() in
+                                {"symbol", "underlying", "underlying_symbol", "underlying symbol"}), None)
+                    if col:
+                        vals = {_normalise_nse_symbol(x) for x in frame[col].dropna()}
+                        vals.discard(None)
+                        if len(vals) > (len(parsed[1]) if parsed else 0):
+                            parsed = (frame, vals, col)
+                except Exception as exc:
+                    parse_errors.append(type(exc).__name__)
+        if not parsed:
+            return set(), f"NSE F&O file columns could not be recognised. Content-Type: {response.headers.get('Content-Type','unknown')}."
+        frame, values, col = parsed
+        if len(values) < 50:
+            return set(), (f"NSE F&O file parsed column '{col}' but contained only {len(values)} distinct symbols; "
+                           "the response may be partial or the file format may have changed. F&O stock ranking withheld.")
         return values, None
     except Exception as exc:
-        return set(), f"NSE F&O universe unavailable ({type(exc).__name__}: {str(exc)[:100]})."
+        return set(), f"NSE F&O universe unavailable ({type(exc).__name__}: {str(exc)[:120]})."
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _download_daily(symbols):
@@ -273,7 +291,12 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
     sector_map = {str(k): tuple(sorted(set(v))) for k, v in sector_stocks.items()}
     official_map, official_errors = _official_sector_universe()
     sector_map.update(official_map)
-    all_symbols = sorted({sym for basket in sector_map.values() for sym in basket})
+    sector_membership = {}
+    for sector, basket in sector_map.items():
+        for symbol in basket:
+            sector_membership.setdefault(symbol, []).append(sector)
+    sector_symbols = set(sector_membership)
+    all_symbols = sorted(sector_symbols | set(fo))
     with st.expander("Universe & data status", expanded=False):
         st.write(f"Official Nifty sector baskets loaded: {len(official_map)} / {len(OFFICIAL_SECTOR_INDEX_FILES)}.")
         st.write(f"Unique mapped constituents: {len(all_symbols)} across {len(sector_map)} baskets.")
@@ -303,20 +326,22 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
     if len(price_map) < len(all_symbols):
         st.warning(f"{len(all_symbols) - len(price_map)} mapped constituents have no usable history after FYERS and Yahoo attempts; only stocks with sufficient history are included.")
     stock_rows=[]
-    for sector,basket in sector_map.items():
-        for symbol in basket:
-            frame=price_map.get(symbol,pd.DataFrame())
-            close=pd.to_numeric(frame.get("Close",pd.Series(dtype=float)),errors="coerce").dropna().sort_index()
-            volume=pd.to_numeric(frame.get("Volume",pd.Series(dtype=float)),errors="coerce").dropna().sort_index()
-            m=_metrics(close,volume)
-            if not m: continue
-            m.update({"Stock":symbol.removesuffix(".NS"),"Sector":sector,
+    for symbol in all_symbols:
+        frame=price_map.get(symbol,pd.DataFrame())
+        close=pd.to_numeric(frame.get("Close",pd.Series(dtype=float)),errors="coerce").dropna().sort_index()
+        volume=pd.to_numeric(frame.get("Volume",pd.Series(dtype=float)),errors="coerce").dropna().sort_index()
+        m=_metrics(close,volume)
+        if not m: continue
+        memberships = sector_membership.get(symbol) or ["Outside mapped sector baskets"]
+        for sector in memberships:
+            row = dict(m)
+            row.update({"Stock":symbol.removesuffix(".NS"),"Sector":sector,
                 "1M RS vs NIFTY (pp)":m["1M %"]-nr[21] if pd.notna(nr[21]) else np.nan,
                 "3M RS vs NIFTY (pp)":m["3M %"]-nr[63] if pd.notna(nr[63]) else np.nan,
                 "1M RS vs NIFTY 500 (pp)":m["1M %"]-n5r[21] if pd.notna(n5r[21]) and pd.notna(m["1M %"]) else np.nan,
                 "3M RS vs NIFTY 500 (pp)":m["3M %"]-n5r[63] if pd.notna(n5r[63]) and pd.notna(m["3M %"]) else np.nan,
                 "F&O eligible":symbol in fo})
-            stock_rows.append(m)
+            stock_rows.append(row)
     stocks=pd.DataFrame(stock_rows)
     if stocks.empty:
         st.warning("No constituents returned enough history for the 200-day EMA calculations.")
@@ -326,7 +351,7 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
         lambda row: row["1M %"] - sector_return_lookup.get(row["Sector"], np.nan)
         if pd.notna(row["1M %"]) else np.nan, axis=1)
     sector_rows=[]
-    for sector,frame in stocks.groupby("Sector"):
+    for sector,frame in stocks[stocks["Sector"] != "Outside mapped sector baskets"].groupby("Sector"):
         sector_rows.append({"Sector":sector,"Stocks measured":frame["Stock"].nunique(),
             "Average 1W %":frame["1W %"].mean(),"Average 1M %":frame["1M %"].mean(),"Average 3M %":frame["3M %"].mean(),
             "1M RS vs NIFTY (pp)":frame["1M RS vs NIFTY (pp)"].mean(),"3M RS vs NIFTY (pp)":frame["3M RS vs NIFTY (pp)"].mean(),
@@ -344,6 +369,20 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
     st.dataframe(_style_sector_table(sectors).format({c:"{:.1f}" for c in sectors.select_dtypes(include="number").columns if c not in {"Rank","Stocks measured","Fresh bearish crosses"}}),use_container_width=True,hide_index=True)
     st.download_button("⬇ Download weak sector ranking",sectors.to_csv(index=False).encode("utf-8-sig"),"weak_sector_ranking.csv","text/csv",key="weak_sector_csv")
     st.markdown("### 2. Weak F&O Stocks")
+    outside = stocks[(stocks["F&O eligible"]) & (stocks["Sector"] == "Outside mapped sector baskets")].copy()
+    outside = outside.sort_values(["1M RS vs NIFTY 500 (pp)", "3M RS vs NIFTY 500 (pp)"], ascending=[True, True])
+    st.markdown("#### F&O Stocks – Outside Sector Baskets")
+    st.caption("Verified F&O underlyings that are not constituents of the loaded sector baskets are included separately; they are not assigned an artificial weak-sector confirmation.")
+    outside_cols = ["Stock", "Price", "1W %", "1M %", "3M %", "1M RS vs NIFTY (pp)",
+                    "1M RS vs NIFTY 500 (pp)", "Daily 200 EMA gap %", "Weekly 200 EMA gap %",
+                    "Below Daily 200 EMA", "Below Weekly 200 EMA", "Fresh bearish 200 EMA cross",
+                    "20D low breakdown", "Volume / 20D avg", "Data date"]
+    if outside.empty:
+        st.info("No outside-basket F&O stocks have sufficient history in this run, or the verified F&O universe is unavailable.")
+    else:
+        st.dataframe(_style_stock_table(outside[outside_cols].drop_duplicates(subset=["Stock"])),
+                     use_container_width=True, hide_index=True)
+
     fo_stocks=stocks[stocks["F&O eligible"]].copy()
     st.caption(f"F&O coverage: {fo_stocks['Stock'].nunique()} verified F&O stocks with usable price history across {fo_stocks['Sector'].nunique()} mapped sector baskets.")
     sector_weak_cutoff = float(sectors["Weakness score"].median()) if not sectors.empty else np.nan
