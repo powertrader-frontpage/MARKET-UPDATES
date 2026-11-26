@@ -1,7 +1,6 @@
-"""FYERS-first futures volume-record data for Institutional Volume Intelligence.
+"""FYERS-first underlying cash-stock volume data for NFO-eligible stocks.
 
-Only HVQ (63 sessions) is calculated. Cash-equity
-volume is never substituted for futures volume.
+Only HVQ (63 sessions) is calculated. Underlying NSE cash-equity volume is used for NFO-eligible stocks.
 """
 from __future__ import annotations
 
@@ -51,15 +50,16 @@ def load_nse_futures_master() -> tuple[pd.DataFrame, Optional[str]]:
         return pd.DataFrame(), f"FYERS NSE futures master unavailable ({exc.__class__.__name__})."
 
 
-def fetch_continuous_futures_daily(app_id: str, access_token: str, symbol: str,
-                                   lookback_days: int = FYERS_DAILY_LOOKBACK_DAYS):
-    """Fetch up to one year of continuous daily futures OHLCV for HVQ."""
+def fetch_nfo_stock_daily(app_id: str, access_token: str, underlying: str,
+                          lookback_days: int = FYERS_DAILY_LOOKBACK_DAYS):
+    """Fetch daily OHLCV for the underlying NSE cash equity of an NFO-eligible stock."""
+    symbol = "NSE:" + str(underlying).upper().replace(".NS", "") + "-EQ"
     end = date.today()
     start = end - timedelta(days=min(max(int(lookback_days), 252), 366))
     try:
         params = {
             "symbol": symbol, "resolution": "D", "date_format": "1",
-            "range_from": start.isoformat(), "range_to": end.isoformat(), "cont_flag": "1",
+            "range_from": start.isoformat(), "range_to": end.isoformat(),
         }
         headers = {"Authorization": f"{app_id}:{access_token}"}
         payload = {}
@@ -80,7 +80,7 @@ def fetch_continuous_futures_daily(app_id: str, access_token: str, symbol: str,
             return pd.DataFrame(), str(payload.get("message") or payload.get("code") or f"FYERS history request failed (HTTP {status_code}).")
         candles = payload.get("candles") or []
         if not candles:
-            return pd.DataFrame(), "FYERS returned no continuous futures candles."
+            return pd.DataFrame(), "FYERS returned no underlying cash-equity candles."
         frame = pd.DataFrame(candles)
         if frame.shape[1] < 6:
             return pd.DataFrame(), "FYERS returned an unexpected candle schema."
@@ -91,14 +91,14 @@ def fetch_continuous_futures_daily(app_id: str, access_token: str, symbol: str,
             frame[col] = pd.to_numeric(frame[col], errors="coerce")
         frame = frame.dropna(subset=["Date", "Open", "High", "Low", "Close", "Volume"])
         frame = frame.sort_values("Date").drop_duplicates("Date", keep="last").reset_index(drop=True)
-        frame["Source"] = "FYERS continuous futures"
+        frame["Source"] = "FYERS NSE cash equity"
         return frame, None
     except Exception as exc:
-        return pd.DataFrame(), f"FYERS futures history unavailable ({exc.__class__.__name__})."
+        return pd.DataFrame(), f"FYERS underlying cash-equity history unavailable ({exc.__class__.__name__})."
 
 
 def volume_record_flags(frame: pd.DataFrame) -> dict:
-    """Check whether the latest completed futures session is the 63-session volume high."""
+    """Check whether the latest completed underlying-stock session is the 63-session volume high."""
     if frame is None or frame.empty or "Volume" not in frame:
         return {"HVQ": None, "history_sessions": 0, "HVQ_status": "Unavailable"}
     data = frame.copy()
