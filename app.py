@@ -5434,5 +5434,8 @@ if active_page == "Weakness & Breakdown Radar":
         "Infrastructure": ["LT.NS","ADANIPORTS.NS","ADANIENT.NS","SIEMENS.NS","ABB.NS","BHEL.NS","IRB.NS","KEC.NS","KALPATPOWR.NS","NBCC.NS"],
         "Consumption": ["TITAN.NS","TRENT.NS","DMART.NS","ETERNAL.NS","NYKAA.NS","INDIGO.NS","JUBLFOOD.NS","PAGEIND.NS","ASIANPAINT.NS","HAVELLS.NS"],
     }
-    render_weakness_breakdown_radar(WEAKNESS_SECTOR_STOCKS, SECTOR_TICKERS)
+    _weak_fyers_config = fyers_credentials()
+    _weak_fyers_token = st.session_state.get("fyers_access_token")
+    _weak_fyers_session = (_weak_fyers_config[0], _weak_fyers_token) if _weak_fyers_config and _weak_fyers_token else None
+    render_weakness_breakdown_radar(WEAKNESS_SECTOR_STOCKS, SECTOR_TICKERS, _weak_fyers_session)
 
