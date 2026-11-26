@@ -5418,7 +5418,7 @@ if active_page == "Research Tools":
 
 if active_page == "News Intelligence":
     from news_intelligence import render_news_intelligence
-    render_news_intelligence()
+    render_news_intelligence(MICRO_SECTORS)
 
 if active_page == "Weakness & Breakdown Radar":
     from weakness_breakdown_radar import render_weakness_breakdown_radar
