@@ -28,42 +28,74 @@ OFFICIAL_SECTOR_INDEX_FILES = {
 }
 
 
+def _read_official_constituent_csv(content):
+    """Parse Nifty constituent CSVs despite BOMs, encoding and delimiter variations."""
+    last_error = None
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin1"):
+        try:
+            frame = pd.read_csv(pd.io.common.BytesIO(content), encoding=encoding, sep=None, engine="python")
+            frame.columns = [str(c).replace("\\ufeff", "").strip() for c in frame.columns]
+            symbol_col = next((c for c in frame.columns if c.strip().lower() in {"symbol", "ticker"}), None)
+            if symbol_col:
+                return frame, symbol_col
+        except Exception as exc:
+            last_error = exc
+    raise ValueError(f"Could not parse a recognised Symbol column ({type(last_error).__name__ if last_error else 'unknown'})")
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def _official_sector_universe():
     baskets, errors = {}, []
     base = "https://www.niftyindices.com/IndexConstituent/"
     for sector, filename in OFFICIAL_SECTOR_INDEX_FILES.items():
         try:
-            response = requests.get(base + filename, headers={"User-Agent":"Mozilla/5.0"}, timeout=12)
+            response = requests.get(base + filename,
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "text/csv,*/*", "Referer": "https://www.niftyindices.com/"},
+                timeout=15)
             response.raise_for_status()
-            frame = pd.read_csv(pd.io.common.BytesIO(response.content))
-            col = next((c for c in frame.columns if str(c).strip().lower()=="symbol"), None)
-            if col is None: raise ValueError("Symbol column missing")
-            values = sorted({str(v).strip().upper()+".NS" for v in frame[col].dropna() if str(v).strip()})
-            if values: baskets["Nifty "+sector] = values
-            else: errors.append(sector+": empty file")
+            frame, col = _read_official_constituent_csv(response.content)
+            values = sorted({str(v).strip().upper() + ".NS" for v in frame[col].dropna()
+                             if str(v).strip() and str(v).strip().lower() != "nan"})
+            if values:
+                baskets["Nifty " + sector] = values
+            else:
+                errors.append(sector + ": parsed file but no symbols were found")
         except Exception as exc:
-            errors.append(sector+": "+type(exc).__name__)
+            errors.append(sector + ": " + str(exc)[:120])
     return baskets, errors
-
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _fyers_daily_history(app_id, access_token, fyers_symbol, days=1900):
-    end = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-    start = end - timedelta(days=days)
-    try:
-        response = requests.get("https://api-t1.fyers.in/data/history",
-            params={"symbol":fyers_symbol,"resolution":"D","date_format":"1","range_from":str(start),"range_to":str(end),"cont_flag":"1"},
-            headers={"Authorization":f"{app_id}:{access_token}"},timeout=18)
-        payload=response.json()
-        if not response.ok or payload.get("s")!="ok": return pd.DataFrame()
-        candles=payload.get("candles") or []
-        if not candles: return pd.DataFrame()
-        frame=pd.DataFrame(candles,columns=["Epoch","Open","High","Low","Close","Volume"][:len(candles[0])])
-        frame["Date"]=pd.to_datetime(frame["Epoch"],unit="s",utc=True).dt.tz_convert("Asia/Kolkata")
-        return frame.set_index("Date")[["Open","High","Low","Close","Volume"]].apply(pd.to_numeric,errors="coerce").dropna(subset=["Close"])
-    except Exception:
+    """Fetch long daily history in bounded chunks to avoid oversized FYERS requests."""
+    end_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    start_date = end_date - timedelta(days=days)
+    cursor = start_date
+    frames = []
+    chunk_days = 330
+    while cursor <= end_date:
+        chunk_end = min(cursor + timedelta(days=chunk_days), end_date)
+        try:
+            response = requests.get(
+                "https://api-t1.fyers.in/data/history",
+                params={"symbol": fyers_symbol, "resolution": "D", "date_format": "1",
+                        "range_from": str(cursor), "range_to": str(chunk_end), "cont_flag": "1"},
+                headers={"Authorization": f"{app_id}:{access_token}"},
+                timeout=20,
+            )
+            payload = response.json()
+            if response.ok and payload.get("s") == "ok":
+                candles = payload.get("candles") or []
+                if candles:
+                    frame = pd.DataFrame(candles, columns=["Epoch", "Open", "High", "Low", "Close", "Volume"][:len(candles[0])])
+                    frame["Date"] = pd.to_datetime(frame["Epoch"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
+                    frames.append(frame.set_index("Date")[["Open", "High", "Low", "Close", "Volume"]]
+                                  .apply(pd.to_numeric, errors="coerce").dropna(subset=["Close"]))
+        except Exception:
+            pass
+        cursor = chunk_end + timedelta(days=1)
+    if not frames:
         return pd.DataFrame()
+    return pd.concat(frames).sort_index().loc[lambda x: ~x.index.duplicated(keep="last")]
 
 
 def _build_price_matrix(symbols, fyers_session):
@@ -93,22 +125,37 @@ def _build_price_matrix(symbols, fyers_session):
     return prices, len(symbols)-len(failed), len(failed)
 
 
+def _normalise_nse_symbol(value):
+    text = str(value).strip().upper()
+    if not text or text in {"NAN", "NONE"}:
+        return None
+    if text.startswith("NSE:"):
+        text = text[4:]
+    text = text.replace("-EQ", "").replace(".NS", "").strip()
+    if not text or any(ch.isspace() for ch in text):
+        return None
+    return text + ".NS"
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def _fo_symbols():
-    """Read NSE's published futures market-lot file; fail closed if it cannot be verified."""
+    """Read and normalise NSE's published F&O market-lot universe."""
     url = "https://nsearchives.nseindia.com/content/fo/fo_mktlots.csv"
     try:
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/csv,*/*"}, timeout=20)
         response.raise_for_status()
-        frame = pd.read_csv(pd.io.common.BytesIO(response.content))
-        symbol_col = next((c for c in frame.columns if str(c).strip().lower() in {"symbol", "underlying"}), None)
+        frame = pd.read_csv(pd.io.common.BytesIO(response.content), sep=None, engine="python")
+        frame.columns = [str(c).replace("\\ufeff", "").strip() for c in frame.columns]
+        symbol_col = next((c for c in frame.columns if c.strip().lower() in {"symbol", "underlying", "underlying_symbol"}), None)
         if symbol_col is None:
-            return set(), "NSE F&O market-lot file did not expose a recognised symbol column."
-        values = {str(x).strip().upper() + ".NS" for x in frame[symbol_col].dropna() if str(x).strip()}
+            return set(), f"NSE F&O file columns not recognised: {', '.join(map(str, frame.columns[:12]))}"
+        values = {_normalise_nse_symbol(x) for x in frame[symbol_col].dropna()}
+        values.discard(None)
+        if not values:
+            return set(), "NSE F&O file parsed, but no valid underlying symbols were found."
         return values, None
     except Exception as exc:
-        return set(), f"NSE F&O universe unavailable ({type(exc).__name__}); F&O-only ranking withheld."
-
+        return set(), f"NSE F&O universe unavailable ({type(exc).__name__}: {str(exc)[:100]})."
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _download_daily(symbols):
