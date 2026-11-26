@@ -229,7 +229,7 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
             "Below Weekly 200 EMA %":frame["Below Weekly 200 EMA"].mean()*100,
             "Fresh bearish crosses":int(frame["Fresh bearish 200 EMA cross"].sum())})
     sectors=pd.DataFrame(sector_rows)
-    score_cols=[("Average 1M %",25,True),("Average 3M %",25,True),("Below Daily 200 EMA %",25,False),("Below Weekly 200 EMA %",25,False)]
+    score_cols=[("Average 1M %",25,False),("Average 3M %",25,False),("Below Daily 200 EMA %",25,False),("Below Weekly 200 EMA %",25,False)]
     sectors["Weakness score"]=sum(sectors[col].rank(pct=True,ascending=asc)*weight for col,weight,asc in score_cols)
     sectors=sectors.sort_values("Weakness score",ascending=False).reset_index(drop=True)
     sectors.insert(0,"Rank",np.arange(1,len(sectors)+1))
