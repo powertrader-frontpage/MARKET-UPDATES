@@ -274,7 +274,8 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
     with st.expander("Universe & data status", expanded=False):
         st.write(f"Official Nifty sector baskets loaded: {len(official_map)} / {len(OFFICIAL_SECTOR_INDEX_FILES)}.")
         st.write(f"Unique mapped constituents: {len(all_symbols)} across {len(sector_map)} baskets.")
-        st.write(f"Verified F&O symbols: {len(fo)}.")
+        st.write(f"Verified F&O symbols in NSE file: {len(fo)}.")
+        st.write(f"F&O symbols overlapping mapped sector constituents: {len(set(all_symbols) & fo)}.")
         st.write("FYERS session: connected" if fyers_session and fyers_session[1] else "FYERS session: not connected · Yahoo fallback will be used.")
         if fo_error: st.warning(fo_error)
         if official_errors: st.caption("Official index files unavailable: " + "; ".join(official_errors[:8]))
@@ -293,7 +294,11 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
     def _returns(series):
         return {n:(float(series.iloc[-1])/float(series.iloc[-n-1])-1)*100 if len(series)>n and float(series.iloc[-n-1]) else np.nan for n in (5,21,63)}
     nr, n5r = _returns(nifty), _returns(nifty500)
-    st.caption(f"Price coverage: FYERS primary {fyers_count} symbols · Yahoo fallback used/attempted for {yahoo_count} symbols · index benchmarks: Yahoo Finance.")
+    st.caption(f"Price coverage: FYERS primary {fyers_count} symbols · Yahoo fallback attempted for {yahoo_count} symbols · usable stock histories: {len(price_map)} / {len(all_symbols)} · index benchmarks: Yahoo Finance.")
+    if fyers_session and fyers_count == 0:
+        st.warning("FYERS is connected, but returned no usable history for this radar universe. Yahoo fallback is supplying stock prices. Check FYERS symbol format, history API response and access entitlement.")
+    if len(price_map) < len(all_symbols):
+        st.warning(f"{len(all_symbols) - len(price_map)} mapped constituents have no usable history after FYERS and Yahoo attempts; only stocks with sufficient history are included.")
     stock_rows=[]
     for sector,basket in sector_map.items():
         for symbol in basket:
@@ -337,6 +342,7 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
     st.download_button("⬇ Download weak sector ranking",sectors.to_csv(index=False).encode("utf-8-sig"),"weak_sector_ranking.csv","text/csv",key="weak_sector_csv")
     st.markdown("### 2. Weak F&O Stocks")
     fo_stocks=stocks[stocks["F&O eligible"]].copy()
+    st.caption(f"F&O coverage: {fo_stocks['Stock'].nunique()} verified F&O stocks with usable price history across {fo_stocks['Sector'].nunique()} mapped sector baskets.")
     sector_weak_cutoff = float(sectors["Weakness score"].median()) if not sectors.empty else np.nan
     sector_weak_lookup = dict(zip(sectors["Sector"], sectors["Weakness score"] >= sector_weak_cutoff)) if pd.notna(sector_weak_cutoff) else {}
     fo_stocks["Sector weak"] = fo_stocks["Sector"].map(sector_weak_lookup).fillna(False)
@@ -350,14 +356,22 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
         ["A · High-conviction weakness","C · Early breakdown watch"],default="B · Weak / developing")
     fo_stocks=fo_stocks.sort_values(["Bearish confirmations","1M RS vs NIFTY 500 (pp)","3M RS vs NIFTY 500 (pp)"],ascending=[False,True,True])
     display=["Stock","Sector","Sector weak","Classification","Price","1W %","1M %","3M %","1M RS vs NIFTY (pp)","1M RS vs NIFTY 500 (pp)","1M RS vs sector basket (pp)","3M RS vs NIFTY 500 (pp)","Daily 200 EMA gap %","Weekly 200 EMA gap %","Volume / 20D avg","Fresh bearish 200 EMA cross","20D low breakdown","Data date"]
-    fo_display = fo_stocks[display].drop_duplicates(subset=["Stock"]).head(150)\n    st.dataframe(_style_stock_table(fo_display),use_container_width=True,hide_index=True)
+    fo_display = fo_stocks[display].drop_duplicates(subset=["Stock"]).head(150)
+    st.dataframe(_style_stock_table(fo_display),use_container_width=True,hide_index=True)
     st.download_button("⬇ Download weak F&O stocks",fo_stocks.to_csv(index=False).encode("utf-8-sig"),"weak_fo_stocks.csv","text/csv",key="weak_fo_csv")
     st.markdown("### 3. Fresh Breakdown Watchlist")
     fresh=fo_stocks[fo_stocks["Fresh bearish 200 EMA cross"] | fo_stocks["20D low breakdown"]].copy()
-    fresh_display = fresh[display].drop_duplicates(subset=["Stock"])\n    st.dataframe(_style_stock_table(fresh_display),use_container_width=True,hide_index=True)
+    fresh_display = fresh[display].drop_duplicates(subset=["Stock"])
+    if fresh_display.empty:
+        st.info(f"No fresh bearish 200-EMA cross or 20-day low breakdown is confirmed among {fo_stocks['Stock'].nunique()} F&O stocks with sufficient history. This is a zero-signal result for the available data.")
+    else:
+        st.dataframe(_style_stock_table(fresh_display),use_container_width=True,hide_index=True)
     st.download_button("⬇ Download fresh breakdown watchlist",fresh.to_csv(index=False).encode("utf-8-sig"),"fresh_breakdown_watchlist.csv","text/csv",key="fresh_breakdown_csv")
     st.markdown("### 4. Shortlist for Analysis")
     shortlist=fo_stocks[fo_stocks["Classification"]=="A · High-conviction weakness"].drop_duplicates(subset=["Stock"]).head(20)
-    st.dataframe(_style_stock_table(shortlist[display]),use_container_width=True,hide_index=True)
+    if shortlist.empty:
+        st.info(f"No stock meets all high-conviction conditions: weak sector, below daily and weekly 200 EMA, volume at least 1.2× its prior 20-day average, and negative 1M relative strength versus NIFTY 500. {fo_stocks['Stock'].nunique()} F&O stocks were evaluated; no qualifying setup is being forced.")
+    else:
+        st.dataframe(_style_stock_table(shortlist[display]),use_container_width=True,hide_index=True)
     st.download_button("⬇ Download analysis shortlist",shortlist.to_csv(index=False).encode("utf-8-sig"),"weakness_analysis_shortlist.csv","text/csv",key="weakness_shortlist_csv")
     st.info("Research filter only, not a short-entry instruction. Confirm liquidity, event risk, derivative constraints and price structure before acting. Extended declines can reverse sharply.")
