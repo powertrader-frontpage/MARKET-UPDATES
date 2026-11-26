@@ -94,11 +94,36 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
         if result.empty:
             st.info("No stocks met both HVQ conditions in the latest scan.")
         else:
+            sector_zones = st.session_state.get("ivi_sector_zone_map", {})
+            micro_zones = st.session_state.get("ivi_micro_zone_map", {})
+            display_result = result.copy()
+            display_result["Sector Zone"] = display_result["Sector"].map(
+                lambda value: "; ".join(dict.fromkeys(
+                    sector_zones.get(name.strip(), "Unavailable") for name in str(value).split(";")
+                ))
+            )
+            display_result["Microsector Zone"] = display_result["Microsector"].map(
+                lambda value: "; ".join(dict.fromkeys(
+                    micro_zones.get(name.strip(), "Unavailable") for name in str(value).split(";")
+                ))
+            )
+            zone_css = {
+                "Leading": "color: #22C55E; background-color: rgba(34,197,94,.16); font-weight: 700;",
+                "Improving": "color: #60A5FA; background-color: rgba(59,130,246,.16); font-weight: 700;",
+                "Weakening": "color: #F59E0B; background-color: rgba(245,158,11,.16); font-weight: 700;",
+                "Lagging": "color: #F87171; background-color: rgba(239,68,68,.16); font-weight: 700;",
+                "Unavailable": "color: #94A3B8; background-color: rgba(148,163,184,.10);",
+            }
+            def _zone_style(value):
+                return ";".join(zone_css.get(part.strip(), "") for part in str(value).split(";"))
             styled = (
-                result.style
+                display_result.style
                 .map(lambda _: "color: #7DD3FC; background-color: rgba(14, 116, 144, 0.16); font-weight: 600;", subset=["Sector"])
                 .map(lambda _: "color: #C4B5FD; background-color: rgba(109, 40, 217, 0.16); font-weight: 600;", subset=["Microsector"])
+                .map(_zone_style, subset=["Sector Zone", "Microsector Zone"])
             )
+            if not sector_zones or not micro_zones:
+                st.caption("Rotation colours use the Main Dashboard's latest calculated zones. Visit/refresh Main Dashboard once if zones show Unavailable.")
             st.dataframe(styled, use_container_width=True, hide_index=True)
             st.download_button(
                 "Download HVQ watchlist",
