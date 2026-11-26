@@ -30,7 +30,7 @@ def _download_daily(symbols):
     if not symbols:
         return pd.DataFrame()
     try:
-        return yf.download(list(symbols), period="2y", interval="1d", group_by="ticker",
+        return yf.download(list(symbols), period="5y", interval="1d", group_by="ticker",
                            auto_adjust=True, progress=False, threads=False)
     except Exception:
         return pd.DataFrame()
@@ -70,8 +70,8 @@ def _metrics(close, volume):
     below_d = last < d200
     below_w = pd.notna(w200) and last < w200
     cross = prev >= p200 and last < d200
-    low20 = float(close.iloc[-20:].min()) if len(close) >= 20 else np.nan
-    breakdown = last <= low20 * 1.005 if pd.notna(low20) else False
+    prior20_low = float(close.iloc[-21:-1].min()) if len(close) >= 21 else np.nan
+    breakdown = last < prior20_low if pd.notna(prior20_low) else False
     return {"Price":last, "1W %":ret(5), "1M %":ret(21), "3M %":ret(63),
             "Daily 200 EMA gap %":(last/d200-1)*100, "Weekly 200 EMA gap %":(last/w200-1)*100 if pd.notna(w200) and w200 else np.nan,
             "Below Daily 200 EMA":below_d, "Below Weekly 200 EMA":below_w,
