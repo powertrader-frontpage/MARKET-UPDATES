@@ -3298,6 +3298,15 @@ if active_page == "Main Dashboard":
                     st.session_state["ivi_micro_zone_map"] = dict(zip(
                         micro_df["Micro sector"].astype(str), micro_df["Zone"].astype(str)
                     ))
+                    # Broad sector/group zone: majority zone among the group's live microsectors.
+                    _zone_priority = {"Leading": 0, "Improving": 1, "Weakening": 2, "Lagging": 3}
+                    _group_zone_map = {}
+                    for _group, _group_frame in micro_df.groupby("Group"):
+                        _counts = _group_frame["Zone"].value_counts()
+                        _top_count = _counts.max()
+                        _tied = [str(z) for z, n in _counts.items() if n == _top_count]
+                        _group_zone_map[str(_group)] = sorted(_tied, key=lambda z: _zone_priority.get(z, 9))[0]
+                    st.session_state["ivi_sector_zone_map"] = _group_zone_map
                     micro_zone_durations = {}
                     for micro_name, history in micro_histories.items():
                         aligned_micro = pd.concat([history.rename("micro"), bench.rename("bench")], axis=1).dropna()
