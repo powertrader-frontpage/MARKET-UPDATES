@@ -553,6 +553,7 @@ with st.sidebar:
         "Navigate",
         [
             "Main Dashboard",
+            "Weakness & Breakdown Radar",
             "1-Hour Strength Screener",
             "Breakout Scanners",
             "Stage 2 B1 Fundamentals",
@@ -5414,8 +5415,24 @@ if active_page == "Research Tools":
         else:
             st.info("Select segments and press Scan / refresh to generate the first watchlist. Re-run after market-data refresh to catch new qualifying stocks.")
 
+if active_page == "Weakness & Breakdown Radar":
+    from weakness_breakdown_radar import render_weakness_breakdown_radar
 
-
-
-
+    # Keep this page independent of Main Dashboard's local variables and preserve
+    # the existing conventional-sector constituent definitions for breadth context.
+    WEAKNESS_SECTOR_STOCKS = {
+        "IT": ["TCS.NS","INFY.NS","HCLTECH.NS","WIPRO.NS","TECHM.NS","LTIM.NS","PERSISTENT.NS","COFORGE.NS","MPHASIS.NS","OFSS.NS"],
+        "Pharma": ["SUNPHARMA.NS","DRREDDY.NS","CIPLA.NS","DIVISLAB.NS","TORNTPHARM.NS","LUPIN.NS","AUROPHARMA.NS","ALKEM.NS","ZYDUSLIFE.NS","MANKIND.NS"],
+        "Auto": ["MARUTI.NS","M&M.NS","TATAMOTORS.NS","BAJAJ-AUTO.NS","EICHERMOT.NS","HEROMOTOCO.NS","TVSMOTOR.NS","ASHOKLEY.NS","BOSCHLTD.NS","MOTHERSON.NS"],
+        "Metal": ["TATASTEEL.NS","JSWSTEEL.NS","HINDALCO.NS","VEDL.NS","COALINDIA.NS","JINDALSTEL.NS","NMDC.NS","SAIL.NS","NATIONALUM.NS","HINDZINC.NS"],
+        "Energy": ["RELIANCE.NS","ONGC.NS","NTPC.NS","POWERGRID.NS","BPCL.NS","IOC.NS","GAIL.NS","TATAPOWER.NS","ADANIGREEN.NS","JSWENERGY.NS"],
+        "FMCG": ["HINDUNILVR.NS","ITC.NS","NESTLEIND.NS","BRITANNIA.NS","TATACONSUM.NS","GODREJCP.NS","DABUR.NS","MARICO.NS","COLPAL.NS","UNITDSPR.NS"],
+        "Realty": ["DLF.NS","GODREJPROP.NS","OBEROIRLTY.NS","PRESTIGE.NS","PHOENIXLTD.NS","LODHA.NS","BRIGADE.NS","SOBHA.NS","MAHLIFE.NS","ANANTRAJ.NS"],
+        "Financial Services": ["HDFCBANK.NS","ICICIBANK.NS","SBIN.NS","AXISBANK.NS","KOTAKBANK.NS","BAJFINANCE.NS","BAJAJFINSV.NS","SHRIRAMFIN.NS","CHOLAFIN.NS","PFC.NS"],
+        "PSU Bank": ["SBIN.NS","BANKBARODA.NS","CANBK.NS","PNB.NS","UNIONBANK.NS","INDIANB.NS","IOB.NS","MAHABANK.NS","CENTRALBK.NS","UCOBANK.NS"],
+        "Media": ["SUNTV.NS","ZEEL.NS","NETWORK18.NS","TVTODAY.NS","PVRINOX.NS","SAREGAMA.NS","NAZARA.NS","DBCORP.NS"],
+        "Infrastructure": ["LT.NS","ADANIPORTS.NS","ADANIENT.NS","SIEMENS.NS","ABB.NS","BHEL.NS","IRB.NS","KEC.NS","KALPATPOWR.NS","NBCC.NS"],
+        "Consumption": ["TITAN.NS","TRENT.NS","DMART.NS","ETERNAL.NS","NYKAA.NS","INDIGO.NS","JUBLFOOD.NS","PAGEIND.NS","ASIANPAINT.NS","HAVELLS.NS"],
+    }
+    render_weakness_breakdown_radar(WEAKNESS_SECTOR_STOCKS, SECTOR_TICKERS)
 
