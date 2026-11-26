@@ -49,11 +49,8 @@ def _volume_signals(frame: pd.DataFrame) -> tuple[bool, bool, str | None]:
     # preceding 10 sessions, and the close is above its 10-session SMA.
     close = data["Close"]
     prior_close = close.shift(1)
-    prior_10 = data.iloc[-11:-1].copy()
-    prior_10_down = prior_10.loc[prior_10["Close"] < prior_10["Close"].shift(1), "Volume"]
-    # Include the first day in the 10-session window by comparing it with
-    # the immediately preceding close from the full history.
-    prior_10_indices = data.index[-10:-1]
+    # Compare each of the previous 10 sessions with its immediately prior close.
+    prior_10_indices = data.index[-11:-1]
     down_volumes = []
     for pos in prior_10_indices:
         if pos > 0 and float(data.at[pos, "Close"]) < float(data.at[pos - 1, "Close"]):
