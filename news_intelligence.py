@@ -16,6 +16,7 @@ NSE_FO_LOTS_URL = "https://nsearchives.nseindia.com/content/fo/fo_mktlots.csv"
 NSE_EQUITY_MASTER_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
 NSE_ANNOUNCEMENTS_RSS = "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml"
 NSE_RESULTS_RSS = "https://nsearchives.nseindia.com/content/RSS/Financial_Results.xml"
+NSE_ANNOUNCEMENTS_API = "https://www.nseindia.com/api/corporate-announcements"
 NSE_FO_LANDING_PAGES = (
     "https://www.nseindia.com/",
     "https://www.nseindia.com/products-services/equity-derivatives-contract-information",
@@ -209,6 +210,74 @@ def match_fno_announcements(feed_frame: pd.DataFrame, universe: pd.DataFrame,
     return result.sort_values("Published", ascending=False, na_position="last").reset_index(drop=True)
 
 
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_nse_json_announcements(days_back: int = 7) -> tuple[pd.DataFrame, str | None]:
+    """Fetch NSE's public website JSON filing table; this is not a documented developer API."""
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    start = today - timedelta(days=max(1, int(days_back)))
+    params = {
+        "index": "equities",
+        "from_date": start.strftime("%d-%m-%Y"),
+        "to_date": today.strftime("%d-%m-%Y"),
+    }
+    try:
+        session = _nse_session()
+        session.headers.update({"Accept": "application/json, text/plain, */*"})
+        response = session.get(NSE_ANNOUNCEMENTS_API, params=params, timeout=60)
+        response.raise_for_status()
+        payload = response.json()
+        if isinstance(payload, dict):
+            if payload.get("data") == [] or "no data found" in str(payload.get("msg", "")).lower():
+                return pd.DataFrame(), None
+            payload = payload.get("data", [])
+        if not isinstance(payload, list):
+            return pd.DataFrame(), "NSE announcements endpoint returned an unexpected response structure."
+        rows = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            symbol = _normalise_symbol(item.get("symbol"))
+            if not symbol:
+                continue
+            raw_time = item.get("sort_date") or item.get("an_dt") or item.get("exchdisstime")
+            published = pd.to_datetime(raw_time, errors="coerce")
+            if pd.isna(published):
+                continue
+            if published.tzinfo is None:
+                published = published.tz_localize(ZoneInfo("Asia/Kolkata"))
+            else:
+                published = published.tz_convert(ZoneInfo("Asia/Kolkata"))
+            attachment = str(item.get("attchmntFile") or "").strip()
+            if attachment and attachment.startswith("/"):
+                attachment = "https://nsearchives.nseindia.com" + attachment
+            rows.append({
+                "Symbol": symbol,
+                "Company": str(item.get("sm_name") or item.get("company") or "").strip(),
+                "Headline": str(item.get("desc") or item.get("subject") or "Corporate announcement").strip(),
+                "Details": str(item.get("attchmntText") or item.get("summary") or "").strip(),
+                "Published": published,
+                "Published (IST)": published.strftime("%d %b %Y, %I:%M %p"),
+                "Category": str(item.get("desc") or item.get("category") or "").strip(),
+                "Source": "NSE Corporate Announcements JSON",
+                "Source link": attachment,
+                "Filing ID": str(item.get("seq_id") or ""),
+            })
+        frame = pd.DataFrame(rows)
+        if not frame.empty:
+            frame = frame.drop_duplicates(subset=["Filing ID", "Symbol", "Published"])
+            frame = frame.sort_values("Published", ascending=False).reset_index(drop=True)
+        return frame, None
+    except Exception as exc:
+        return pd.DataFrame(), f"NSE JSON announcements request failed ({type(exc).__name__})."
+
+
+def _filter_fo_announcements(frame: pd.DataFrame, universe: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or universe.empty:
+        return pd.DataFrame()
+    symbols = set(universe["Symbol"].astype(str).str.upper())
+    return frame[frame["Symbol"].astype(str).str.upper().isin(symbols)].copy().reset_index(drop=True)
+
 def _show_news_table(frame: pd.DataFrame, key: str) -> None:
     if frame.empty:
         st.info("No matching F&O announcements were returned for this time window. This may mean no matching filings or a feed/matching limitation; it is not proof that no company news exists.")
@@ -267,39 +336,39 @@ def render_news_intelligence() -> None:
     if master_error:
         st.error(master_error)
 
-    announcement_feed, announcement_error = fetch_nse_rss_feed(
-        NSE_ANNOUNCEMENTS_RSS, "Corporate Announcements"
-    )
-    results_feed, results_error = fetch_nse_rss_feed(
-        NSE_RESULTS_RSS, "Financial Results"
-    )
-    if announcement_error:
-        st.warning(announcement_error)
-    if results_error:
-        st.warning(results_error)
+    with st.spinner("Fetching NSE corporate filings for the last 7 days…"):
+        market_announcements, api_error = fetch_nse_json_announcements(7)
 
-    announcements = match_fno_announcements(announcement_feed, universe, company_master)
-    financial_results = match_fno_announcements(results_feed, universe, company_master)
+    if api_error:
+        st.warning(api_error)
+        st.caption("Falling back to the NSE RSS feed. RSS is a supplementary source and may not contain a full 7-day history.")
+        announcement_feed, rss_error = fetch_nse_rss_feed(NSE_ANNOUNCEMENTS_RSS, "Corporate Announcements")
+        if rss_error:
+            st.warning(rss_error)
+        market_announcements = match_fno_announcements(announcement_feed, universe, company_master)
+    announcements = _filter_fo_announcements(market_announcements, universe)
 
     if not universe.empty:
         st.metric("Verified NSE F&O underlyings", f"{len(universe):,}")
-    if not announcements.empty:
-        st.caption(f"Matched corporate announcements: {len(announcements)} · feed entries: {len(announcement_feed)}")
-    else:
-        st.caption(f"Corporate RSS entries received: {len(announcement_feed)} · matching F&O companies: 0")
+    st.caption(
+        f"F&O corporate filings matched by NSE symbol: {len(announcements)} · "
+        f"All-market NSE JSON rows received: {len(market_announcements)}"
+    )
 
-    # Normalize both feed timestamps and cutoffs to UTC before comparison.
-    # RSS timestamps may arrive with different timezone representations.
-    cutoff_24h = pd.Timestamp(now_ist - timedelta(hours=24)).tz_convert("UTC")
-    cutoff_7d = pd.Timestamp(now_ist - timedelta(days=7)).tz_convert("UTC")
+    cutoff_24h = pd.Timestamp(now_ist - timedelta(hours=24))
+    cutoff_7d = pd.Timestamp(now_ist - timedelta(days=7))
     if not announcements.empty:
-        announcements["Published"] = pd.to_datetime(
-            announcements["Published"], errors="coerce", utc=True
-        )
+        announcements["Published"] = pd.to_datetime(announcements["Published"], errors="coerce")
         fresh = announcements[announcements["Published"] >= cutoff_24h].copy()
         developing = announcements[announcements["Published"] >= cutoff_7d].copy()
+        result_pattern = r"financial result|unaudited result|audited result|quarterly result|outcome of board meeting"
+        result_mask = (
+            announcements["Headline"].fillna("").str.contains(result_pattern, case=False, regex=True)
+            | announcements["Details"].fillna("").str.contains(result_pattern, case=False, regex=True)
+        )
+        financial_results = announcements[result_mask].copy()
     else:
-        fresh, developing = pd.DataFrame(), pd.DataFrame()
+        fresh, developing, financial_results = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     with fresh_tab:
         st.subheader("Fresh catalysts · Last 24 hours")
@@ -315,6 +384,4 @@ def render_news_intelligence() -> None:
         if not financial_results.empty:
             _show_news_table(financial_results, "nse_financial_results")
         else:
-            st.info("No matching F&O financial-result headlines were returned. The RSS feed contains result filing headlines, not a complete structured financial-statement dataset; that extraction is a later step.")
-        if results_error:
-            st.warning(results_error)
+            st.info("No F&O filings matched the current financial-results keyword filter. This is a filing-headline view, not yet a complete structured financial-statement dataset.")
