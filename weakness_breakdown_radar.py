@@ -300,7 +300,44 @@ def _style_stock_table(frame):
     return styled
 
 
-def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session=None):
+def _build_microsector_weakness(price_map, micro_sectors, nifty500):
+    """Use shared Main Dashboard microsector baskets and NIFTY 500 relative-strength zones."""
+    membership = {}
+    rows = []
+    bench = pd.to_numeric(nifty500, errors="coerce").dropna().sort_index()
+    bench1 = (float(bench.iloc[-1]) / float(bench.iloc[-22]) - 1) * 100 if len(bench) >= 22 else np.nan
+    bench3 = (float(bench.iloc[-1]) / float(bench.iloc[-64]) - 1) * 100 if len(bench) >= 64 else np.nan
+    for name, definition in (micro_sectors or {}).items():
+        try:
+            group, symbols = definition
+        except Exception:
+            continue
+        valid_returns = []
+        for symbol in symbols:
+            membership.setdefault(symbol, []).append(name)
+            frame = price_map.get(symbol, pd.DataFrame())
+            close = pd.to_numeric(frame.get("Close", pd.Series(dtype=float)), errors="coerce").dropna().sort_index()
+            if len(close) >= 64:
+                valid_returns.append(((float(close.iloc[-1]) / float(close.iloc[-22]) - 1) * 100,
+                                      (float(close.iloc[-1]) / float(close.iloc[-64]) - 1) * 100))
+        minimum = max(2, int(np.ceil(len(symbols) * 0.5)))
+        if len(valid_returns) < minimum or pd.isna(bench1) or pd.isna(bench3):
+            rows.append({"Microsector": name, "Parent group": group, "Stocks available": len(valid_returns),
+                         "Stocks listed": len(symbols), "1M return %": np.nan, "3M return %": np.nan,
+                         "1M RS vs NIFTY 500 (pp)": np.nan, "3M RS vs NIFTY 500 (pp)": np.nan,
+                         "Zone": "Insufficient data", "Microsector weak": False})
+            continue
+        avg1 = float(np.mean([x[0] for x in valid_returns]))
+        avg3 = float(np.mean([x[1] for x in valid_returns]))
+        rs1, rs3 = avg1 - bench1, avg3 - bench3
+        zone = "Leading" if rs3 >= 0 and rs1 >= 0 else "Weakening" if rs3 >= 0 else "Improving" if rs1 >= 0 else "Lagging"
+        rows.append({"Microsector": name, "Parent group": group, "Stocks available": len(valid_returns),
+                     "Stocks listed": len(symbols), "1M return %": avg1, "3M return %": avg3,
+                     "1M RS vs NIFTY 500 (pp)": rs1, "3M RS vs NIFTY 500 (pp)": rs3,
+                     "Zone": zone, "Microsector weak": zone in {"Weakening", "Lagging"}})
+    return pd.DataFrame(rows), membership
+
+def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session=None, micro_sectors=None):
     st.markdown("## 📉 Weakness & Breakdown Radar")
     st.caption("Independent bearish research page · official Nifty sector-index constituents drive sector context · F&O shortlist is restricted to verified NSE F&O symbols.")
     fo, fo_error = _fo_symbols()
@@ -312,7 +349,8 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
         for symbol in basket:
             sector_membership.setdefault(symbol, []).append(sector)
     sector_symbols = set(sector_membership)
-    all_symbols = sorted(sector_symbols | set(fo))
+    micro_symbols = {symbol for _, symbols in (micro_sectors or {}).values() for symbol in symbols}
+    all_symbols = sorted(sector_symbols | set(fo) | micro_symbols)
     with st.expander("Universe & data status", expanded=False):
         st.write(f"Official Nifty sector baskets loaded: {len(official_map)} / {len(OFFICIAL_SECTOR_INDEX_FILES)}.")
         st.write(f"Unique mapped constituents: {len(all_symbols)} across {len(sector_map)} baskets.")
@@ -336,6 +374,23 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
     def _returns(series):
         return {n:(float(series.iloc[-1])/float(series.iloc[-n-1])-1)*100 if len(series)>n and float(series.iloc[-n-1]) else np.nan for n in (5,21,63)}
     nr, n5r = _returns(nifty), _returns(nifty500)
+    micro_df, micro_membership = _build_microsector_weakness(price_map, micro_sectors, nifty500)
+    micro_zone_lookup = dict(zip(micro_df["Microsector"], micro_df["Zone"])) if not micro_df.empty else {}
+    def _stock_micro_status(symbol):
+        names = micro_membership.get(symbol, [])
+        if not names:
+            return "", "Unmapped", False, "Unmapped"
+        zones = [micro_zone_lookup.get(name, "Insufficient data") for name in names]
+        if any(zone == "Insufficient data" for zone in zones):
+            status, weak = "Insufficient data", False
+        elif all(zone in {"Weakening", "Lagging"} for zone in zones):
+            status, weak = "Weak", True
+        elif all(zone in {"Leading", "Improving"} for zone in zones):
+            status, weak = "Strong", False
+        else:
+            status, weak = "Mixed", False
+        detail = "; ".join(f"{name}: {zone}" for name, zone in zip(names, zones))
+        return ", ".join(names), detail, weak, status
     st.caption(f"Price coverage: FYERS primary {fyers_count} symbols · Yahoo fallback attempted for {yahoo_count} symbols · usable stock histories: {len(price_map)} / {len(all_symbols)} · index benchmarks: Yahoo Finance.")
     if fyers_session and fyers_count == 0:
         st.warning("FYERS is connected, but returned no usable history for this radar universe. Yahoo fallback is supplying stock prices. Check FYERS symbol format, history API response and access entitlement.")
@@ -351,7 +406,10 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
         memberships = sector_membership.get(symbol) or ["Outside mapped sector baskets"]
         for sector in memberships:
             row = dict(m)
+            micro_names, micro_zones, micro_weak, micro_status = _stock_micro_status(symbol)
             row.update({"Stock":symbol.removesuffix(".NS"),"Sector":sector,
+                "Microsector(s)": micro_names, "Microsector zone(s)": micro_zones,
+                "Microsector status": micro_status, "Microsector weak": micro_weak,
                 "1M RS vs NIFTY (pp)":m["1M %"]-nr[21] if pd.notna(nr[21]) else np.nan,
                 "3M RS vs NIFTY (pp)":m["3M %"]-nr[63] if pd.notna(nr[63]) else np.nan,
                 "1M RS vs NIFTY 500 (pp)":m["1M %"]-n5r[21] if pd.notna(n5r[21]) and pd.notna(m["1M %"]) else np.nan,
@@ -384,12 +442,23 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
     st.caption("All available constituents of each official Nifty sector index contribute, regardless of F&O eligibility. Overlapping index membership is intentional.")
     st.dataframe(_style_sector_table(sectors).format({c:"{:.1f}" for c in sectors.select_dtypes(include="number").columns if c not in {"Rank","Stocks measured","Fresh bearish crosses"}}),use_container_width=True,hide_index=True)
     st.download_button("⬇ Download weak sector ranking",sectors.to_csv(index=False).encode("utf-8-sig"),"weak_sector_ranking.csv","text/csv",key="weak_sector_csv")
-    st.markdown("### 2. Weak F&O Stocks")
+    st.markdown("### 2. Microsector Weakness Confirmation")
+    if micro_df.empty:
+        st.warning("Microsector data is unavailable; bearish stock confirmations are withheld.")
+    else:
+        zone_order = {"Lagging": 0, "Weakening": 1, "Improving": 2, "Leading": 3, "Insufficient data": 4}
+        micro_display = micro_df.copy()
+        micro_display["_order"] = micro_display["Zone"].map(zone_order).fillna(4)
+        micro_display = micro_display.sort_values(["_order", "1M RS vs NIFTY 500 (pp)"], ascending=[True, True]).drop(columns="_order")
+        st.caption("Uses the shared MICRO_SECTORS baskets and Main Dashboard NIFTY 500 relative-strength zones. Weak = Lagging or Weakening. For stocks with multiple microsector memberships, every mapped microsector must be weak; mixed or insufficient memberships do not qualify.")
+        st.dataframe(micro_display, use_container_width=True, hide_index=True)
+        st.download_button("⬇ Download microsector weakness ranking", micro_display.to_csv(index=False).encode("utf-8-sig"), "weak_microsector_ranking.csv", "text/csv", key="weak_microsector_csv")
+    st.markdown("### 3. Weak F&O Stocks")
     outside = stocks[(stocks["F&O eligible"]) & (stocks["Sector"] == "Outside mapped sector baskets")].copy()
     outside = outside.sort_values(["1M RS vs NIFTY 500 (pp)", "3M RS vs NIFTY 500 (pp)"], ascending=[True, True])
     st.markdown("#### F&O Stocks – Outside Sector Baskets")
     st.caption("Verified F&O underlyings that are not constituents of the loaded sector baskets are included separately; they are not assigned an artificial weak-sector confirmation.")
-    outside_cols = ["Stock", "Price", "1W %", "1M %", "3M %", "1M RS vs NIFTY (pp)",
+    outside_cols = ["Stock", "Microsector(s)", "Microsector zone(s)", "Microsector status", "Price", "1W %", "1M %", "3M %", "1M RS vs NIFTY (pp)",
                     "1M RS vs NIFTY 500 (pp)", "Daily 200 EMA gap %", "Weekly 200 EMA gap %",
                     "Below Daily 200 EMA", "Below Weekly 200 EMA", "Fresh bearish 200 EMA cross",
                     "20D low breakdown", "Volume / 20D avg", "Data date"]
@@ -409,15 +478,15 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
         return
     fo_stocks["Bearish confirmations"]=fo_stocks[["Below Daily 200 EMA","Below Weekly 200 EMA","Fresh bearish 200 EMA cross","20D low breakdown"]].sum(axis=1)
     fo_stocks["Classification"]=np.select(
-        [(fo_stocks["Sector weak"] & fo_stocks["Below Daily 200 EMA"] & fo_stocks["Below Weekly 200 EMA"] & (fo_stocks["Volume / 20D avg"]>=1.2) & (fo_stocks["1M RS vs NIFTY 500 (pp)"]<0)),
-         (fo_stocks["Fresh bearish 200 EMA cross"] | fo_stocks["20D low breakdown"])],
+        [(fo_stocks["Sector weak"] & fo_stocks["Microsector weak"] & fo_stocks["Below Daily 200 EMA"] & fo_stocks["Below Weekly 200 EMA"] & (fo_stocks["Volume / 20D avg"]>=1.2) & (fo_stocks["1M RS vs NIFTY 500 (pp)"]<0)),
+         ((fo_stocks["Fresh bearish 200 EMA cross"] | fo_stocks["20D low breakdown"]) & fo_stocks["Microsector weak"])],
         ["A · High-conviction weakness","C · Early breakdown watch"],default="B · Weak / developing")
     fo_stocks=fo_stocks.sort_values(["Bearish confirmations","1M RS vs NIFTY 500 (pp)","3M RS vs NIFTY 500 (pp)"],ascending=[False,True,True])
-    display=["Stock","Sector","Sector weak","Classification","Price","1W %","1M %","3M %","1M RS vs NIFTY (pp)","1M RS vs NIFTY 500 (pp)","1M RS vs sector basket (pp)","3M RS vs NIFTY 500 (pp)","Daily 200 EMA gap %","Weekly 200 EMA gap %","Volume / 20D avg","Fresh bearish 200 EMA cross","20D low breakdown","Data date"]
+    display=["Stock","Sector","Sector weak","Microsector(s)","Microsector zone(s)","Microsector status","Microsector weak","Classification","Price","1W %","1M %","3M %","1M RS vs NIFTY (pp)","1M RS vs NIFTY 500 (pp)","1M RS vs sector basket (pp)","3M RS vs NIFTY 500 (pp)","Daily 200 EMA gap %","Weekly 200 EMA gap %","Volume / 20D avg","Fresh bearish 200 EMA cross","20D low breakdown","Data date"]
     fo_display = fo_stocks[display].drop_duplicates(subset=["Stock"]).head(150)
     st.dataframe(_style_stock_table(fo_display),use_container_width=True,hide_index=True)
     st.download_button("⬇ Download weak F&O stocks",fo_stocks.to_csv(index=False).encode("utf-8-sig"),"weak_fo_stocks.csv","text/csv",key="weak_fo_csv")
-    st.markdown("### 3. Fresh Breakdown Watchlist")
+    st.markdown("### 4. Fresh Breakdown Watchlist")
     fresh=fo_stocks[fo_stocks["Fresh bearish 200 EMA cross"] | fo_stocks["20D low breakdown"]].copy()
     fresh_display = fresh[display].drop_duplicates(subset=["Stock"])
     if fresh_display.empty:
@@ -425,10 +494,10 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
     else:
         st.dataframe(_style_stock_table(fresh_display),use_container_width=True,hide_index=True)
     st.download_button("⬇ Download fresh breakdown watchlist",fresh.to_csv(index=False).encode("utf-8-sig"),"fresh_breakdown_watchlist.csv","text/csv",key="fresh_breakdown_csv")
-    st.markdown("### 4. Shortlist for Analysis")
+    st.markdown("### 5. Shortlist for Analysis")
     shortlist=fo_stocks[fo_stocks["Classification"]=="A · High-conviction weakness"].drop_duplicates(subset=["Stock"]).head(20)
     if shortlist.empty:
-        st.info(f"No stock meets all high-conviction conditions: weak sector, below daily and weekly 200 EMA, volume at least 1.2× its prior 20-day average, and negative 1M relative strength versus NIFTY 500. {fo_stocks['Stock'].nunique()} F&O stocks were evaluated; no qualifying setup is being forced.")
+        st.info(f"No stock meets all high-conviction conditions: weak sector and weak microsector, below daily and weekly 200 EMA, volume at least 1.2× its prior 20-day average, and negative 1M relative strength versus NIFTY 500. {fo_stocks['Stock'].nunique()} F&O stocks were evaluated; no qualifying setup is being forced.")
     else:
         st.dataframe(_style_stock_table(shortlist[display]),use_container_width=True,hide_index=True)
     st.download_button("⬇ Download analysis shortlist",shortlist.to_csv(index=False).encode("utf-8-sig"),"weakness_analysis_shortlist.csv","text/csv",key="weakness_shortlist_csv")
