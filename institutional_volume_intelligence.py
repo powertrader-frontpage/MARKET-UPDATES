@@ -144,16 +144,23 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
             sector_zones = st.session_state.get("ivi_sector_zone_map", {})
             micro_zones = st.session_state.get("ivi_micro_zone_map", {})
             display_result = result.copy()
-            display_result["Sector Zone"] = display_result["Sector"].map(
-                lambda value: "; ".join(
+            # Stack multiple memberships on separate lines to keep the mobile table readable.
+            display_result["Sector"] = display_result["Sector"].map(
+                lambda value: "\\n".join(dict.fromkeys(x.strip() for x in str(value).split(";") if x.strip()))
+            )
+            display_result["Microsector"] = display_result["Microsector"].map(
+                lambda value: "\\n".join(dict.fromkeys(x.strip() for x in str(value).split(";") if x.strip()))
+            )
+            display_result["Sector Zone"] = result["Sector"].map(
+                lambda value: "\\n".join(
                     f"{name.strip()}: {sector_zones.get(name.strip(), 'Unavailable')}"
-                    for name in str(value).split(";") if name.strip()
+                    for name in dict.fromkeys(str(value).split(";")) if name.strip()
                 )
             )
-            display_result["Microsector Zone"] = display_result["Microsector"].map(
-                lambda value: "; ".join(
+            display_result["Microsector Zone"] = result["Microsector"].map(
+                lambda value: "\\n".join(
                     f"{name.strip()}: {micro_zones.get(name.strip(), 'Unavailable')}"
-                    for name in str(value).split(";") if name.strip()
+                    for name in dict.fromkeys(str(value).split(";")) if name.strip()
                 )
             )
             zone_css = {
@@ -163,22 +170,48 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
                 "Lagging": "color: #F87171; background-color: rgba(239,68,68,.16); font-weight: 700;",
                 "Unavailable": "color: #94A3B8; background-color: rgba(148,163,184,.10);",
             }
+
             def _zone_style(value):
-                styles = []
-                for part in str(value).split(";"):
-                    zone = part.strip().rsplit(": ", 1)[-1]
-                    styles.append(zone_css.get(zone, ""))
-                return ";".join(styles)
+                zones = [line.rsplit(": ", 1)[-1].strip() for line in str(value).split("\\n")]
+                # One cell can contain multiple memberships; use the strongest
+                # available zone for the cell tint while preserving every label.
+                priority = {"Leading": 4, "Improving": 3, "Weakening": 2, "Lagging": 1, "Unavailable": 0}
+                selected = max(zones, key=lambda zone: priority.get(zone, 0), default="Unavailable")
+                return zone_css.get(selected, zone_css["Unavailable"])
+
             styled = (
                 display_result.style
-                .map(lambda value: "color: #22C55E; background-color: rgba(34,197,94,.14); font-weight: 700;" if "HVQ" in str(value) else "color: #60A5FA; background-color: rgba(59,130,246,.14); font-weight: 700;", subset=["Signal"])
-                .map(lambda _: "color: #7DD3FC; background-color: rgba(14, 116, 144, 0.16); font-weight: 600;", subset=["Sector"])
-                .map(lambda _: "color: #C4B5FD; background-color: rgba(109, 40, 217, 0.16); font-weight: 600;", subset=["Microsector"])
+                .set_properties(**{
+                    "text-align": "left",
+                    "vertical-align": "middle",
+                    "white-space": "pre-line",
+                    "padding": "7px 9px",
+                })
+                .map(
+                    lambda value: "text-align: center; font-weight: 700; color: #22C55E;" if "HVQ" in str(value)
+                    else "text-align: center; font-weight: 700; color: #60A5FA;",
+                    subset=["Signal"],
+                )
+                .map(lambda _: "color: #7DD3FC; font-weight: 600;", subset=["Sector"])
+                .map(lambda _: "color: #C4B5FD; font-weight: 600;", subset=["Microsector"])
                 .map(_zone_style, subset=["Sector Zone", "Microsector Zone"])
             )
             if not sector_zones or not micro_zones:
-                st.caption("Rotation colours use the Main Dashboard's latest calculated zones. Visit/refresh Main Dashboard once if zones show Unavailable.")
-            st.dataframe(styled, use_container_width=True, hide_index=True)
+                st.caption("Rotation zones are unavailable until the Main Dashboard has completed its latest rotation calculations.")
+            st.dataframe(
+                styled,
+                column_config={
+                    "Stock": st.column_config.TextColumn("Stock", width="small"),
+                    "Signal": st.column_config.TextColumn("Signal", width="small"),
+                    "Sector": st.column_config.TextColumn("Sector", width="medium"),
+                    "Microsector": st.column_config.TextColumn("Microsector", width="large"),
+                    "Sector Zone": st.column_config.TextColumn("Sector Zone", width="medium"),
+                    "Microsector Zone": st.column_config.TextColumn("Microsector Zone", width="large"),
+                },
+                use_container_width=True,
+                hide_index=True,
+                height=min(620, 42 + 42 * len(display_result)),
+            )
             st.download_button(
                 "Download HVQ + PPV watchlist",
                 result.to_csv(index=False).encode("utf-8"),
