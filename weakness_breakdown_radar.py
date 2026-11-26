@@ -191,7 +191,7 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
     def _returns(series):
         return {n:(float(series.iloc[-1])/float(series.iloc[-n-1])-1)*100 if len(series)>n and float(series.iloc[-n-1]) else np.nan for n in (5,21,63)}
     nr, n5r = _returns(nifty), _returns(nifty500)
-    st.caption(f"Price coverage: FYERS {fyers_count} symbols · Yahoo fallback {yahoo_count} symbols · index benchmarks: Yahoo Finance.")
+    st.caption(f"Price coverage: FYERS primary {fyers_count} symbols · Yahoo fallback used/attempted for {yahoo_count} symbols · index benchmarks: Yahoo Finance.")
     stock_rows=[]
     for sector,basket in sector_map.items():
         for symbol in basket:
@@ -231,16 +231,19 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
     st.download_button("⬇ Download weak sector ranking",sectors.to_csv(index=False).encode("utf-8-sig"),"weak_sector_ranking.csv","text/csv",key="weak_sector_csv")
     st.markdown("### 2. Weak F&O Stocks")
     fo_stocks=stocks[stocks["F&O eligible"]].copy()
+    sector_weak_cutoff = float(sectors["Weakness score"].median()) if not sectors.empty else np.nan
+    sector_weak_lookup = dict(zip(sectors["Sector"], sectors["Weakness score"] >= sector_weak_cutoff)) if pd.notna(sector_weak_cutoff) else {}
+    fo_stocks["Sector weak"] = fo_stocks["Sector"].map(sector_weak_lookup).fillna(False)
     if fo_stocks.empty:
         st.warning("No verified F&O stocks overlap the loaded sector universe, or the NSE F&O list is unavailable. Shortlists are withheld.")
         return
     fo_stocks["Bearish confirmations"]=fo_stocks[["Below Daily 200 EMA","Below Weekly 200 EMA","Fresh bearish 200 EMA cross","20D low breakdown"]].sum(axis=1)
     fo_stocks["Classification"]=np.select(
-        [(fo_stocks["Below Daily 200 EMA"] & fo_stocks["Below Weekly 200 EMA"] & (fo_stocks["Volume / 20D avg"]>=1.2) & (fo_stocks["1M RS vs NIFTY 500 (pp)"]<0)),
+        [(fo_stocks["Sector weak"] & fo_stocks["Below Daily 200 EMA"] & fo_stocks["Below Weekly 200 EMA"] & (fo_stocks["Volume / 20D avg"]>=1.2) & (fo_stocks["1M RS vs NIFTY 500 (pp)"]<0)),
          (fo_stocks["Fresh bearish 200 EMA cross"] | fo_stocks["20D low breakdown"])],
         ["A · High-conviction weakness","C · Early breakdown watch"],default="B · Weak / developing")
     fo_stocks=fo_stocks.sort_values(["Bearish confirmations","1M RS vs NIFTY 500 (pp)","3M RS vs NIFTY 500 (pp)"],ascending=[False,True,True])
-    display=["Stock","Sector","Classification","Price","1W %","1M %","3M %","1M RS vs NIFTY (pp)","1M RS vs NIFTY 500 (pp)","3M RS vs NIFTY 500 (pp)","Daily 200 EMA gap %","Weekly 200 EMA gap %","Volume / 20D avg","Fresh bearish 200 EMA cross","20D low breakdown","Data date"]
+    display=["Stock","Sector","Sector weak","Classification","Price","1W %","1M %","3M %","1M RS vs NIFTY (pp)","1M RS vs NIFTY 500 (pp)","3M RS vs NIFTY 500 (pp)","Daily 200 EMA gap %","Weekly 200 EMA gap %","Volume / 20D avg","Fresh bearish 200 EMA cross","20D low breakdown","Data date"]
     st.dataframe(fo_stocks[display].drop_duplicates(subset=["Stock"]).head(150),use_container_width=True,hide_index=True)
     st.download_button("⬇ Download weak F&O stocks",fo_stocks.to_csv(index=False).encode("utf-8-sig"),"weak_fo_stocks.csv","text/csv",key="weak_fo_csv")
     st.markdown("### 3. Fresh Breakdown Watchlist")
