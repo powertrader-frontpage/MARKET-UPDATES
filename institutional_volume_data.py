@@ -14,6 +14,7 @@ import requests
 FYERS_FO_MASTER_URL = "https://public.fyers.in/sym_details/NSE_FO_sym_master.json"
 FYERS_HISTORY_URL = "https://api-t1.fyers.in/data/history"
 FYERS_DAILY_LOOKBACK_DAYS = 365
+NSE_INDEX_FUTURES = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"}
 
 
 def load_nse_futures_master() -> tuple[pd.DataFrame, Optional[str]]:
@@ -35,7 +36,7 @@ def load_nse_futures_master() -> tuple[pd.DataFrame, Optional[str]]:
                 expiry = pd.to_datetime(float(expiry_raw), unit="s") if expiry_raw not in (None, "") else pd.NaT
             except (TypeError, ValueError, OverflowError):
                 expiry = pd.NaT
-            if symbol.startswith("NSE:") and underlying and pd.notna(expiry):
+            if symbol.startswith("NSE:") and underlying and underlying.upper() not in NSE_INDEX_FUTURES and pd.notna(expiry):
                 records.append({"_ticker": symbol, "_underlying": underlying, "_expiry": expiry})
         frame = pd.DataFrame(records)
         if frame.empty:
