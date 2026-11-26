@@ -133,18 +133,22 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
         with st.spinner(f"Downloading cash-market liquidity data for {len(cash_tickers)} futures underlyings…"):
             raw = _download_cash_history(cash_tickers)
         cash_ok = []
+        cash_rejections = {"No cash history / insufficient rows": 0, "Close below ₹20": 0, "10W average volume <= 100,000": 0, "50D average turnover <= ₹50 lakh": 0}
         for _, contract in master.iterrows():
             ticker = contract["Cash ticker"]
             cash = _extract_cash_frame(raw, ticker, len(cash_tickers) == 1)
             metrics = _cash_filters(cash)
             if not metrics:
+                cash_rejections["No cash history / insufficient rows"] += 1
                 continue
-            if (
-                metrics["Close"] < 20
-                or not np.isfinite(metrics["10W avg volume"])
-                or metrics["10W avg volume"] <= 100000
-                or metrics["50D avg turnover ₹"] <= 5000000
-            ):
+            if metrics["Close"] < 20:
+                cash_rejections["Close below ₹20"] += 1
+                continue
+            if not np.isfinite(metrics["10W avg volume"]) or metrics["10W avg volume"] <= 100000:
+                cash_rejections["10W average volume <= 100,000"] += 1
+                continue
+            if metrics["50D avg turnover ₹"] <= 5000000:
+                cash_rejections["50D average turnover <= ₹50 lakh"] += 1
                 continue
             cash_ok.append((contract, ticker, metrics))
         st.session_state["ivi_cash_candidates"] = [
@@ -153,24 +157,41 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
         ]
         st.session_state["ivi_master_count"] = len(master)
         st.session_state["ivi_cash_count"] = len(cash_ok)
+        st.session_state["ivi_cash_rejections"] = cash_rejections
         st.session_state.pop("ivi_results", None)
 
+        diagnostics = {"Market cap unavailable / below ₹1,000 Cr": 0, "FYERS history failed / empty": 0, "Insufficient HVY/HVQ history": 0, "History available, no HVY/HVQ record": 0, "HVY/HVQ record found": 0}
+        target_symbols = {"BRITANNIA", "KFINTECH", "TORNTPHARM"}
+        target_checks = []
         rows = []
         progress = st.progress(0.0, text="Checking market capitalisation and futures-volume records…")
         total = max(len(cash_ok), 1)
         for idx, (contract, ticker, metrics) in enumerate(cash_ok):
             cap_crore = _market_cap_crore(ticker)
+            key = str(contract["_underlying"]).replace(".NS", "").upper()
             if not np.isfinite(cap_crore) or cap_crore < 1000:
+                diagnostics["Market cap unavailable / below ₹1,000 Cr"] += 1
                 progress.progress((idx + 1) / total, text=f"Market-cap filter {idx + 1}/{total}")
                 continue
             candles, error = fetch_continuous_futures_daily(app_id, access_token, str(contract["_ticker"]))
             if candles.empty:
+                diagnostics["FYERS history failed / empty"] += 1
+                if key in target_symbols:
+                    target_checks.append({"Symbol": key, "Check": "FYERS history failed / empty", "Detail": error or "No candles returned"})
                 progress.progress((idx + 1) / total, text=f"Futures history {idx + 1}/{total}")
                 continue
             flags = volume_record_flags(candles)
+            if flags.get("HVY") is None or flags.get("HVQ") is None:
+                diagnostics["Insufficient HVY/HVQ history"] += 1
             if flags.get("HVY") is not True and flags.get("HVQ") is not True:
+                diagnostics["History available, no HVY/HVQ record"] += 1
+                if key in target_symbols:
+                    target_checks.append({"Symbol": key, "Check": "No HVY/HVQ record in FYERS futures", "Detail": f"Sessions: {flags.get(chr(104)+chr(105)+chr(115)+chr(116)+chr(111)+chr(114)+chr(121)+chr(95)+chr(115)+chr(101)+chr(115)+chr(115)+chr(105)+chr(111)+chr(110)+chr(115), 0)}; HVQ: {flags.get(chr(72)+chr(86)+chr(81)+chr(95)+chr(115)+chr(116)+chr(97)+chr(116)+chr(117)+chr(115))}"})
                 progress.progress((idx + 1) / total, text=f"Volume records {idx + 1}/{total}")
                 continue
+            diagnostics["HVY/HVQ record found"] += 1
+            if key in target_symbols:
+                target_checks.append({"Symbol": key, "Check": "HVY/HVQ record found", "Detail": f"HVY: {flags.get(chr(72)+chr(86)+chr(89)+chr(95)+chr(115)+chr(116)+chr(97)+chr(116)+chr(117)+chr(115))}; HVQ: {flags.get(chr(72)+chr(86)+chr(81)+chr(95)+chr(115)+chr(116)+chr(97)+chr(116)+chr(117)+chr(115))}"})
             key = str(contract["_underlying"]).replace(".NS", "")
             mapped = membership.get(key, {"Sectors": set(), "Microsectors": set()})
             rows.append({
@@ -201,11 +222,29 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
                 ["Volume signal", "Market cap ₹ Cr"], ascending=[True, False]
             ).reset_index(drop=True)
         st.session_state["ivi_results"] = result
+        st.session_state["ivi_diagnostics"] = diagnostics
+        st.session_state["ivi_target_checks"] = target_checks
         st.session_state["ivi_scan_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y, %H:%M:%S IST")
 
     result = st.session_state.get("ivi_results", pd.DataFrame())
     if st.session_state.get("ivi_scan_time"):
         st.caption(f"Last scan: {st.session_state['ivi_scan_time']} · Futures underlyings: {st.session_state.get('ivi_master_count', 0)} · Cash-liquidity candidates: {st.session_state.get('ivi_cash_count', 0)}")
+    if "ivi_diagnostics" in st.session_state:
+        st.subheader("Scan diagnostics")
+        diag = st.session_state["ivi_diagnostics"]
+        dcols = st.columns(5)
+        dcols[0].metric("Universe", st.session_state.get("ivi_master_count", 0))
+        dcols[1].metric("Cash filters passed", st.session_state.get("ivi_cash_count", 0))
+        dcols[2].metric("Market cap rejected", diag.get("Market cap unavailable / below ₹1,000 Cr", 0))
+        dcols[3].metric("FYERS history failed", diag.get("FYERS history failed / empty", 0))
+        dcols[4].metric("Volume records", diag.get("HVY/HVQ record found", 0))
+        st.dataframe(pd.DataFrame([{"Filter / outcome": k, "Stocks": v} for k, v in st.session_state.get("ivi_cash_rejections", {}).items()] + [{"Filter / outcome": k, "Stocks": v} for k, v in diag.items()]), use_container_width=True, hide_index=True)
+        target_rows = st.session_state.get("ivi_target_checks", [])
+        st.markdown("**Reference-stock checks: Britannia, KFin Technologies and Torrent Pharma**")
+        if target_rows:
+            st.dataframe(pd.DataFrame(target_rows), use_container_width=True, hide_index=True)
+        else:
+            st.caption("These reference stocks did not reach the FYERS volume check because they did not pass the cash-liquidity and market-cap gates. Their rejection reasons are shown in the diagnostics above where applicable.")
     if isinstance(result, pd.DataFrame) and not result.empty:
         hvy = int(result["Volume signal"].str.contains("HVY").sum())
         hvq = int(result["Volume signal"].str.contains("HVQ").sum())
@@ -221,6 +260,6 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
         )
         st.caption("Sector and microsector columns show all existing universe memberships. Rotation-zone readings are not yet joined into this scan output; do not interpret membership alone as a strength confirmation.")
     elif "ivi_scan_time" in st.session_state:
-        st.warning("No stocks matched all liquidity filters and HVY/HVQ records, or the data sources returned insufficient history.")
+        st.warning("No stocks matched all liquidity filters and HVY/HVQ records. Use the diagnostics above to identify the exclusion stage.")
     else:
         st.info("Press Run / refresh NSE futures scan to build the first HVY/HVQ watchlist.")
