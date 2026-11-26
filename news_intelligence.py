@@ -501,6 +501,36 @@ def render_news_intelligence(micro_sectors=None) -> None:
         with st.expander("Sector and microsector strength monitor", expanded=False):
             micro_table = pd.DataFrame(micro_strength.values())
             parent_table = pd.DataFrame(parent_strength.values())
+
+            # Keep the rotation order consistent in both tables:
+            # Leading -> Improving -> Weakening -> Lagging -> Insufficient data.
+            zone_order = {
+                "Leading": 0,
+                "Improving": 1,
+                "Weakening": 2,
+                "Lagging": 3,
+                "Insufficient data": 4,
+            }
+
+            def sort_strength_table(table):
+                if table.empty or "Zone" not in table.columns:
+                    return table
+                table = table.copy()
+                table["_zone_order"] = table["Zone"].map(zone_order).fillna(5)
+                sort_columns = ["_zone_order"]
+                ascending = [True]
+                if "1M RS (pp)" in table.columns:
+                    sort_columns.append("1M RS (pp)")
+                    ascending.append(False)
+                if "3M RS (pp)" in table.columns:
+                    sort_columns.append("3M RS (pp)")
+                    ascending.append(False)
+                return table.sort_values(sort_columns, ascending=ascending, na_position="last").drop(
+                    columns=["_zone_order"]
+                ).reset_index(drop=True)
+
+            micro_table = sort_strength_table(micro_table)
+            parent_table = sort_strength_table(parent_table)
             st.markdown("**Microsector relative strength**")
             st.dataframe(_color_status_table(micro_table), use_container_width=True, hide_index=True)
             st.markdown("**Parent-sector group relative strength**")
