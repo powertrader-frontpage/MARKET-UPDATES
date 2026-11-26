@@ -164,7 +164,11 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
                 "Unavailable": "color: #94A3B8; background-color: rgba(148,163,184,.10);",
             }
             def _zone_style(value):
-                return ";".join(zone_css.get(part.strip(), "") for part in str(value).split(";"))
+                styles = []
+                for part in str(value).split(";"):
+                    zone = part.strip().rsplit(": ", 1)[-1]
+                    styles.append(zone_css.get(zone, ""))
+                return ";".join(styles)
             styled = (
                 display_result.style
                 .map(lambda value: "color: #22C55E; background-color: rgba(34,197,94,.14); font-weight: 700;" if "HVQ" in str(value) else "color: #60A5FA; background-color: rgba(59,130,246,.14); font-weight: 700;", subset=["Signal"])
