@@ -96,7 +96,7 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
         else:
             sector_zones = st.session_state.get("ivi_sector_zone_map", {})
             micro_zones = st.session_state.get("ivi_micro_zone_map", {})
-            display_result = result.copy()
+            display_result = result.drop(columns=["Strength"], errors="ignore").copy()
             display_result["Sector Zone"] = display_result["Sector"].map(
                 lambda value: "; ".join(dict.fromkeys(
                     sector_zones.get(name.strip(), "Unavailable") for name in str(value).split(";")
