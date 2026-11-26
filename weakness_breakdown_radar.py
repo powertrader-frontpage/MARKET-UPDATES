@@ -79,7 +79,7 @@ def _metrics(close, volume):
             "Volume / 20D avg":vol_ratio, "Data date":close.index[-1].strftime("%d %b %Y")}
 
 
-def render_weakness_breakdown_radar(sector_stocks, sector_tickers):
+def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session=None):
     st.markdown("## 📉 Weakness & Breakdown Radar")
     st.caption("Independent bearish research page · sector context uses the mapped NSE sector baskets · stock trade candidates are restricted to the verified NSE F&O universe.")
     fo, fo_error = _fo_symbols()
@@ -91,7 +91,7 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers):
         st.write(f"Verified F&O symbols: {len(fo)}.")
         if fo_error:
             st.warning(fo_error)
-        st.caption("This first version uses Yahoo Finance adjusted daily history for the bulk constituent matrix. It does not substitute missing values; FYERS-validated stock history integration is a follow-up before describing this page as FYERS-primary.")
+        st.caption("Daily stock candles use FYERS first when an authenticated session is available; Yahoo Finance fills symbols for which FYERS history is unavailable. Source counts are shown below. Benchmark index history currently uses Yahoo Finance.")
     if not all_symbols:
         st.warning("No sector constituent mapping was supplied; radar is withheld.")
         return
@@ -99,7 +99,7 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers):
     with st.spinner(f"Loading daily history for {len(symbols)} symbols…"):
         raw = _download_daily(tuple(symbols))
     nifty = _series(raw, "^NSEI", "Close")
-    if raw.empty or len(nifty) < 65:
+    if not price_map or len(nifty) < 65:
         st.error("Market history is unavailable or too short. No rankings have been fabricated.")
         return
     nifty_ret = {n: (float(nifty.iloc[-1]) / float(nifty.iloc[-n-1]) - 1) * 100 if len(nifty) > n else np.nan for n in (5,21,63)}
@@ -158,7 +158,7 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers):
              (fo_stocks["Fresh bearish 200 EMA cross"] | fo_stocks["20D low breakdown"])],
             ["A · High-conviction weakness","C · Early breakdown watch"], default="B · Weak / developing")
         fo_stocks = fo_stocks.sort_values(["Bearish confirmations","1M RS vs NIFTY (pp)","3M RS vs NIFTY (pp)"],ascending=[False,True,True])
-        st.dataframe(fo_stocks[["Stock","Sector","Classification","Price","1W %","1M %","3M %","1M RS vs NIFTY (pp)","3M RS vs NIFTY (pp)","Daily 200 EMA gap %","Weekly 200 EMA gap %","Volume / 20D avg","Fresh bearish 200 EMA cross","20D low breakdown","Data date"]].head(100),use_container_width=True,hide_index=True)
+        st.dataframe(fo_stocks[["Stock","Sector","Classification","Price","1W %","1M %","3M %","1M RS vs NIFTY (pp)","3M RS vs NIFTY (pp)","1M RS vs NIFTY 500 (pp)","3M RS vs NIFTY 500 (pp)","Daily 200 EMA gap %","Weekly 200 EMA gap %","Volume / 20D avg","Fresh bearish 200 EMA cross","20D low breakdown","Data date"]].head(100),use_container_width=True,hide_index=True)
         st.download_button("⬇ Download weak F&O stocks",fo_stocks.to_csv(index=False).encode("utf-8-sig"),"weak_fo_stocks.csv","text/csv",key="weak_fo_csv")
         st.markdown("### 3. Fresh Breakdown Watchlist")
         fresh = fo_stocks[fo_stocks["Fresh bearish 200 EMA cross"] | fo_stocks["20D low breakdown"]].copy()
@@ -166,6 +166,6 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers):
         st.download_button("⬇ Download fresh breakdown watchlist",fresh.to_csv(index=False).encode("utf-8-sig"),"fresh_breakdown_watchlist.csv","text/csv",key="fresh_breakdown_csv")
         st.markdown("### 4. Shortlist for Analysis")
         shortlist = fo_stocks[(fo_stocks["Classification"]=="A · High-conviction weakness") & (fo_stocks["Volume / 20D avg"]>=1.2)].head(20)
-        st.dataframe(shortlist[["Stock","Sector","Classification","1M RS vs NIFTY (pp)","3M RS vs NIFTY (pp)","Daily 200 EMA gap %","Weekly 200 EMA gap %","Volume / 20D avg","Data date"]],use_container_width=True,hide_index=True)
+        st.dataframe(shortlist[["Stock","Sector","Classification","1M RS vs NIFTY (pp)","3M RS vs NIFTY (pp)","1M RS vs NIFTY 500 (pp)","3M RS vs NIFTY 500 (pp)","Daily 200 EMA gap %","Weekly 200 EMA gap %","Volume / 20D avg","Data date"]],use_container_width=True,hide_index=True)
         st.download_button("⬇ Download analysis shortlist",shortlist.to_csv(index=False).encode("utf-8-sig"),"weakness_analysis_shortlist.csv","text/csv",key="weakness_shortlist_csv")
     st.info("Research filter only, not a short-entry instruction. Confirm liquidity, event risk, borrow/derivative constraints and price structure before acting. An extended decline can reverse sharply.")
