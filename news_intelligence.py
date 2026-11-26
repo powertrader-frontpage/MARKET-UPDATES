@@ -75,7 +75,7 @@ def fetch_nse_fo_universe() -> tuple[pd.DataFrame, str | None]:
             for skip in (2, 0, 1, 3):
                 try:
                     frame = pd.read_csv(BytesIO(content), encoding=encoding, skiprows=skip, dtype=str)
-                    frame.columns = [str(c).replace("\\ufeff", "").strip().upper() for c in frame.columns]
+                    frame.columns = [str(c).replace("\ufeff", "").strip().upper() for c in frame.columns]
                     column = "SYMBOL" if "SYMBOL" in frame.columns else next(
                         (c for c in frame.columns if c in {"UNDERLYING_SYMBOL", "UNDERLYING SYMBOL"}), None
                     )
@@ -136,7 +136,7 @@ def _xml_text(parent: ET.Element, tag: str) -> str:
     node = parent.find(tag)
     if node is None or node.text is None:
         return ""
-    return re.sub(r"\\s+", " ", node.text).strip()
+    return re.sub(r"\s+", " ", node.text).strip()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
