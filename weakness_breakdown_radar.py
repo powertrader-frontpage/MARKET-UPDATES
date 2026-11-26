@@ -139,7 +139,7 @@ def _normalise_nse_symbol(value):
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _fo_symbols():
-    """Fetch NSE permitted-lot CSV using a browser-like session and validate its contents."""
+    """Read NSE permitted-lot CSV; SYMBOL is the tradable ticker, not UNDERLYING."""
     url = "https://nsearchives.nseindia.com/content/fo/fo_mktlots.csv"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -148,16 +148,12 @@ def _fo_symbols():
         "Accept-Language": "en-US,en;q=0.9",
         "Referer": "https://www.nseindia.com/products-services/equity-derivatives-contract-information",
         "Origin": "https://www.nseindia.com",
-        "Connection": "keep-alive",
     }
     session = requests.Session()
     session.headers.update(headers)
     try:
-        # NSE archive downloads can reject direct requests without an NSE session.
-        for landing in (
-            "https://www.nseindia.com/",
-            "https://www.nseindia.com/products-services/equity-derivatives-contract-information",
-        ):
+        for landing in ("https://www.nseindia.com/",
+                        "https://www.nseindia.com/products-services/equity-derivatives-contract-information"):
             try:
                 session.get(landing, timeout=12)
             except Exception:
@@ -168,30 +164,29 @@ def _fo_symbols():
         content_type = response.headers.get("Content-Type", "unknown")
         if len(content) < 500 or b"<html" in content[:500].lower():
             return set(), (f"NSE permitted-lot download did not return a CSV "
-                           f"(HTTP {response.status_code}, {len(content)} bytes, {content_type}).")
-        best = set()
-        best_column = None
-        parse_notes = []
+                           f"({len(content)} bytes; {content_type}).")
+        best, best_column = set(), None
+        # NSE's permitted-lot report contains two preamble/header rows.
+        # Skip both, then explicitly prefer SYMBOL over UNDERLYING (company name).
         for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin1"):
-            for delimiter in (",", ";", "\\t", "|"):
-                for skip in range(0, 3):
-                    try:
-                        frame = pd.read_csv(pd.io.common.BytesIO(content), encoding=encoding,
-                                            sep=delimiter, skiprows=skip, dtype=str)
-                        frame.columns = [str(c).replace("\\ufeff", "").strip() for c in frame.columns]
-                        col = next((c for c in frame.columns if c.strip().lower() in
-                                    {"symbol", "underlying", "underlying_symbol", "underlying symbol"}), None)
-                        if col:
-                            values = {_normalise_nse_symbol(x) for x in frame[col].dropna()}
-                            values.discard(None)
-                            if len(values) > len(best):
-                                best, best_column = values, col
-                    except Exception as exc:
-                        parse_notes.append(type(exc).__name__)
+            for skip in (2, 0, 1, 3):
+                try:
+                    frame = pd.read_csv(pd.io.common.BytesIO(content), encoding=encoding,
+                                        skiprows=skip, dtype=str)
+                    frame.columns = [str(c).replace("\\ufeff", "").strip().upper() for c in frame.columns]
+                    col = "SYMBOL" if "SYMBOL" in frame.columns else next(
+                        (c for c in frame.columns if c in {"UNDERLYING_SYMBOL", "UNDERLYING SYMBOL"}), None)
+                    if col:
+                        values = {_normalise_nse_symbol(x) for x in frame[col].dropna()}
+                        values.discard(None)
+                        if len(values) > len(best):
+                            best, best_column = values, col
+                except Exception:
+                    continue
         if len(best) < 50:
-            return set(), (f"NSE permitted-lot CSV was reached ({len(content)} bytes; {content_type}), "
-                           f"but parsed only {len(best)} valid symbols. Column detected: {best_column or 'none'}. "
-                           "The radar is withholding an incomplete F&O universe.")
+            return set(), (f"NSE permitted-lot CSV downloaded ({len(content)} bytes; {content_type}), "
+                           f"but column {best_column or 'SYMBOL'} yielded only {len(best)} valid symbols. "
+                           "Incomplete F&O universe withheld.")
         return best, None
     except Exception as exc:
         return set(), f"NSE F&O universe request failed ({type(exc).__name__}: {str(exc)[:120]})."
