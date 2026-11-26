@@ -29,7 +29,7 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
             "- Condition 1: Daily futures Volume > 100,000.\n"
             "- Condition 2: Daily futures Volume = Daily Max(63, Daily Volume).\n"
             "- Both conditions are AND conditions.\n"
-            "- Only completed daily candles are evaluated. No HVY or HVE calculations."
+            "- Only completed daily candles are evaluated."
         )
 
     st.markdown("### HVQ validation — reference stocks")
