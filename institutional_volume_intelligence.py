@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import time
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -118,6 +119,49 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
             "- No other volume-record lookbacks are calculated."
         )
     st.caption("FYERS history is requested only after you press Scan. The first full-universe scan can take several minutes; results are cached for 30 minutes.")
+    st.markdown("### HVQ validation — reference stocks")
+    st.caption("This focused test bypasses cash-liquidity and market-cap filters. It checks only the latest completed FYERS continuous-futures candle against the previous 63-session window.")
+    validate = st.button("Validate Britannia, KFin and Torrent", key="validate_hvq_reference")
+    if validate:
+        with st.spinner("Loading the NSE futures master…"):
+            ref_master, ref_error = load_nse_futures_master()
+        if ref_master.empty:
+            st.error(ref_error or "Could not load the FYERS futures master.")
+        else:
+            ref_names = {"BRITANNIA": "Britannia", "KFINTECH": "KFin Technologies", "TORNTPHARM": "Torrent Pharmaceuticals"}
+            ref_rows = []
+            for symbol, display_name in ref_names.items():
+                matches = ref_master[ref_master["_underlying"].astype(str).str.upper() == symbol]
+                if matches.empty:
+                    ref_rows.append({"Stock": display_name, "FYERS symbol": "Not found in current futures master", "Status": "Not checked"})
+                    continue
+                contract = matches.iloc[0]
+                # Space the three requests to reduce the chance of FYERS rate limiting.
+                time.sleep(2)
+                candles, fetch_error = fetch_continuous_futures_daily(app_id, access_token, str(contract["_ticker"]))
+                if candles.empty:
+                    ref_rows.append({"Stock": display_name, "FYERS symbol": str(contract["_ticker"]), "Status": "History request failed", "Details": fetch_error or "No candles returned"})
+                    continue
+                flags = volume_record_flags(candles)
+                latest_date = pd.to_datetime(candles["Date"].iloc[-1]).strftime("%Y-%m-%d")
+                latest_volume = float(candles["Volume"].iloc[-1])
+                ref_rows.append({
+                    "Stock": display_name,
+                    "FYERS symbol": str(contract["_ticker"]),
+                    "Status": flags.get("HVQ_status", "Unknown"),
+                    "Completed sessions": flags.get("history_sessions", 0),
+                    "Latest candle date": latest_date,
+                    "Latest futures volume": int(latest_volume),
+                    "63-session maximum": int(flags["HVQ_63D_max"]) if flags.get("HVQ_63D_max") is not None else None,
+                    "HVQ match": flags.get("HVQ"),
+                    "Details": fetch_error or "",
+                })
+            st.session_state["ivi_reference_validation"] = ref_rows
+            st.session_state["ivi_reference_validation_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y, %H:%M:%S IST")
+    if st.session_state.get("ivi_reference_validation") is not None:
+        st.caption("Last reference validation: " + st.session_state.get("ivi_reference_validation_time", ""))
+        st.dataframe(pd.DataFrame(st.session_state["ivi_reference_validation"]), use_container_width=True, hide_index=True)
+        st.caption("A positive result means the latest completed FYERS continuous-futures volume equals the maximum of its trailing 63 completed sessions. TradingView's contract/continuous-series construction may differ; this comparison helps isolate that difference.")
     scan = st.button("Run / refresh NSE futures scan", type="primary", key="run_institutional_volume_scan")
     if scan:
         _download_cash_history.clear()
