@@ -6,7 +6,6 @@ volume is never substituted for futures volume.
 from __future__ import annotations
 
 from datetime import date, timedelta
-from io import StringIO
 from typing import Optional
 
 import pandas as pd
@@ -14,11 +13,11 @@ import requests
 
 FYERS_FO_MASTER_URL = "https://public.fyers.in/sym_details/NSE_FO_sym_master.json"
 FYERS_HISTORY_URL = "https://api-t1.fyers.in/data/history"
-FYERS_DAILY_LOOKBACK_DAYS = 370
+FYERS_DAILY_LOOKBACK_DAYS = 365
 
 
 def load_nse_futures_master() -> tuple[pd.DataFrame, Optional[str]]:
-    """Load FYERS' keyed JSON symbol master and select the nearest active future per underlying."""
+    """Load FYERS' keyed JSON symbol master and select the nearest listed future per underlying."""
     try:
         response = requests.get(FYERS_FO_MASTER_URL, timeout=30)
         response.raise_for_status()
@@ -27,9 +26,7 @@ def load_nse_futures_master() -> tuple[pd.DataFrame, Optional[str]]:
             return pd.DataFrame(), "FYERS returned an empty or unexpected NSE_FO JSON master."
         records = []
         for ticker, item in payload.items():
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("optType", "")).upper() != "XX":
+            if not isinstance(item, dict) or str(item.get("optType", "")).upper() != "XX":
                 continue
             symbol = str(item.get("symTicker") or ticker).strip()
             underlying = str(item.get("underSym") or "").strip()
@@ -42,12 +39,80 @@ def load_nse_futures_master() -> tuple[pd.DataFrame, Optional[str]]:
                 records.append({"_ticker": symbol, "_underlying": underlying, "_expiry": expiry})
         frame = pd.DataFrame(records)
         if frame.empty:
-            return pd.DataFrame(), "No NSE single-stock futures were identified in the FYERS JSON symbol master."
+            return pd.DataFrame(), "No NSE futures were identified in the FYERS JSON symbol master."
         frame = frame[frame["_expiry"].dt.date >= date.today()]
         if frame.empty:
-            return pd.DataFrame(), "No current/future-dated NSE futures contracts were found in the FYERS symbol master."
+            return pd.DataFrame(), "No current/future-dated NSE futures contracts were found."
         frame = frame.sort_values(["_underlying", "_expiry", "_ticker"])
         return frame.drop_duplicates("_underlying", keep="first").reset_index(drop=True), None
     except Exception as exc:
         return pd.DataFrame(), f"FYERS NSE futures master unavailable ({exc.__class__.__name__})."
 
+
+def fetch_continuous_futures_daily(app_id: str, access_token: str, symbol: str,
+                                   lookback_days: int = FYERS_DAILY_LOOKBACK_DAYS):
+    """Fetch up to one year of continuous daily futures OHLCV for HVY/HVQ."""
+    end = date.today()
+    start = end - timedelta(days=min(max(int(lookback_days), 252), 366))
+    try:
+        response = requests.get(
+            FYERS_HISTORY_URL,
+            params={
+                "symbol": symbol,
+                "resolution": "D",
+                "date_format": "1",
+                "range_from": start.isoformat(),
+                "range_to": end.isoformat(),
+                "cont_flag": "1",
+            },
+            headers={"Authorization": f"{app_id}:{access_token}"},
+            timeout=30,
+        )
+        payload = response.json()
+        if not response.ok or payload.get("s") != "ok":
+            return pd.DataFrame(), str(payload.get("message") or payload.get("code") or "FYERS history request failed.")
+        candles = payload.get("candles") or []
+        if not candles:
+            return pd.DataFrame(), "FYERS returned no continuous futures candles."
+        frame = pd.DataFrame(candles)
+        if frame.shape[1] < 6:
+            return pd.DataFrame(), "FYERS returned an unexpected candle schema."
+        frame = frame.iloc[:, :6]
+        frame.columns = ["Epoch", "Open", "High", "Low", "Close", "Volume"]
+        frame["Date"] = pd.to_datetime(frame["Epoch"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            frame[col] = pd.to_numeric(frame[col], errors="coerce")
+        frame = frame.dropna(subset=["Date", "Open", "High", "Low", "Close", "Volume"])
+        frame = frame.sort_values("Date").drop_duplicates("Date", keep="last").reset_index(drop=True)
+        frame["Source"] = "FYERS continuous futures"
+        return frame, None
+    except Exception as exc:
+        return pd.DataFrame(), f"FYERS futures history unavailable ({exc.__class__.__name__})."
+
+
+def volume_record_flags(frame: pd.DataFrame) -> dict:
+    """Compare the latest completed session with trailing 252/63 valid sessions."""
+    if frame is None or frame.empty or "Volume" not in frame:
+        return {
+            "HVY": None, "HVQ": None, "history_sessions": 0,
+            "HVY_status": "Unavailable", "HVQ_status": "Unavailable",
+        }
+    data = frame.copy()
+    if "Date" in data:
+        data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
+        data = data.dropna(subset=["Date"]).sort_values("Date")
+        now_ist = pd.Timestamp.now(tz="Asia/Kolkata")
+        if not data.empty and data["Date"].iloc[-1].date() == now_ist.date() and now_ist.hour < 16:
+            data = data.iloc[:-1]
+    volume = pd.to_numeric(data["Volume"], errors="coerce").dropna().reset_index(drop=True)
+    n = len(volume)
+    latest = float(volume.iloc[-1]) if n else float("nan")
+    result = {"history_sessions": n}
+    for label, window in (("HVY", 252), ("HVQ", 63)):
+        if n < window:
+            result[label] = None
+            result[label + "_status"] = f"Insufficient history ({n}/{window} sessions)"
+        else:
+            result[label] = bool(latest >= float(volume.iloc[-window:].max()))
+            result[label + "_status"] = "Record" if result[label] else "No record"
+    return result
