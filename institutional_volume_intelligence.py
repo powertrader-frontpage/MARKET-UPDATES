@@ -186,12 +186,12 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
             if flags.get("HVY") is not True and flags.get("HVQ") is not True:
                 diagnostics["History available, no HVY/HVQ record"] += 1
                 if key in target_symbols:
-                    target_checks.append({"Symbol": key, "Check": "No HVY/HVQ record in FYERS futures", "Detail": f"Sessions: {flags.get(chr(104)+chr(105)+chr(115)+chr(116)+chr(111)+chr(114)+chr(121)+chr(95)+chr(115)+chr(101)+chr(115)+chr(115)+chr(105)+chr(111)+chr(110)+chr(115), 0)}; HVQ: {flags.get(chr(72)+chr(86)+chr(81)+chr(95)+chr(115)+chr(116)+chr(97)+chr(116)+chr(117)+chr(115))}"})
+                    target_checks.append({"Symbol": key, "Check": "No HVY/HVQ record in FYERS futures", "Detail": f"Sessions: {flags.get('history_sessions', 0)}; HVQ: {flags.get('HVQ_status')}"})
                 progress.progress((idx + 1) / total, text=f"Volume records {idx + 1}/{total}")
                 continue
             diagnostics["HVY/HVQ record found"] += 1
             if key in target_symbols:
-                target_checks.append({"Symbol": key, "Check": "HVY/HVQ record found", "Detail": f"HVY: {flags.get(chr(72)+chr(86)+chr(89)+chr(95)+chr(115)+chr(116)+chr(97)+chr(116)+chr(117)+chr(115))}; HVQ: {flags.get(chr(72)+chr(86)+chr(81)+chr(95)+chr(115)+chr(116)+chr(97)+chr(116)+chr(117)+chr(115))}"})
+                target_checks.append({"Symbol": key, "Check": "HVY/HVQ record found", "Detail": f"HVY: {flags.get('HVY_status')}; HVQ: {flags.get('HVQ_status')}"})
             key = str(contract["_underlying"]).replace(".NS", "")
             mapped = membership.get(key, {"Sectors": set(), "Microsectors": set()})
             rows.append({
