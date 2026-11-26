@@ -141,8 +141,8 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
         if result.empty:
             st.info("No stocks met either HVQ or PPV condition in the latest scan.")
         else:
-            sector_zones = st.session_state.get("ivi_sector_zone_map", {})
-            micro_zones = st.session_state.get("ivi_micro_zone_map", {})
+            sector_zones = st.session_state.get("master_sector_rotation_zones", {})
+            micro_zones = st.session_state.get("master_microsector_rotation_zones", {})
             display_result = result.copy()
             # Stack multiple memberships on separate lines to keep the mobile table readable.
             display_result["Sector"] = display_result["Sector"].map(
