@@ -4344,28 +4344,33 @@ if active_page == "Sector Leadership & Heatmap":
                                 relative_week = sector_week_return - nifty_week_return
                                 relative_month = sector_month_return - nifty_month_return if pd.notna(sector_month_return) and pd.notna(nifty_month_return) else np.nan
                                 relative_3m = sector_3m_return - nifty_3m_return if pd.notna(sector_3m_return) and pd.notna(nifty_3m_return) else np.nan
-                                # Relative-strength quadrant: 1M relative performance and short-term momentum.
-                                def _rotation_zone(rs, momentum):
-                                    if pd.isna(rs) or pd.isna(momentum):
+                                # Match the authoritative Main Dashboard sector-index rotation engine:
+                                # relative ratio versus its 20-session mean + 5-session RS momentum.
+                                aligned_sector = pd.concat(
+                                    [sector_close.rename("sector"), weekly_nifty_close.rename("nifty")],
+                                    axis=1,
+                                ).dropna()
+                                relative_series = (aligned_sector["sector"] / aligned_sector["nifty"]) * 100
+                                relative_mean = relative_series.rolling(20, min_periods=8).mean()
+                                relative_momentum = relative_series.pct_change(5) * 100
+
+                                def _rotation_zone_at(position):
+                                    if position < 0 or position >= len(relative_series):
                                         return "Insufficient data"
-                                    if rs >= 0 and momentum >= 0:
+                                    if pd.isna(relative_mean.iloc[position]) or pd.isna(relative_momentum.iloc[position]):
+                                        return "Insufficient data"
+                                    strong = relative_series.iloc[position] >= relative_mean.iloc[position]
+                                    accelerating = relative_momentum.iloc[position] >= 0
+                                    if strong and accelerating:
                                         return "Leading"
-                                    if rs >= 0 and momentum < 0:
+                                    if strong:
                                         return "Weakening"
-                                    if rs < 0 and momentum < 0:
-                                        return "Lagging"
-                                    return "Improving"
-                                current_zone = _rotation_zone(relative_month, relative_week - relative_month if pd.notna(relative_month) else np.nan)
-                                if len(sector_close) >= 27 and len(weekly_nifty_close) >= 27:
-                                    sec_old_week = (float(sector_close.iloc[-6]) / float(sector_close.iloc[-11]) - 1) * 100
-                                    nifty_old_week = (float(weekly_nifty_close.iloc[-6]) / float(weekly_nifty_close.iloc[-11]) - 1) * 100
-                                    sec_old_month = (float(sector_close.iloc[-6]) / float(sector_close.iloc[-27]) - 1) * 100
-                                    nifty_old_month = (float(weekly_nifty_close.iloc[-6]) / float(weekly_nifty_close.iloc[-27]) - 1) * 100
-                                    old_week_relative = sec_old_week - nifty_old_week
-                                    old_month_relative = sec_old_month - nifty_old_month
-                                    previous_zone = _rotation_zone(old_month_relative, old_week_relative - old_month_relative)
-                                else:
-                                    previous_zone = "Insufficient data"
+                                    if accelerating:
+                                        return "Improving"
+                                    return "Lagging"
+
+                                current_zone = _rotation_zone_at(len(relative_series) - 1)
+                                previous_zone = _rotation_zone_at(max(0, len(relative_series) - 6))
                                 rotation_zone_rows.append({"Sector": sector, "Previous zone": previous_zone, "Current zone": current_zone})
                                 score_parts = [(relative_week, 0.30), (relative_month, 0.40), (relative_3m, 0.30)]
                                 valid_parts = [(value, weight) for value, weight in score_parts if pd.notna(value)]
