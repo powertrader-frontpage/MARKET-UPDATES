@@ -314,18 +314,19 @@ def render_news_intelligence() -> None:
 
     with st.expander("Coverage and data source", expanded=False):
         st.write(
-            "The F&O list is sourced from NSE's permitted-lot file. Announcements and financial-result headlines "
-            "are read from NSE RSS feeds and matched against NSE's registered company-name master. "
-            "Only exact company-name matches are included; ambiguous matches are withheld."
+            "The F&O list is sourced from NSE's permitted-lot file. The primary announcement source is "
+            "NSE's public corporate-filings JSON endpoint, matched directly by NSE trading symbol. "
+            "NSE RSS is retained as a fallback if the JSON endpoint is unavailable."
         )
         st.link_button("NSE RSS feed directory", "https://www.nseindia.in/static/rss-feed")
         st.link_button("NSE Equity Derivatives Contract Information",
                        "https://www.nseindia.com/products-services/equity-derivatives-contract-information")
-        st.caption("F&O universe cache: 15 minutes · Company-name master: 6 hours · RSS cache: 5 minutes.")
+        st.caption("F&O universe cache: 15 minutes · NSE JSON filing cache: 5 minutes · RSS fallback cache: 5 minutes.")
         if st.button("Refresh source data", key="news_refresh_all_sources"):
             fetch_nse_fo_universe.clear()
             fetch_nse_company_master.clear()
             fetch_nse_rss_feed.clear()
+            fetch_nse_json_announcements.clear()
 
     with st.spinner("Loading NSE F&O universe and company-name master…"):
         universe, universe_error = fetch_nse_fo_universe()
