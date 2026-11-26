@@ -229,12 +229,15 @@ def _style_sector_table(frame):
         "Average 1W %", "Average 1M %", "Average 3M %",
         "1M RS vs NIFTY (pp)", "3M RS vs NIFTY (pp)", "1M RS vs NIFTY 500 (pp)"
     ])
-    if "Weakness score" in frame.columns:
-        styled = styled.background_gradient(subset=["Weakness score"], cmap="Reds")
-    if "Below Daily 200 EMA %" in frame.columns:
-        styled = styled.background_gradient(subset=["Below Daily 200 EMA %"], cmap="Oranges")
-    if "Below Weekly 200 EMA %" in frame.columns:
-        styled = styled.background_gradient(subset=["Below Weekly 200 EMA %"], cmap="Oranges")
+    # Avoid Styler.background_gradient: it imports matplotlib, which is not
+    # guaranteed in the Streamlit runtime. Use lightweight cell CSS instead.
+    for col, color in (("Weakness score", "#662b2b"), ("Below Daily 200 EMA %", "#75451f"),
+                       ("Below Weekly 200 EMA %", "#75451f")):
+        if col in frame.columns:
+            styled = styled.applymap(
+                lambda value, c=color: f"background-color: {c}; color: #fff0e6; font-weight: bold;" if pd.notna(value) else "",
+                subset=[col]
+            )
     return styled
 
 
