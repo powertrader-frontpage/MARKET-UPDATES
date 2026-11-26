@@ -1,6 +1,6 @@
 """HVQ scan of underlying stock volume for the NSE NFO-eligible universe."""
 from __future__ import annotations
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import pandas as pd
@@ -10,8 +10,14 @@ from institutional_volume_data import load_nse_futures_master, fetch_nfo_stock_d
 
 @st.cache_data(ttl=21600, show_spinner=False)
 def _cached_stock_history(app_id: str, access_token: str, symbol: str):
-    """Reuse daily candles for six hours; refreshes automatically after expiry."""
-    return fetch_nfo_stock_daily(app_id, access_token, symbol)
+    """Cache successful daily candles for six hours; never cache failed requests."""
+    # This delay runs only on cache misses. It keeps requests below FYERS'
+    # 50-per-minute Standard-plan ceiling and avoids concurrent request bursts.
+    time.sleep(1.3)
+    candles, error = fetch_nfo_stock_daily(app_id, access_token, symbol)
+    if candles is None or candles.empty:
+        raise RuntimeError(error or "No daily stock candles returned")
+    return candles
 
 
 def render_institutional_volume_intelligence(app_id: str | None, access_token: str | None, micro_sectors: dict):
@@ -42,42 +48,31 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
         ))
         rows, failures, insufficient = [], [], 0
         progress = st.progress(0.0, text="Checking underlying stock volumes…")
-        completed = 0
+        total = len(symbols)
 
-        # A small worker pool speeds up the first scan without sending a large
-        # burst of requests to FYERS. Cached symbols make repeat scans much faster.
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {
-                executor.submit(_cached_stock_history, app_id, access_token, symbol): symbol
-                for symbol in symbols
-            }
-            for future in as_completed(futures):
-                symbol = futures[future]
-                try:
-                    candles, fetch_error = future.result()
-                except Exception as exc:
-                    candles, fetch_error = pd.DataFrame(), f"Fetch error ({exc.__class__.__name__})"
+        # Sequential cache misses respect the FYERS rate limit. Previously
+        # successful symbols are served from cache and do not incur this delay.
+        for idx, symbol in enumerate(symbols):
+            try:
+                candles = _cached_stock_history(app_id, access_token, symbol)
+                flags = volume_record_flags(candles)
+                if flags.get("HVQ") is None:
+                    insufficient += 1
+                elif flags.get("HVQ"):
+                    sectors = list(dict.fromkeys(groups.get(symbol, [])))
+                    micro_names = list(dict.fromkeys(memberships.get(symbol, [])))
+                    rows.append({
+                        "Stock": symbol,
+                        "Signal": "HVQ",
+                        "Sector": "; ".join(sectors) or "Not mapped",
+                        "Microsector": "; ".join(micro_names) or "Not mapped",
+                        "Strength": "Awaiting live rotation join",
+                        "RS": "—",
+                    })
+            except Exception as exc:
+                failures.append({"Stock": symbol, "Reason": str(exc) or f"Fetch error ({exc.__class__.__name__})"})
 
-                if candles.empty:
-                    failures.append({"Stock": symbol, "Reason": fetch_error or "No daily stock candles"})
-                else:
-                    flags = volume_record_flags(candles)
-                    if flags.get("HVQ") is None:
-                        insufficient += 1
-                    elif flags.get("HVQ"):
-                        sectors = list(dict.fromkeys(groups.get(symbol, [])))
-                        micro_names = list(dict.fromkeys(memberships.get(symbol, [])))
-                        rows.append({
-                            "Stock": symbol,
-                            "Signal": "HVQ",
-                            "Sector": "; ".join(sectors) or "Not mapped",
-                            "Microsector": "; ".join(micro_names) or "Not mapped",
-                            "Strength": "Awaiting live rotation join",
-                            "RS": "—",
-                        })
-
-                completed += 1
-                progress.progress(completed / len(symbols), text=f"Checked {completed}/{len(symbols)} NFO stocks")
+            progress.progress((idx + 1) / total, text=f"Checked {idx + 1}/{total} NFO stocks · {len(rows)} HVQ matches")
 
         progress.empty()
         result = pd.DataFrame(
@@ -87,7 +82,7 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
         st.session_state["ivi_compact_results"] = result
         st.session_state["ivi_compact_failures"] = failures
         st.session_state["ivi_compact_insufficient"] = insufficient
-        st.session_state["ivi_compact_universe"] = len(symbols)
+        st.session_state["ivi_compact_universe"] = total
         st.session_state["ivi_compact_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y, %H:%M IST")
 
     if "ivi_compact_results" in st.session_state:
