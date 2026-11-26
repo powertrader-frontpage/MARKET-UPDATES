@@ -1,6 +1,6 @@
 """FYERS-first futures volume-record data for Institutional Volume Intelligence.
 
-Only HVY (252 sessions) and HVQ (63 sessions) are calculated. Cash-equity
+Only HVQ (63 sessions) is calculated. Cash-equity
 volume is never substituted for futures volume.
 """
 from __future__ import annotations
@@ -52,7 +52,7 @@ def load_nse_futures_master() -> tuple[pd.DataFrame, Optional[str]]:
 
 def fetch_continuous_futures_daily(app_id: str, access_token: str, symbol: str,
                                    lookback_days: int = FYERS_DAILY_LOOKBACK_DAYS):
-    """Fetch up to one year of continuous daily futures OHLCV for HVY/HVQ."""
+    """Fetch up to one year of continuous daily futures OHLCV for HVQ."""
     end = date.today()
     start = end - timedelta(days=min(max(int(lookback_days), 252), 366))
     try:
@@ -92,12 +92,9 @@ def fetch_continuous_futures_daily(app_id: str, access_token: str, symbol: str,
 
 
 def volume_record_flags(frame: pd.DataFrame) -> dict:
-    """Compare the latest completed session with trailing 252/63 valid sessions."""
+    """Check whether the latest completed futures session is the 63-session volume high."""
     if frame is None or frame.empty or "Volume" not in frame:
-        return {
-            "HVY": None, "HVQ": None, "history_sessions": 0,
-            "HVY_status": "Unavailable", "HVQ_status": "Unavailable",
-        }
+        return {"HVQ": None, "history_sessions": 0, "HVQ_status": "Unavailable"}
     data = frame.copy()
     if "Date" in data:
         data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
@@ -107,13 +104,10 @@ def volume_record_flags(frame: pd.DataFrame) -> dict:
             data = data.iloc[:-1]
     volume = pd.to_numeric(data["Volume"], errors="coerce").dropna().reset_index(drop=True)
     n = len(volume)
-    latest = float(volume.iloc[-1]) if n else float("nan")
-    result = {"history_sessions": n}
-    for label, window in (("HVY", 252), ("HVQ", 63)):
-        if n < window:
-            result[label] = None
-            result[label + "_status"] = f"Insufficient history ({n}/{window} sessions)"
-        else:
-            result[label] = bool(latest >= float(volume.iloc[-window:].max()))
-            result[label + "_status"] = "Record" if result[label] else "No record"
-    return result
+    if n < 63:
+        return {"HVQ": None, "history_sessions": n, "HVQ_status": f"Insufficient history ({n}/63 sessions)"}
+    latest = float(volume.iloc[-1])
+    max_63 = float(volume.iloc[-63:].max())
+    is_record = latest >= max_63
+    return {"HVQ": bool(is_record), "history_sessions": n, "latest_volume": latest,
+            "HVQ_63D_max": max_63, "HVQ_status": "Record" if is_record else "No record"}
