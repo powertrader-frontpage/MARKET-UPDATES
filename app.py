@@ -553,6 +553,7 @@ with st.sidebar:
         "Navigate",
         [
             "Main Dashboard",
+            "News Intelligence",
             "Weakness & Breakdown Radar",
             "1-Hour Strength Screener",
             "Breakout Scanners",
@@ -5414,6 +5415,10 @@ if active_page == "Research Tools":
             st.info("No candidates met the current rules, or the data provider returned insufficient quarterly data. This is not proof that no turnaround stocks exist.")
         else:
             st.info("Select segments and press Scan / refresh to generate the first watchlist. Re-run after market-data refresh to catch new qualifying stocks.")
+
+if active_page == "News Intelligence":
+    from news_intelligence import render_news_intelligence
+    render_news_intelligence()
 
 if active_page == "Weakness & Breakdown Radar":
     from weakness_breakdown_radar import render_weakness_breakdown_radar
