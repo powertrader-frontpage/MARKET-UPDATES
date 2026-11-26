@@ -5417,8 +5417,14 @@ if active_page == "Research Tools":
             st.info("Select segments and press Scan / refresh to generate the first watchlist. Re-run after market-data refresh to catch new qualifying stocks.")
 
 if active_page == "News Intelligence":
-    from news_intelligence import render_news_intelligence
-    render_news_intelligence(MICRO_SECTORS)
+    try:
+        from news_intelligence import render_news_intelligence
+        render_news_intelligence(MICRO_SECTORS)
+    except Exception as news_error:
+        st.error(
+            f"News Intelligence failed: {type(news_error).__name__}: {news_error}"
+        )
+        st.caption("The rest of the Market Terminal remains available. Please share this exact error if it appears.")
 
 if active_page == "Weakness & Breakdown Radar":
     from weakness_breakdown_radar import render_weakness_breakdown_radar
