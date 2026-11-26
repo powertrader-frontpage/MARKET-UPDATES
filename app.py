@@ -4361,7 +4361,11 @@ if active_page == "Sector Leadership & Heatmap":
                                         return "Improving"
                                     return "Lagging"
 
-                                current_zone = _rotation_zone_at(len(relative_series) - 1)
+                                # Prefer the Main Dashboard's shared authoritative snapshot.
+                                # The local calculation is the same formula and is only a fallback
+                                # when this tab is opened before Main Dashboard has been loaded.
+                                _shared_sector_zones = st.session_state.get("master_sector_rotation_zones", {})
+                                current_zone = _shared_sector_zones.get(sector, _rotation_zone_at(len(relative_series) - 1))
                                 previous_zone = _rotation_zone_at(max(0, len(relative_series) - 6))
                                 rotation_zone_rows.append({"Sector": sector, "Previous zone": previous_zone, "Current zone": current_zone})
                                 score_parts = [(relative_week, 0.30), (relative_month, 0.40), (relative_3m, 0.30)]
