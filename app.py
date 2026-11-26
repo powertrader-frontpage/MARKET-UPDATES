@@ -5437,5 +5437,5 @@ if active_page == "Weakness & Breakdown Radar":
     _weak_fyers_config = fyers_credentials()
     _weak_fyers_token = st.session_state.get("fyers_access_token")
     _weak_fyers_session = (_weak_fyers_config[0], _weak_fyers_token) if _weak_fyers_config and _weak_fyers_token else None
-    render_weakness_breakdown_radar(WEAKNESS_SECTOR_STOCKS, SECTOR_TICKERS, _weak_fyers_session)
+    render_weakness_breakdown_radar(WEAKNESS_SECTOR_STOCKS, SECTOR_TICKERS, _weak_fyers_session, MICRO_SECTORS)
 
