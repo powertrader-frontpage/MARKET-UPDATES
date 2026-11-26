@@ -2823,10 +2823,14 @@ if active_page == "Main Dashboard":
                         rotation_rows.append({"Sector": sector, "Previous zone": previous_zone or current_zone, "Current zone": current_zone, "Days in current zone": zone_days, "Zone entry date": zone_entry_date, "Relative return vs NIFTY (pp)": relative_pp, "Last source bar": last_date})
         
                 # Share the exact Main Dashboard sector rotation zones with the HVQ page.
-                st.session_state["ivi_sector_zone_map"] = {
+                _authoritative_sector_zone_map = {
                     str(item.get("Sector")): str(item.get("Current zone"))
                     for item in rotation_rows if item.get("Sector") and item.get("Current zone")
                 }
+                st.session_state["master_sector_rotation_zones"] = _authoritative_sector_zone_map
+                st.session_state["master_sector_rotation_asof"] = max(
+                    [str(item.get("Last source bar", "")) for item in rotation_rows] or [""]
+                )
 
                 if sector_rows:
                     sector_board = pd.DataFrame(sector_rows)
@@ -3295,26 +3299,14 @@ if active_page == "Main Dashboard":
                         return "Leading" if ahead and rising else "Weakening" if ahead else "Improving" if rising else "Lagging"
                     micro_df["Zone"] = micro_df.apply(_micro_zone, axis=1)
                     # Share the exact Main Dashboard microsector rotation zones with HVQ.
-                    st.session_state["ivi_micro_zone_map"] = dict(zip(
+                    st.session_state["master_microsector_rotation_zones"] = dict(zip(
                         micro_df["Micro sector"].astype(str), micro_df["Zone"].astype(str)
                     ))
-                    # Do not derive broad-sector zones from microsector majorities.
-                    # HVQ/PPV must use the exact sector-index rotation zones calculated
-                    # above from SECTOR_TICKERS. Map only unambiguous group aliases.
-                    _index_sector_zones = dict(st.session_state.get("ivi_sector_zone_map", {}))
-                    _group_to_index_sector = {
-                        "Technology": "IT",
-                        "Financials": "Financial Services",
-                        "Real Estate": "Realty",
-                        "Pharma": "Pharma",
-                        "Auto": "Auto",
-                        "Energy": "Energy",
-                    }
-                    _group_zone_map = {
-                        group: _index_sector_zones.get(index_name, "Unavailable")
-                        for group, index_name in _group_to_index_sector.items()
-                    }
-                    st.session_state["ivi_sector_zone_map"] = _group_zone_map
+                    st.session_state["master_microsector_rotation_asof"] = str(
+                        pd.to_datetime(micro_df.get("Data date", pd.Series(dtype=object)), errors="coerce").max()
+                    ) if "Data date" in micro_df.columns else st.session_state.get("ivi_sector_rotation_asof", "")
+                    # Sector and microsector maps remain separate authoritative datasets.
+                    # Never overwrite sector-index zones with a microsector-derived group estimate.
                     micro_zone_durations = {}
                     for micro_name, history in micro_histories.items():
                         aligned_micro = pd.concat([history.rename("micro"), bench.rename("bench")], axis=1).dropna()
