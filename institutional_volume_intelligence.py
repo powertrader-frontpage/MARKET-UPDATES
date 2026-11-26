@@ -145,14 +145,16 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
             micro_zones = st.session_state.get("ivi_micro_zone_map", {})
             display_result = result.copy()
             display_result["Sector Zone"] = display_result["Sector"].map(
-                lambda value: "; ".join(dict.fromkeys(
-                    sector_zones.get(name.strip(), "Unavailable") for name in str(value).split(";")
-                ))
+                lambda value: "; ".join(
+                    f"{name.strip()}: {sector_zones.get(name.strip(), 'Unavailable')}"
+                    for name in str(value).split(";") if name.strip()
+                )
             )
             display_result["Microsector Zone"] = display_result["Microsector"].map(
-                lambda value: "; ".join(dict.fromkeys(
-                    micro_zones.get(name.strip(), "Unavailable") for name in str(value).split(";")
-                ))
+                lambda value: "; ".join(
+                    f"{name.strip()}: {micro_zones.get(name.strip(), 'Unavailable')}"
+                    for name in str(value).split(";") if name.strip()
+                )
             )
             zone_css = {
                 "Leading": "color: #22C55E; background-color: rgba(34,197,94,.16); font-weight: 700;",
