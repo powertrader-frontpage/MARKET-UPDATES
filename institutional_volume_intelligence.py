@@ -1,11 +1,17 @@
 """HVQ scan of underlying stock volume for the NSE NFO-eligible universe."""
 from __future__ import annotations
-import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 from institutional_volume_data import load_nse_futures_master, fetch_nfo_stock_daily, volume_record_flags
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def _cached_stock_history(app_id: str, access_token: str, symbol: str):
+    """Reuse daily candles for six hours; refreshes automatically after expiry."""
+    return fetch_nfo_stock_daily(app_id, access_token, symbol)
 
 
 def render_institutional_volume_intelligence(app_id: str | None, access_token: str | None, micro_sectors: dict):
@@ -23,51 +29,65 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
             st.error(error or "NFO stock universe unavailable.")
             return
 
-        memberships = {}
-        groups = {}
+        memberships, groups = {}, {}
         for micro_name, (sector_name, symbols) in micro_sectors.items():
             for item in symbols:
                 key = str(item).replace(".NS", "").upper()
                 memberships.setdefault(key, []).append(str(micro_name))
                 groups.setdefault(key, []).append(str(sector_name))
 
+        symbols = list(dict.fromkeys(
+            str(value).replace(".NS", "").upper()
+            for value in master["_underlying"].tolist()
+        ))
         rows, failures, insufficient = [], [], 0
         progress = st.progress(0.0, text="Checking underlying stock volumes…")
-        total = len(master)
-        for idx, contract in master.iterrows():
-            if idx:
-                time.sleep(1.25)
-            symbol = str(contract["_underlying"]).replace(".NS", "").upper()
-            candles, fetch_error = fetch_nfo_stock_daily(app_id, access_token, symbol)
-            if candles.empty:
-                failures.append({"Stock": symbol, "Reason": fetch_error or "No daily stock candles"})
-                progress.progress((idx + 1) / total, text=f"Checked {idx + 1}/{total} NFO stocks")
-                continue
-            flags = volume_record_flags(candles)
-            if flags.get("HVQ") is None:
-                insufficient += 1
-            elif flags.get("HVQ"):
-                sectors = list(dict.fromkeys(groups.get(symbol, [])))
-                micro_names = list(dict.fromkeys(memberships.get(symbol, [])))
-                rows.append({
-                    "Stock": symbol,
-                    "Signal": "HVQ",
-                    "Sector": "; ".join(sectors) or "Not mapped",
-                    "Microsector": "; ".join(micro_names) or "Not mapped",
-                    "Strength": "Awaiting live rotation join",
-                    "RS": "—",
-                })
-            progress.progress((idx + 1) / total, text=f"Checked {idx + 1}/{total} NFO stocks")
-        progress.empty()
+        completed = 0
 
+        # A small worker pool speeds up the first scan without sending a large
+        # burst of requests to FYERS. Cached symbols make repeat scans much faster.
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(_cached_stock_history, app_id, access_token, symbol): symbol
+                for symbol in symbols
+            }
+            for future in as_completed(futures):
+                symbol = futures[future]
+                try:
+                    candles, fetch_error = future.result()
+                except Exception as exc:
+                    candles, fetch_error = pd.DataFrame(), f"Fetch error ({exc.__class__.__name__})"
+
+                if candles.empty:
+                    failures.append({"Stock": symbol, "Reason": fetch_error or "No daily stock candles"})
+                else:
+                    flags = volume_record_flags(candles)
+                    if flags.get("HVQ") is None:
+                        insufficient += 1
+                    elif flags.get("HVQ"):
+                        sectors = list(dict.fromkeys(groups.get(symbol, [])))
+                        micro_names = list(dict.fromkeys(memberships.get(symbol, [])))
+                        rows.append({
+                            "Stock": symbol,
+                            "Signal": "HVQ",
+                            "Sector": "; ".join(sectors) or "Not mapped",
+                            "Microsector": "; ".join(micro_names) or "Not mapped",
+                            "Strength": "Awaiting live rotation join",
+                            "RS": "—",
+                        })
+
+                completed += 1
+                progress.progress(completed / len(symbols), text=f"Checked {completed}/{len(symbols)} NFO stocks")
+
+        progress.empty()
         result = pd.DataFrame(
-            rows,
+            sorted(rows, key=lambda item: item["Stock"]),
             columns=["Stock", "Signal", "Sector", "Microsector", "Strength", "RS"],
         )
         st.session_state["ivi_compact_results"] = result
         st.session_state["ivi_compact_failures"] = failures
         st.session_state["ivi_compact_insufficient"] = insufficient
-        st.session_state["ivi_compact_universe"] = total
+        st.session_state["ivi_compact_universe"] = len(symbols)
         st.session_state["ivi_compact_time"] = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y, %H:%M IST")
 
     if "ivi_compact_results" in st.session_state:
@@ -79,8 +99,6 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
         if result.empty:
             st.info("No stocks met both HVQ conditions in the latest scan.")
         else:
-            # Distinct, restrained category colours make the two classification
-            # levels easy to scan on mobile without implying rotation strength.
             styled = (
                 result.style
                 .map(lambda _: "color: #7DD3FC; background-color: rgba(14, 116, 144, 0.16); font-weight: 600;", subset=["Sector"])
@@ -103,4 +121,3 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
                 st.dataframe(pd.DataFrame(fails), use_container_width=True, hide_index=True)
             else:
                 st.caption("No data failures.")
-"
