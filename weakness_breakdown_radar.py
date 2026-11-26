@@ -139,41 +139,62 @@ def _normalise_nse_symbol(value):
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _fo_symbols():
-    """Read NSE's official permitted-lot file and reject partial/challenge responses."""
+    """Fetch NSE permitted-lot CSV using a browser-like session and validate its contents."""
     url = "https://nsearchives.nseindia.com/content/fo/fo_mktlots.csv"
-    headers = {"User-Agent": "Mozilla/5.0", "Accept": "text/csv,application/octet-stream,*/*",
-               "Referer": "https://www.nseindia.com/products-services/equity-derivatives-contract-information"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept": "text/csv,application/octet-stream,text/plain,*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.nseindia.com/products-services/equity-derivatives-contract-information",
+        "Origin": "https://www.nseindia.com",
+        "Connection": "keep-alive",
+    }
+    session = requests.Session()
+    session.headers.update(headers)
     try:
-        response = requests.get(url, headers=headers, timeout=25)
+        # NSE archive downloads can reject direct requests without an NSE session.
+        for landing in (
+            "https://www.nseindia.com/",
+            "https://www.nseindia.com/products-services/equity-derivatives-contract-information",
+        ):
+            try:
+                session.get(landing, timeout=12)
+            except Exception:
+                pass
+        response = session.get(url, timeout=25)
         response.raise_for_status()
-        if len(response.content) < 500:
-            return set(), f"NSE F&O file response is unexpectedly small ({len(response.content)} bytes)."
-        parsed = None
-        parse_errors = []
+        content = response.content
+        content_type = response.headers.get("Content-Type", "unknown")
+        if len(content) < 500 or b"<html" in content[:500].lower():
+            return set(), (f"NSE permitted-lot download did not return a CSV "
+                           f"(HTTP {response.status_code}, {len(content)} bytes, {content_type}).")
+        best = set()
+        best_column = None
+        parse_notes = []
         for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin1"):
-            for skip in range(0, 4):
-                try:
-                    frame = pd.read_csv(pd.io.common.BytesIO(response.content), encoding=encoding,
-                                        skiprows=skip, dtype=str)
-                    frame.columns = [str(c).replace("\\ufeff", "").strip() for c in frame.columns]
-                    col = next((c for c in frame.columns if c.strip().lower() in
-                                {"symbol", "underlying", "underlying_symbol", "underlying symbol"}), None)
-                    if col:
-                        vals = {_normalise_nse_symbol(x) for x in frame[col].dropna()}
-                        vals.discard(None)
-                        if len(vals) > (len(parsed[1]) if parsed else 0):
-                            parsed = (frame, vals, col)
-                except Exception as exc:
-                    parse_errors.append(type(exc).__name__)
-        if not parsed:
-            return set(), f"NSE F&O file columns could not be recognised. Content-Type: {response.headers.get('Content-Type','unknown')}."
-        frame, values, col = parsed
-        if len(values) < 50:
-            return set(), (f"NSE F&O file parsed column '{col}' but contained only {len(values)} distinct symbols; "
-                           "the response may be partial or the file format may have changed. F&O stock ranking withheld.")
-        return values, None
+            for delimiter in (",", ";", "\\t", "|"):
+                for skip in range(0, 3):
+                    try:
+                        frame = pd.read_csv(pd.io.common.BytesIO(content), encoding=encoding,
+                                            sep=delimiter, skiprows=skip, dtype=str)
+                        frame.columns = [str(c).replace("\\ufeff", "").strip() for c in frame.columns]
+                        col = next((c for c in frame.columns if c.strip().lower() in
+                                    {"symbol", "underlying", "underlying_symbol", "underlying symbol"}), None)
+                        if col:
+                            values = {_normalise_nse_symbol(x) for x in frame[col].dropna()}
+                            values.discard(None)
+                            if len(values) > len(best):
+                                best, best_column = values, col
+                    except Exception as exc:
+                        parse_notes.append(type(exc).__name__)
+        if len(best) < 50:
+            return set(), (f"NSE permitted-lot CSV was reached ({len(content)} bytes; {content_type}), "
+                           f"but parsed only {len(best)} valid symbols. Column detected: {best_column or 'none'}. "
+                           "The radar is withholding an incomplete F&O universe.")
+        return best, None
     except Exception as exc:
-        return set(), f"NSE F&O universe unavailable ({type(exc).__name__}: {str(exc)[:120]})."
+        return set(), f"NSE F&O universe request failed ({type(exc).__name__}: {str(exc)[:120]})."
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _download_daily(symbols):
