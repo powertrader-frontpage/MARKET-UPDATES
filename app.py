@@ -554,6 +554,7 @@ with st.sidebar:
         [
             "Main Dashboard",
             "News Intelligence",
+            "Institutional Volume Intelligence",
             "Weakness & Breakdown Radar",
             "1-Hour Strength Screener",
             "Breakout Scanners",
@@ -5415,6 +5416,17 @@ if active_page == "Research Tools":
             st.info("No candidates met the current rules, or the data provider returned insufficient quarterly data. This is not proof that no turnaround stocks exist.")
         else:
             st.info("Select segments and press Scan / refresh to generate the first watchlist. Re-run after market-data refresh to catch new qualifying stocks.")
+
+if active_page == "Institutional Volume Intelligence":
+    try:
+        from institutional_volume_intelligence import render_institutional_volume_intelligence
+        _ivi_config = fyers_credentials()
+        _ivi_token = st.session_state.get("fyers_access_token")
+        _ivi_app_id = _ivi_config[0] if _ivi_config else None
+        render_institutional_volume_intelligence(_ivi_app_id, _ivi_token, MICRO_SECTORS)
+    except Exception as ivi_error:
+        st.error(f"Institutional Volume Intelligence failed: {type(ivi_error).__name__}: {ivi_error}")
+        st.caption("The rest of the Market Terminal remains available. Share this exact error if it appears.")
 
 if active_page == "News Intelligence":
     try:
