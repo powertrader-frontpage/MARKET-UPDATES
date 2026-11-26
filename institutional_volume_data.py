@@ -6,6 +6,7 @@ volume is never substituted for futures volume.
 from __future__ import annotations
 
 from datetime import date, timedelta
+import time
 from typing import Optional
 
 import pandas as pd
@@ -56,22 +57,27 @@ def fetch_continuous_futures_daily(app_id: str, access_token: str, symbol: str,
     end = date.today()
     start = end - timedelta(days=min(max(int(lookback_days), 252), 366))
     try:
-        response = requests.get(
-            FYERS_HISTORY_URL,
-            params={
-                "symbol": symbol,
-                "resolution": "D",
-                "date_format": "1",
-                "range_from": start.isoformat(),
-                "range_to": end.isoformat(),
-                "cont_flag": "1",
-            },
-            headers={"Authorization": f"{app_id}:{access_token}"},
-            timeout=30,
-        )
-        payload = response.json()
-        if not response.ok or payload.get("s") != "ok":
-            return pd.DataFrame(), str(payload.get("message") or payload.get("code") or "FYERS history request failed.")
+        params = {
+            "symbol": symbol, "resolution": "D", "date_format": "1",
+            "range_from": start.isoformat(), "range_to": end.isoformat(), "cont_flag": "1",
+        }
+        headers = {"Authorization": f"{app_id}:{access_token}"}
+        payload = {}
+        response = None
+        for attempt in range(4):
+            response = requests.get(FYERS_HISTORY_URL, params=params, headers=headers, timeout=30)
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {}
+            if response.status_code == 429 or str(payload.get("code", "")) in {"-429", "429"}:
+                if attempt < 3:
+                    time.sleep(2 ** (attempt + 1))
+                    continue
+            break
+        if response is None or not response.ok or payload.get("s") != "ok":
+            status_code = response.status_code if response is not None else "unknown"
+            return pd.DataFrame(), str(payload.get("message") or payload.get("code") or f"FYERS history request failed (HTTP {status_code}).")
         candles = payload.get("candles") or []
         if not candles:
             return pd.DataFrame(), "FYERS returned no continuous futures candles."
@@ -108,6 +114,10 @@ def volume_record_flags(frame: pd.DataFrame) -> dict:
         return {"HVQ": None, "history_sessions": n, "HVQ_status": f"Insufficient history ({n}/63 sessions)"}
     latest = float(volume.iloc[-1])
     max_63 = float(volume.iloc[-63:].max())
-    is_record = latest >= max_63
-    return {"HVQ": bool(is_record), "history_sessions": n, "latest_volume": latest,
-            "HVQ_63D_max": max_63, "HVQ_status": "Record" if is_record else "No record"}
+    record_high = latest >= max_63
+    above_minimum = latest > 100000
+    qualifies = record_high and above_minimum
+    status = "HVQ" if qualifies else "Below 100,000 volume threshold" if not above_minimum else "Not a 63-session high"
+    return {"HVQ": bool(qualifies), "is_63_session_high": bool(record_high),
+            "above_100k": bool(above_minimum), "history_sessions": n,
+            "latest_volume": latest, "HVQ_63D_max": max_63, "HVQ_status": status}
