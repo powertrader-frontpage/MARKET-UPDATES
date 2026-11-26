@@ -2820,6 +2820,12 @@ if active_page == "Main Dashboard":
                     if current_zone:
                         rotation_rows.append({"Sector": sector, "Previous zone": previous_zone or current_zone, "Current zone": current_zone, "Days in current zone": zone_days, "Zone entry date": zone_entry_date, "Relative return vs NIFTY (pp)": relative_pp, "Last source bar": last_date})
         
+                # Share the exact Main Dashboard sector rotation zones with the HVQ page.
+                st.session_state["ivi_sector_zone_map"] = {
+                    str(item.get("Sector")): str(item.get("Current zone"))
+                    for item in rotation_rows if item.get("Sector") and item.get("Current zone")
+                }
+
                 if sector_rows:
                     sector_board = pd.DataFrame(sector_rows)
                     sector_period = st.segmented_control(
@@ -3286,6 +3292,10 @@ if active_page == "Main Dashboard":
                         rising = pd.notna(row["1M vs NIFTY 500 (pp)"]) and row["1M vs NIFTY 500 (pp)"] >= 0
                         return "Leading" if ahead and rising else "Weakening" if ahead else "Improving" if rising else "Lagging"
                     micro_df["Zone"] = micro_df.apply(_micro_zone, axis=1)
+                    # Share the exact Main Dashboard microsector rotation zones with HVQ.
+                    st.session_state["ivi_micro_zone_map"] = dict(zip(
+                        micro_df["Micro sector"].astype(str), micro_df["Zone"].astype(str)
+                    ))
                     micro_zone_durations = {}
                     for micro_name, history in micro_histories.items():
                         aligned_micro = pd.concat([history.rename("micro"), bench.rename("bench")], axis=1).dropna()
