@@ -165,6 +165,57 @@ def _metrics(close, volume):
             "Volume / 20D avg":vol_ratio, "Data date":close.index[-1].strftime("%d %b %Y")}
 
 
+
+def _style_signed_columns(frame, columns):
+    """Red for negative performance, green for positive performance."""
+    def shade(value):
+        if pd.isna(value): return ""
+        if value < 0: return "background-color: #5b2525; color: #ffdada;"
+        if value > 0: return "background-color: #174b36; color: #d8ffea;"
+        return ""
+    valid = [col for col in columns if col in frame.columns]
+    return frame.style.applymap(shade, subset=valid)
+
+
+def _style_sector_table(frame):
+    styled = _style_signed_columns(frame, [
+        "Average 1W %", "Average 1M %", "Average 3M %",
+        "1M RS vs NIFTY (pp)", "3M RS vs NIFTY (pp)", "1M RS vs NIFTY 500 (pp)"
+    ])
+    if "Weakness score" in frame.columns:
+        styled = styled.background_gradient(subset=["Weakness score"], cmap="Reds")
+    if "Below Daily 200 EMA %" in frame.columns:
+        styled = styled.background_gradient(subset=["Below Daily 200 EMA %"], cmap="Oranges")
+    if "Below Weekly 200 EMA %" in frame.columns:
+        styled = styled.background_gradient(subset=["Below Weekly 200 EMA %"], cmap="Oranges")
+    return styled
+
+
+def _style_stock_table(frame):
+    styled = _style_signed_columns(frame, [
+        "1W %", "1M %", "3M %", "1M RS vs NIFTY (pp)",
+        "1M RS vs NIFTY 500 (pp)", "1M RS vs sector basket (pp)",
+        "3M RS vs NIFTY 500 (pp)", "Daily 200 EMA gap %", "Weekly 200 EMA gap %"
+    ])
+    if "Classification" in frame.columns:
+        def classification_row(row):
+            label = str(row.get("Classification", ""))
+            if label.startswith("A"):
+                color = "background-color: #662b2b; color: #ffe1e1;"
+            elif label.startswith("C"):
+                color = "background-color: #664b1f; color: #fff0c2;"
+            else:
+                color = ""
+            return [color] * len(row)
+        styled = styled.apply(classification_row, axis=1)
+    if "Sector weak" in frame.columns:
+        styled = styled.applymap(
+            lambda value: "background-color: #662b2b; color: #ffe1e1; font-weight: bold;" if value is True else "",
+            subset=["Sector weak"]
+        )
+    return styled
+
+
 def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session=None):
     st.markdown("## 📉 Weakness & Breakdown Radar")
     st.caption("Independent bearish research page · official Nifty sector-index constituents drive sector context · F&O shortlist is restricted to verified NSE F&O symbols.")
@@ -235,7 +286,7 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
     sectors.insert(0,"Rank",np.arange(1,len(sectors)+1))
     st.markdown("### 1. Weak Sector Ranking")
     st.caption("All available constituents of each official Nifty sector index contribute, regardless of F&O eligibility. Overlapping index membership is intentional.")
-    st.dataframe(sectors.style.format({c:"{:.1f}" for c in sectors.select_dtypes(include="number").columns if c not in {"Rank","Stocks measured","Fresh bearish crosses"}}),use_container_width=True,hide_index=True)
+    st.dataframe(_style_sector_table(sectors).format({c:"{:.1f}" for c in sectors.select_dtypes(include="number").columns if c not in {"Rank","Stocks measured","Fresh bearish crosses"}}),use_container_width=True,hide_index=True)
     st.download_button("⬇ Download weak sector ranking",sectors.to_csv(index=False).encode("utf-8-sig"),"weak_sector_ranking.csv","text/csv",key="weak_sector_csv")
     st.markdown("### 2. Weak F&O Stocks")
     fo_stocks=stocks[stocks["F&O eligible"]].copy()
@@ -252,14 +303,14 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
         ["A · High-conviction weakness","C · Early breakdown watch"],default="B · Weak / developing")
     fo_stocks=fo_stocks.sort_values(["Bearish confirmations","1M RS vs NIFTY 500 (pp)","3M RS vs NIFTY 500 (pp)"],ascending=[False,True,True])
     display=["Stock","Sector","Sector weak","Classification","Price","1W %","1M %","3M %","1M RS vs NIFTY (pp)","1M RS vs NIFTY 500 (pp)","1M RS vs sector basket (pp)","3M RS vs NIFTY 500 (pp)","Daily 200 EMA gap %","Weekly 200 EMA gap %","Volume / 20D avg","Fresh bearish 200 EMA cross","20D low breakdown","Data date"]
-    st.dataframe(fo_stocks[display].drop_duplicates(subset=["Stock"]).head(150),use_container_width=True,hide_index=True)
+    fo_display = fo_stocks[display].drop_duplicates(subset=["Stock"]).head(150)\n    st.dataframe(_style_stock_table(fo_display),use_container_width=True,hide_index=True)
     st.download_button("⬇ Download weak F&O stocks",fo_stocks.to_csv(index=False).encode("utf-8-sig"),"weak_fo_stocks.csv","text/csv",key="weak_fo_csv")
     st.markdown("### 3. Fresh Breakdown Watchlist")
     fresh=fo_stocks[fo_stocks["Fresh bearish 200 EMA cross"] | fo_stocks["20D low breakdown"]].copy()
-    st.dataframe(fresh[display].drop_duplicates(subset=["Stock"]),use_container_width=True,hide_index=True)
+    fresh_display = fresh[display].drop_duplicates(subset=["Stock"])\n    st.dataframe(_style_stock_table(fresh_display),use_container_width=True,hide_index=True)
     st.download_button("⬇ Download fresh breakdown watchlist",fresh.to_csv(index=False).encode("utf-8-sig"),"fresh_breakdown_watchlist.csv","text/csv",key="fresh_breakdown_csv")
     st.markdown("### 4. Shortlist for Analysis")
     shortlist=fo_stocks[fo_stocks["Classification"]=="A · High-conviction weakness"].drop_duplicates(subset=["Stock"]).head(20)
-    st.dataframe(shortlist[display],use_container_width=True,hide_index=True)
+    st.dataframe(_style_stock_table(shortlist[display]),use_container_width=True,hide_index=True)
     st.download_button("⬇ Download analysis shortlist",shortlist.to_csv(index=False).encode("utf-8-sig"),"weakness_analysis_shortlist.csv","text/csv",key="weakness_shortlist_csv")
     st.info("Research filter only, not a short-entry instruction. Confirm liquidity, event risk, derivative constraints and price structure before acting. Extended declines can reverse sharply.")
