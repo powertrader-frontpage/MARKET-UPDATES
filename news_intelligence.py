@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 import requests
 import streamlit as st
+import yfinance as yf
 
 
 NSE_FO_LOTS_URL = "https://nsearchives.nseindia.com/content/fo/fo_mktlots.csv"
@@ -278,13 +279,139 @@ def _filter_fo_announcements(frame: pd.DataFrame, universe: pd.DataFrame) -> pd.
     symbols = set(universe["Symbol"].astype(str).str.upper())
     return frame[frame["Symbol"].astype(str).str.upper().isin(symbols)].copy().reset_index(drop=True)
 
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_sector_strength(micro_sectors):
+    """Calculate parent-group and microsector RS using the shared MICRO_SECTORS baskets."""
+    try:
+        micro_baskets = {}
+        parent_baskets = {}
+        for micro_name, definition in (micro_sectors or {}).items():
+            if not isinstance(definition, (tuple, list)) or len(definition) < 2:
+                continue
+            parent_name, members = str(definition[0]), definition[1]
+            tickers = sorted({str(x).upper() for x in members if isinstance(x, str) and x.strip()})
+            micro_baskets[micro_name] = tickers
+            parent_baskets.setdefault(parent_name, set()).update(tickers)
+
+        tickers = sorted(set(t for names in micro_baskets.values() for t in names) | {"^CRSLDX"})
+        if not tickers:
+            return {}, {}, "Shared microsector mapping is unavailable."
+        history = yf.download(tickers, period="6mo", interval="1d", auto_adjust=True,
+                              progress=False, threads=True, group_by="ticker")
+        if history is None or history.empty:
+            return {}, {}, "Price history unavailable. Positive-sector filtering is disabled until data is available."
+
+        def get_close(ticker):
+            try:
+                if isinstance(history.columns, pd.MultiIndex):
+                    if (ticker, "Close") in history.columns:
+                        return history[(ticker, "Close")].dropna()
+                    if ("Close", ticker) in history.columns:
+                        return history[("Close", ticker)].dropna()
+                return pd.Series(dtype=float)
+            except Exception:
+                return pd.Series(dtype=float)
+
+        close_map = {ticker: get_close(ticker) for ticker in tickers}
+        benchmark = close_map.get("^CRSLDX", pd.Series(dtype=float))
+        if len(benchmark) < 64:
+            return {}, {}, "NIFTY 500 benchmark history is insufficient. Positive-sector filtering is withheld."
+
+        def assess(name, members):
+            usable = [close_map[t] for t in members if t in close_map and len(close_map[t]) >= 64]
+            minimum = max(2, int(len(members) * 0.5))
+            if len(usable) < minimum:
+                return {"Name": name, "Members with data": len(usable), "1M RS (pp)": None,
+                        "3M RS (pp)": None, "Zone": "Insufficient data", "Positive": False}
+            prices = pd.concat(usable, axis=1).sort_index().ffill()
+            daily_returns = prices.pct_change()
+            group_returns = daily_returns.mean(axis=1).dropna()
+            group_index = (1 + group_returns).cumprod()
+            common = group_index.index.intersection(benchmark.dropna().index)
+            if len(common) < 64:
+                return {"Name": name, "Members with data": len(usable), "1M RS (pp)": None,
+                        "3M RS (pp)": None, "Zone": "Insufficient data", "Positive": False}
+            group = group_index.reindex(common)
+            bench = benchmark.reindex(common)
+            rs1 = ((group.iloc[-1] / group.iloc[-21] - 1) -
+                   (bench.iloc[-1] / bench.iloc[-21] - 1)) * 100
+            rs3 = ((group.iloc[-1] / group.iloc[-64] - 1) -
+                   (bench.iloc[-1] / bench.iloc[-64] - 1)) * 100
+            zone = ("Leading" if rs1 >= 0 and rs3 >= 0 else
+                    "Weakening" if rs3 >= 0 else
+                    "Improving" if rs1 >= 0 else "Lagging")
+            return {"Name": name, "Members with data": len(usable),
+                    "1M RS (pp)": round(float(rs1), 2), "3M RS (pp)": round(float(rs3), 2),
+                    "Zone": zone, "Positive": zone == "Leading"}
+
+        micro = {name: assess(name, members) for name, members in micro_baskets.items()}
+        parent = {name: assess(name, sorted(members)) for name, members in parent_baskets.items()}
+        return micro, parent, None
+    except Exception as exc:
+        return {}, {}, "Sector-strength calculation failed (" + type(exc).__name__ + ")."
+
+
+def filter_positive_sector_stocks(frame, micro_sectors, micro_strength, parent_strength):
+    """Keep a stock only when every mapped parent group and microsector is Leading."""
+    if frame.empty:
+        return frame.copy()
+    symbol_map = {}
+    for micro_name, definition in (micro_sectors or {}).items():
+        parent_name, members = str(definition[0]), definition[1]
+        for ticker in members:
+            symbol = str(ticker).upper().replace(".NS", "")
+            symbol_map.setdefault(symbol, {"micro": set(), "parent": set()})
+            symbol_map[symbol]["micro"].add(micro_name)
+            symbol_map[symbol]["parent"].add(parent_name)
+
+    kept = []
+    for _, item in frame.iterrows():
+        symbol = str(item.get("Symbol", "")).upper().replace(".NS", "")
+        groups = symbol_map.get(symbol)
+        if not groups:
+            continue
+        micro_names = sorted(groups["micro"])
+        parent_names = sorted(groups["parent"])
+        if not all(micro_strength.get(name, {}).get("Positive", False) for name in micro_names):
+            continue
+        if not all(parent_strength.get(name, {}).get("Positive", False) for name in parent_names):
+            continue
+        row = item.to_dict()
+        row["Sector status"] = "🟢 Leading"
+        row["Sector group(s)"] = ", ".join(parent_names)
+        row["Microsector status"] = "🟢 Leading"
+        row["Microsector(s)"] = ", ".join(micro_names)
+        row["Sector 1M RS (pp)"] = ", ".join(
+            f"{name}: {parent_strength[name]['1M RS (pp)']}" for name in parent_names
+        )
+        row["Microsector 1M RS (pp)"] = ", ".join(
+            f"{name}: {micro_strength[name]['1M RS (pp)']}" for name in micro_names
+        )
+        kept.append(row)
+    return pd.DataFrame(kept)
+
+
+def _color_status_table(frame):
+    def color(value):
+        value = str(value)
+        if "Leading" in value or "🟢" in value:
+            return "background-color: #123d2a; color: #8ff0b2"
+        if "Improving" in value or "🟡" in value:
+            return "background-color: #493b12; color: #ffe08a"
+        if "Weakening" in value or "Lagging" in value or "🔴" in value:
+            return "background-color: #4a1e24; color: #ff9ca5"
+        return "background-color: #343434; color: #c8c8c8"
+    cols = [x for x in ["Zone", "Sector status", "Microsector status"] if x in frame.columns]
+    return frame.style.map(color, subset=cols) if cols else frame.style
+
 def _show_news_table(frame: pd.DataFrame, key: str) -> None:
     if frame.empty:
         st.info("No matching F&O announcements were returned for this time window. This may mean no matching filings or a feed/matching limitation; it is not proof that no company news exists.")
         return
     display = frame.drop(columns=["Published"], errors="ignore").copy()
     st.dataframe(
-        display,
+        _color_status_table(display),
         use_container_width=True,
         hide_index=True,
         height=min(620, 130 + 58 * len(display)),
@@ -302,7 +429,7 @@ def _show_news_table(frame: pd.DataFrame, key: str) -> None:
     )
 
 
-def render_news_intelligence() -> None:
+def render_news_intelligence(micro_sectors=None) -> None:
     st.title("📰 News Intelligence")
     st.caption("F&O-first catalyst discovery · Official company disclosures · Microsector and price confirmation")
     now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
@@ -356,6 +483,29 @@ def render_news_intelligence() -> None:
         f"All-market NSE JSON rows received: {len(market_announcements)}"
     )
 
+    with st.spinner("Checking parent-sector and microsector relative strength…"):
+        micro_strength, parent_strength, strength_error = get_sector_strength(micro_sectors or {})
+    if strength_error:
+        st.error(strength_error)
+        st.warning("News candidates are withheld because positive sector and microsector strength could not be verified.")
+        announcements = pd.DataFrame()
+    else:
+        total_before_filter = len(announcements)
+        announcements = filter_positive_sector_stocks(
+            announcements, micro_sectors or {}, micro_strength, parent_strength
+        )
+        st.caption(
+            f"Positive parent-sector + microsector filter: {len(announcements)} of "
+            f"{total_before_filter} F&O announcements retained."
+        )
+        with st.expander("Sector and microsector strength monitor", expanded=False):
+            micro_table = pd.DataFrame(micro_strength.values())
+            parent_table = pd.DataFrame(parent_strength.values())
+            st.markdown("**Microsector relative strength**")
+            st.dataframe(_color_status_table(micro_table), use_container_width=True, hide_index=True)
+            st.markdown("**Parent-sector group relative strength**")
+            st.dataframe(_color_status_table(parent_table), use_container_width=True, hide_index=True)
+
     cutoff_24h = pd.Timestamp(now_ist - timedelta(hours=24))
     cutoff_7d = pd.Timestamp(now_ist - timedelta(days=7))
     if not announcements.empty:
@@ -379,7 +529,7 @@ def render_news_intelligence() -> None:
         _show_news_table(developing, "nse_developing_announcements")
     with confirmed_tab:
         st.subheader("Confirmed opportunities")
-        st.info("This section will be activated after catalyst relevance, microsector strength and stock price/volume confirmation are implemented. No candidate is promoted on news alone.")
+        st.info("This list will contain only F&O stocks with a Leading parent-sector group and Leading microsector. Individual stock price/volume confirmation and positive-catalyst classification are the next filters.")
     with results_tab:
         st.subheader("NSE financial results announcements")
         if not financial_results.empty:
