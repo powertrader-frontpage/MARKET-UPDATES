@@ -21,6 +21,10 @@ OFFICIAL_SECTOR_INDEX_FILES = {
     "Oil & Gas": "ind_niftyoilgaslist.csv", "Power": "ind_niftypowerlist.csv",
     "Capital Goods": "ind_niftycapitalgoodslist.csv", "Cement": "ind_niftycementlist.csv",
     "Construction": "ind_niftyconstructionlist.csv", "Telecommunications": "ind_niftytelecomlist.csv",
+    "Nifty500 Healthcare": "ind_nifty500Healthcare_list.csv",
+    "MidSmall Financial Services": "ind_niftymidsmallfinancailservice_list.csv",
+    "MidSmall Healthcare": "ind_niftymidsmallhealthcare_list.csv",
+    "MidSmall IT & Telecom": "ind_niftymidsmallitAndtelecom_list.csv",
 }
 
 
@@ -211,6 +215,10 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
     if stocks.empty:
         st.warning("No constituents returned enough history for the 200-day EMA calculations.")
         return
+    sector_return_lookup = stocks.groupby("Sector")["1M %"].mean().to_dict()
+    stocks["1M RS vs sector basket (pp)"] = stocks.apply(
+        lambda row: row["1M %"] - sector_return_lookup.get(row["Sector"], np.nan)
+        if pd.notna(row["1M %"]) else np.nan, axis=1)
     sector_rows=[]
     for sector,frame in stocks.groupby("Sector"):
         sector_rows.append({"Sector":sector,"Stocks measured":frame["Stock"].nunique(),
@@ -243,7 +251,7 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
          (fo_stocks["Fresh bearish 200 EMA cross"] | fo_stocks["20D low breakdown"])],
         ["A · High-conviction weakness","C · Early breakdown watch"],default="B · Weak / developing")
     fo_stocks=fo_stocks.sort_values(["Bearish confirmations","1M RS vs NIFTY 500 (pp)","3M RS vs NIFTY 500 (pp)"],ascending=[False,True,True])
-    display=["Stock","Sector","Sector weak","Classification","Price","1W %","1M %","3M %","1M RS vs NIFTY (pp)","1M RS vs NIFTY 500 (pp)","3M RS vs NIFTY 500 (pp)","Daily 200 EMA gap %","Weekly 200 EMA gap %","Volume / 20D avg","Fresh bearish 200 EMA cross","20D low breakdown","Data date"]
+    display=["Stock","Sector","Sector weak","Classification","Price","1W %","1M %","3M %","1M RS vs NIFTY (pp)","1M RS vs NIFTY 500 (pp)","1M RS vs sector basket (pp)","3M RS vs NIFTY 500 (pp)","Daily 200 EMA gap %","Weekly 200 EMA gap %","Volume / 20D avg","Fresh bearish 200 EMA cross","20D low breakdown","Data date"]
     st.dataframe(fo_stocks[display].drop_duplicates(subset=["Stock"]).head(150),use_container_width=True,hide_index=True)
     st.download_button("⬇ Download weak F&O stocks",fo_stocks.to_csv(index=False).encode("utf-8-sig"),"weak_fo_stocks.csv","text/csv",key="weak_fo_csv")
     st.markdown("### 3. Fresh Breakdown Watchlist")
