@@ -1,4 +1,4 @@
-"""Streamlit page for the HVY/HVQ institutional futures-volume scanner."""
+"""Streamlit page for the HVQ-only institutional futures-volume scanner."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -96,7 +96,7 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
         """<div style="font-size:clamp(27px,3.7vw,40px);font-weight:850;letter-spacing:-1px;line-height:1.15;margin:8px 0 6px;background:linear-gradient(90deg,#19e6a0,#29c7d6,#4aa8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Institutional Volume Intelligence</div>""",
         unsafe_allow_html=True,
     )
-    st.caption("NSE single-stock futures · HVY (252 sessions) and HVQ (63 sessions) · Research watchlist, not a buy/sell signal.")
+    st.caption("NSE single-stock futures · HVQ (63 sessions) only · Research watchlist, not a buy/sell signal.")
     st.info("Volume records are calculated from FYERS continuous futures candles. Price, turnover and weekly liquidity filters use cash-equity data. The two volume series are never substituted for one another.")
     if not app_id or not access_token:
         st.warning("Connect FYERS from the Main Dashboard before running the futures-volume scan.")
@@ -112,10 +112,10 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
 
     with st.expander("Scanner rules", expanded=False):
         st.markdown(
-            "- HVY: latest completed futures-volume session equals the maximum of the trailing 252 sessions.\n"
-            "- HVQ: latest completed futures-volume session equals the maximum of the trailing 63 sessions.\n"
+            ""
+            "- HVQ only: latest completed futures-volume session equals the maximum of the trailing 63 sessions.\n"
             "- Cash filters: close ≥ ₹20; market cap ≥ ₹1,000 crore; 10-week average volume > 1,00,000; 50-day average turnover > ₹50 lakh.\n"
-            "- Momentum confirmations are displayed separately and do not suppress raw HVY/HVQ events."
+            "- No other volume-record lookbacks are calculated."
         )
     st.caption("FYERS history is requested only after you press Scan. The first full-universe scan can take several minutes; results are cached for 30 minutes.")
     scan = st.button("Run / refresh NSE futures scan", type="primary", key="run_institutional_volume_scan")
@@ -160,11 +160,11 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
         st.session_state["ivi_cash_rejections"] = cash_rejections
         st.session_state.pop("ivi_results", None)
 
-        diagnostics = {"Market cap unavailable / below ₹1,000 Cr": 0, "FYERS history failed / empty": 0, "Insufficient HVY/HVQ history": 0, "History available, no HVY/HVQ record": 0, "HVY/HVQ record found": 0}
+        diagnostics = {"Market cap unavailable / below ₹1,000 Cr": 0, "FYERS history failed / empty": 0, "Insufficient HVQ history": 0, "History available, no HVQ record": 0, "HVQ record found": 0}
         target_symbols = {"BRITANNIA", "KFINTECH", "TORNTPHARM"}
         target_checks = []
         rows = []
-        progress = st.progress(0.0, text="Checking market capitalisation and futures-volume records…")
+        progress = st.progress(0.0, text="Checking market capitalisation and HVQ records…")
         total = max(len(cash_ok), 1)
         for idx, (contract, ticker, metrics) in enumerate(cash_ok):
             cap_crore = _market_cap_crore(ticker)
@@ -181,25 +181,24 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
                 progress.progress((idx + 1) / total, text=f"Futures history {idx + 1}/{total}")
                 continue
             flags = volume_record_flags(candles)
-            if flags.get("HVY") is None or flags.get("HVQ") is None:
-                diagnostics["Insufficient HVY/HVQ history"] += 1
-            if flags.get("HVY") is not True and flags.get("HVQ") is not True:
-                diagnostics["History available, no HVY/HVQ record"] += 1
+            if flags.get("HVQ") is None:
+                diagnostics["Insufficient HVQ history"] += 1
+            if flags.get("HVQ") is not True:
+                diagnostics["History available, no HVQ record"] += 1
                 if key in target_symbols:
-                    target_checks.append({"Symbol": key, "Check": "No HVY/HVQ record in FYERS futures", "Detail": f"Sessions: {flags.get('history_sessions', 0)}; HVQ: {flags.get('HVQ_status')}"})
+                    target_checks.append({"Symbol": key, "Check": "No HVQ record in FYERS futures", "Detail": f"Sessions: {flags.get('history_sessions', 0)}; HVQ: {flags.get('HVQ_status')}"})
                 progress.progress((idx + 1) / total, text=f"Volume records {idx + 1}/{total}")
                 continue
-            diagnostics["HVY/HVQ record found"] += 1
+            diagnostics["HVQ record found"] += 1
             if key in target_symbols:
-                target_checks.append({"Symbol": key, "Check": "HVY/HVQ record found", "Detail": f"HVY: {flags.get('HVY_status')}; HVQ: {flags.get('HVQ_status')}"})
+                target_checks.append({"Symbol": key, "Check": "HVQ record found", "Detail": f"HVQ: {flags.get('HVQ_status')}; 63D max: {flags.get('HVQ_63D_max')}"})
             key = str(contract["_underlying"]).replace(".NS", "")
             mapped = membership.get(key, {"Sectors": set(), "Microsectors": set()})
             rows.append({
                 "Symbol": key,
-                "Volume signal": "HVY + HVQ" if flags.get("HVY") and flags.get("HVQ") else "HVY" if flags.get("HVY") else "HVQ",
+                "Volume signal": "HVQ",
                 "Futures volume": int(candles["Volume"].iloc[-1]),
-                "252D max volume": int(candles["Volume"].tail(252).max()) if len(candles) >= 252 else np.nan,
-                "63D max volume": int(candles["Volume"].tail(63).max()) if len(candles) >= 63 else np.nan,
+                "63D max volume": int(flags["HVQ_63D_max"]),
                 "Cash close ₹": round(metrics["Close"], 2),
                 "Daily change %": round(metrics["Daily change %"], 2),
                 "Market cap ₹ Cr": round(cap_crore, 1),
@@ -237,7 +236,7 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
         dcols[1].metric("Cash filters passed", st.session_state.get("ivi_cash_count", 0))
         dcols[2].metric("Market cap rejected", diag.get("Market cap unavailable / below ₹1,000 Cr", 0))
         dcols[3].metric("FYERS history failed", diag.get("FYERS history failed / empty", 0))
-        dcols[4].metric("Volume records", diag.get("HVY/HVQ record found", 0))
+        dcols[4].metric("Volume records", diag.get("HVQ record found", 0))
         st.dataframe(pd.DataFrame([{"Filter / outcome": k, "Stocks": v} for k, v in st.session_state.get("ivi_cash_rejections", {}).items()] + [{"Filter / outcome": k, "Stocks": v} for k, v in diag.items()]), use_container_width=True, hide_index=True)
         target_rows = st.session_state.get("ivi_target_checks", [])
         st.markdown("**Reference-stock checks: Britannia, KFin Technologies and Torrent Pharma**")
@@ -246,20 +245,17 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
         else:
             st.caption("These reference stocks did not reach the FYERS volume check because they did not pass the cash-liquidity and market-cap gates. Their rejection reasons are shown in the diagnostics above where applicable.")
     if isinstance(result, pd.DataFrame) and not result.empty:
-        hvy = int(result["Volume signal"].str.contains("HVY").sum())
-        hvq = int(result["Volume signal"].str.contains("HVQ").sum())
-        c1, c2, c3 = st.columns(3)
-        c1.metric("HVY records", hvy)
-        c2.metric("HVQ records", hvq)
-        c3.metric("Qualifying stocks", len(result))
+        c1, c2 = st.columns(2)
+        c1.metric("HVQ records", len(result))
+        c2.metric("Qualifying stocks", len(result))
         st.dataframe(result, use_container_width=True, hide_index=True, height=560)
         st.download_button(
-            "Download HVY / HVQ watchlist CSV", result.to_csv(index=False).encode("utf-8"),
-            file_name="institutional_hvy_hvq_watchlist.csv", mime="text/csv",
-            key="download_institutional_hvy_hvq",
+            "Download HVQ watchlist CSV", result.to_csv(index=False).encode("utf-8"),
+            file_name="institutional_hvq_watchlist.csv", mime="text/csv",
+            key="download_institutional_hvq",
         )
         st.caption("Sector and microsector columns show all existing universe memberships. Rotation-zone readings are not yet joined into this scan output; do not interpret membership alone as a strength confirmation.")
     elif "ivi_scan_time" in st.session_state:
-        st.warning("No stocks matched all liquidity filters and HVY/HVQ records. Use the diagnostics above to identify the exclusion stage.")
+        st.warning("No stocks matched all liquidity filters and HVQ records. Use the diagnostics above to identify the exclusion stage.")
     else:
-        st.info("Press Run / refresh NSE futures scan to build the first HVY/HVQ watchlist.")
+        st.info("Press Run / refresh NSE futures scan to build the first HVQ watchlist.")
