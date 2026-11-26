@@ -512,7 +512,9 @@ def render_news_intelligence(micro_sectors=None) -> None:
         announcements["Published"] = pd.to_datetime(announcements["Published"], errors="coerce")
         fresh = announcements[announcements["Published"] >= cutoff_24h].copy()
         developing = announcements[announcements["Published"] >= cutoff_7d].copy()
-        result_pattern = r"financial result|unaudited result|audited result|quarterly result|outcome of board meeting"
+        # Avoid treating every board-meeting outcome as a financial result.
+        # Require an explicit reference to financial results / financial statements.
+        result_pattern = r"financial results?|unaudited financial results?|audited financial results?|quarterly financial results?|standalone financial results?|consolidated financial results?"
         result_mask = (
             announcements["Headline"].fillna("").str.contains(result_pattern, case=False, regex=True)
             | announcements["Details"].fillna("").str.contains(result_pattern, case=False, regex=True)
