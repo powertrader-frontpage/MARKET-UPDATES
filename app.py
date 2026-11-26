@@ -3298,14 +3298,22 @@ if active_page == "Main Dashboard":
                     st.session_state["ivi_micro_zone_map"] = dict(zip(
                         micro_df["Micro sector"].astype(str), micro_df["Zone"].astype(str)
                     ))
-                    # Broad sector/group zone: majority zone among the group's live microsectors.
-                    _zone_priority = {"Leading": 0, "Improving": 1, "Weakening": 2, "Lagging": 3}
-                    _group_zone_map = {}
-                    for _group, _group_frame in micro_df.groupby("Group"):
-                        _counts = _group_frame["Zone"].value_counts()
-                        _top_count = _counts.max()
-                        _tied = [str(z) for z, n in _counts.items() if n == _top_count]
-                        _group_zone_map[str(_group)] = sorted(_tied, key=lambda z: _zone_priority.get(z, 9))[0]
+                    # Do not derive broad-sector zones from microsector majorities.
+                    # HVQ/PPV must use the exact sector-index rotation zones calculated
+                    # above from SECTOR_TICKERS. Map only unambiguous group aliases.
+                    _index_sector_zones = dict(st.session_state.get("ivi_sector_zone_map", {}))
+                    _group_to_index_sector = {
+                        "Technology": "IT",
+                        "Financials": "Financial Services",
+                        "Real Estate": "Realty",
+                        "Pharma": "Pharma",
+                        "Auto": "Auto",
+                        "Energy": "Energy",
+                    }
+                    _group_zone_map = {
+                        group: _index_sector_zones.get(index_name, "Unavailable")
+                        for group, index_name in _group_to_index_sector.items()
+                    }
                     st.session_state["ivi_sector_zone_map"] = _group_zone_map
                     micro_zone_durations = {}
                     for micro_name, history in micro_histories.items():
