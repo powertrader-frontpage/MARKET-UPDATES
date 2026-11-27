@@ -103,7 +103,7 @@ def main():
         "",
         "## Consumer membership counts",
         "",
-        counts.to_markdown(),
+        counts.to_string(),
         "",
         "## Ranking invariance gate",
         "",
