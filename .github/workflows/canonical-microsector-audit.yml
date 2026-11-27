@@ -79,3 +79,6 @@ jobs:
             reports/sector_classification_review_register_summary.md
             reports/peer_group_assignment_review_register.csv
             reports/peer_group_assignment_review_summary.md
+            reports/ranking_invariance_group_scores.csv
+            reports/ranking_invariance_stock_transitions.csv
+            reports/ranking_invariance_summary.md
