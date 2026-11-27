@@ -3193,7 +3193,7 @@ if active_page == "Main Dashboard":
                 st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#a78bfa,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Micro Sector Rotation</div>""", unsafe_allow_html=True)
                 st.caption("Explore leading, improving, weakening and lagging micro industries, compare their strength against NIFTY 500, and drill down to constituent stocks.")
                 st.caption("Custom equal-weight stock baskets · ranks combine 1M/3M/6M returns and 50-EMA breadth. Weekly 200 EMA proximity is a separate confirmation layer and does not change the existing Score or Zone. Uses five years of weekly prices; unavailable if fewer than 200 weekly bars exist. Public prices may be delayed. This is a research tool, not investment advice.")
-                micro_tickers = sorted({ticker for _, tickers in MICRO_SECTORS.values() for ticker in tickers} | {"^CRSLDX"})
+                micro_tickers = sorted(({ticker for _, tickers in MICRO_SECTORS.values() for ticker in tickers} | {ticker for tickers in CANONICAL_MICROSECTOR_BASKETS.values() for ticker in tickers} | {"^CRSLDX"}))
                 @st.cache_data(ttl=900, show_spinner=False)
                 def _micro_sector_download(symbols):
                     try:
