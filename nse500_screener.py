@@ -11,6 +11,8 @@ import requests
 import streamlit as st
 import yfinance as yf
 
+from stock_classification import build_classified_universe
+
 
 STAGE_1 = "Stage 1 · Base"
 STAGE_2 = "Stage 2 · Uptrend"
@@ -621,6 +623,9 @@ def _calculate(fyers_app_id="", fyers_access_token=""):
     result = pd.DataFrame(records)
     if result.empty:
         raise ValueError("No NSE 500 symbols had enough usable weekly price history.")
+    # Add evidence-backed MIT labels without changing official Sector/Industry fields
+    # or any technical/relative-strength calculations.
+    result = build_classified_universe(result)
     result = result.sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False]).reset_index(drop=True)
 
     # Stock strength relative to the median return of its assigned sector/industry peer group.
