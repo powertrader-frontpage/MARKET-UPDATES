@@ -116,8 +116,8 @@ def main():
         f"Detailed output: `{OUT.relative_to(ROOT)}`.",
         "",
     ]
-    SUMMARY.write_text("\\n".join(lines), encoding="utf-8")
-    print("\\n".join(lines))
+    SUMMARY.write_text("\n".join(lines), encoding="utf-8")
+    print("\n".join(lines))
 
 
 if __name__ == "__main__":
