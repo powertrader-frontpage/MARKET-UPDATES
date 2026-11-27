@@ -71,7 +71,8 @@ def main():
         "|---|---:|",
     ]
     for name, count in micro_counts.most_common(20):
-        lines.append(f"| {name.replace('|', '\\|')} | {count} |")
+        escaped_name = name.replace("|", chr(92) + "|")
+        lines.append(f"| {escaped_name} | {count} |")
     lines += [
         "",
         "## Consistency spot-check",
