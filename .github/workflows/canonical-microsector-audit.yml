@@ -33,7 +33,7 @@ jobs:
       - name: Install audit dependency
         run: python -m pip install --disable-pip-version-check pandas
       - name: Compile canonical modules
-        run: python -m py_compile classification_master.py canonical_microsectors.py scripts/audit_canonical_microsectors.py scripts/build_canonical_microsector_shadow.py
+        run: python -m py_compile classification_master.py canonical_microsectors.py scripts/audit_canonical_microsectors.py scripts/build_canonical_microsector_shadow.py scripts/build_microsector_per_consumer_shadow.py
       - name: Run read-only migration audit
         run: python scripts/audit_canonical_microsectors.py
       - name: Build canonical baskets in shadow mode
