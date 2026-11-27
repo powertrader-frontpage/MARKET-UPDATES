@@ -1,63 +1,32 @@
-Candidate_ID,Current_Label,Proposed_Canonical_Label,Stocks,Confidence,Reason,Review_Status
-T001,Asset Management,Asset Management,ABSLAMC;HDFCAMC,High,Existing canonical wording,
-T001,Asset Management & Mutual Funds,Asset Management,NAM-INDIA;UTIAMC,High,Same core asset-management business; mutual funds are the principal product,
-T002,Private Sector Banking,Private Sector Banks,RBLBANK,High,Singular/plural naming inconsistency,
-T002,Private Sector Banks,Private Sector Banks,AXISBANK;BANDHANBNK;CITYUNIONBANK;FEDERALBNK;HDFCBANK;ICICIBANK;IDFCFIRSTB;INDUSINDBK;KARURVYSYA;KOTAKBANK;SOUTHBANK;YESBANK,High,Existing canonical wording,
-T003,Public Sector Banking,Public Sector Banks,PNB,High,Singular/plural naming inconsistency,
-T003,Public Sector Banks,Public Sector Banks,BANKBARODA;BANKINDIA;CANBK;CENTRALBK;INDIANB;IOB;MAHABANK;SBIN;UCOBANK;UNIONBANK,High,Existing canonical wording,
-T004,Cement & Building Materials,Cement Manufacturers,RAMCOCEM;SHREECEM,Medium,Cement appears to be the dominant business; confirm no meaningful non-cement exposure before applying,
-T004,Cement Manufacturers,Cement Manufacturers,BVCL;DALBHARAT;JKCEMENT;ULTRACEMCO;AMBUJACEM,High,Existing canonical wording,
-T005,Housing Finance,Housing Finance,AAVAS;APTUS;HOMEFIRST;BAJAJHFL;CANFINHOME;LICHSGFIN,High,Same specialist housing-finance business category,
-T005,Housing Finance & Mortgage Lending,Housing Finance,PNBHOUSING,High,Mortgage lending is descriptive wording for housing finance,
-T006,Diagnostics & Laboratory Services,Diagnostics & Laboratory Services,KRSNAA;LALPATHLAB;METROPOLIS;THYROCARE;VIJAYA,High,Same diagnostics and laboratory testing business,
-T007,Hospitals & Tertiary Healthcare Services,Hospitals & Healthcare Services,MEDANTA,High,Tertiary healthcare is a hospital-service subtype,
-T007,Hospitals & Healthcare Services,Hospitals & Healthcare Services,APOLLOHOSP;ARTEMISMED;FORTIS;KIMS;MAXHEALTH;YATHARTH,High,Existing broader canonical wording,
-T008,IT Services & Digital Engineering,IT Services & Consulting,COFORGE,Medium,Potentially same IT services group; confirm preferred taxonomy scope,
-T008,IT Services & Digital Transformation,IT Services & Consulting,KELLTONTEC;ZENSARTECH,Medium,Potentially same IT services group; confirm preferred taxonomy scope,
-T008,IT Services,Cloud & Application Modernization,IT Services & Consulting,MPHASIS,Medium,Potentially same IT services group; confirm preferred taxonomy scope,
-T008,IT Services,Consulting & Digital Transformation,IT Services & Consulting,LTM,Medium,Potentially same IT services group; confirm preferred taxonomy scope,
-T008,IT Services,Telecom & Digital Transformation,IT Services & Consulting,TECHM,Medium,Telecom specialization is important; consider separate secondary tag,
-T008,IT Services & Consulting,IT Services & Consulting,HCLTECH;INFY;LTIM;PERSISTENT;TCS;WIPRO,High,Existing canonical wording,
-T009,Jewellery Retailers,Jewellery Retail,KALYANKJIL,High,Singular/plural naming inconsistency,
-T009,Jewellery Retail,Jewellery Retail,PNGJL;SENCO;THANGAMAYL,High,Existing canonical wording,
-T010,Online Travel Platforms,Online Travel Platforms,EASEMYTRIP;IXIGO;YATRA,High,Same online travel booking platform category,
-T011,Tyres & Rubber Products,Tyre Manufacturers,MRF,Medium,Tyres are core; broader rubber products wording may imply additional activities,
-T011,Tyre Manufacturers,Tyre Manufacturers,APOLLOTYRE;CEATLTD,High,Existing canonical wording,
-T012,Hotels & Luxury Hospitality,Hotels & Hospitality,EIHOTEL,Medium,Hotel operator fits broader hotel category; luxury positioning can remain a secondary tag,
-T012,Hotels & Hospitality,Hotels & Hospitality,CHALET;INDHOTEL;LEMONTREE,High,Existing canonical wording,
-T013,Real Estate Developers,Real Estate Development,BRIGADE,High,Near-identical business category wording,
-T013,Residential Real Estate Development,Real Estate Development,SOBHA,High,Residential is a project mix descriptor within real estate development,
-T013,Residential,Commercial & Mixed-Use Real Estate,Real Estate Development,PRESTIGE,High,Project mix descriptor within real estate development,
-T013,Real Estate Development,Real Estate Development,ANANTRAJ;DLF;GODREJPROP;LODHA;MAHLIFE,High,Existing canonical wording,
-T014,Renewable Power Generation,Renewable Power Producers,NTPCGREEN,High,Power generation business; producers is the canonical group wording,
-T014,Renewable Power Producers,Renewable Power Producers,ADANIGREEN;KPIGREEN,High,Existing canonical wording,
-T015,Water Treatment & Wastewater Infrastructure,Water Treatment & Wastewater Infrastructure,VA TECH WABAG,High,Keep specific water/wastewater infrastructure category,
-T015,Water & Wastewater Infrastructure,Water Treatment & Wastewater Infrastructure,EMS,Medium,Potentially equivalent; confirm business mix,
-T015,Water Treatment & Environmental Solutions,Water Treatment & Wastewater Infrastructure,IONEXCHANG,Medium,Environmental solutions may extend beyond water treatment; review before applying,
-T016,Air Conditioning & Engineering Projects,Air Conditioning & Commercial Refrigeration,VOLTAS,Low,Voltas also has engineering projects; not a safe merge without segment-mix review,
-T016,Air Conditioning & Commercial Refrigeration,Air Conditioning & Commercial Refrigeration,BLUESTARCO,High,Existing canonical wording,
-T017,Alcoholic Beverages & Distilled Spirits,Alcoholic Beverages & Spirits,GLOBUSSPR,High,Distilled spirits are a subtype of alcoholic beverages,
-T017,Alcoholic Beverages & Spirits,Alcoholic Beverages & Spirits,ABDL;RADICO,High,Existing canonical wording,
-T017,Spirits & Alcoholic Beverages,Alcoholic Beverages & Spirits,UNITDSPR,High,Word-order variation; same spirits business group,
-T018,Apparel & Fashion Retail,Apparel & Fashion Retail,ABFRL,High,Keep broad apparel and fashion retail group,
-T018,Organised Fashion & Lifestyle Retail,Apparel & Fashion Retail,TRENT,Medium,Could consolidate under fashion retail; value-fashion subsegment may be useful,
-T018,Value Fashion & Apparel Retail,Apparel & Fashion Retail,V2RETAIL,Medium,Could consolidate under fashion retail; value positioning can remain a secondary tag,
-T020,Integrated Steel Manufacturing,Integrated Steel Manufacturing,SAIL;TATASTEEL,High,Keep integrated steel group,
-T020,Integrated Steel Producers,Integrated Steel Manufacturing,JINDALSTEL;JSWSTEEL,High,Producer/manufacturer wording variation; integrated steel remains the shared business model,
-T021,Shipbuilding & Ship Repair,Shipbuilding & Ship Repair,COCHINSHIP,High,Keep shipbuilding/repair as a distinct group,
-T021,Shipbuilding & Defence Marine Platforms,Shipbuilding & Defence Marine Platforms,GRSE,High,Defence platform exposure makes this distinct,
-T022,Two-Wheeler & Motorcycle OEMs,Two-Wheeler & Three-Wheeler OEMs,HEROMOTOCO,Medium,Motorcycles are a two-wheeler subtype; assess whether a two-wheeler-only group is preferred,
-T022,Two-Wheeler & Three-Wheeler OEMs,Two-Wheeler & Three-Wheeler OEMs,BAJAJ-AUTO;TVSMOTOR,High,Existing broader canonical wording,
-T023,Fertiliser Manufacturers,Fertilizer Manufacturers,FACT,High,British/American spelling variation,
-T023,Fertilizer Manufacturers,Fertilizer Manufacturers,CHAMBLFERT,High,Existing canonical spelling,
-T024,Footwear Manufacturers & Brands,Footwear Manufacturers & Retailers,CAMPUS,Medium,Manufacturer/brand and retailer wording overlap; verify business model boundaries,
-T024,Footwear Manufacturing & Retail,Footwear Manufacturers & Retailers,RELAXO,Medium,Potential wording consolidation; retail/manufacturing mix should be checked,
-T024,Footwear Manufacturers & Retailers,Footwear Manufacturers & Retailers,BATAINDIA,High,Existing canonical wording,
-T025,Oil & Gas Exploration,Production and Transportation,Oil & Gas Exploration & Production,OIL,Medium,Transportation may be a secondary activity; confirm segment reporting,
-T025,Oil & Gas Exploration and Production,Oil & Gas Exploration & Production,ONGC,High,Existing canonical wording,
-T026,Power Sector Financing & Infrastructure Lending,Power & Infrastructure Financing,PFC,Medium,Could align with REC; preserve sector specialization as a secondary tag,
-T026,Power & Infrastructure Financing,Power & Infrastructure Financing,REC,High,Existing canonical wording,
-T027,Value Retail & Supermarkets,Value Retail & Supermarkets,DMART;VMM,High,Same value-led general merchandise retail category,
-T028,Quick Service Restaurants & Food Service,Quick Service Restaurants & Food Service,DEVYANI;JUBLFOOD;SAPPHIRE;WESTLIFE,High,Same QSR and food-service business category,
-T029,Power & Distribution Transformers,Power & Distribution Transformers,TRANSFORMERS;VOLTAMP,High,Already standardised; retain as-is,
-T030,Passenger Vehicle OEMs,Passenger Vehicle OEMs,HYUNDAI;MARUTI;TATAMOTORS,High,Already aligned by explicit project decision; retain as-is,
+"Candidate_ID","Current_Label","Proposed_Canonical_Label","Stocks","Confidence","Reason","Review_Status"
+"T001","Asset Management & Mutual Funds","Asset Management","NAM-INDIA;UTIAMC","High","Same core asset-management business; mutual funds are the principal product.","PROPOSED_NOT_APPLIED"
+"T002","Private Sector Banking","Private Sector Banks","RBLBANK","High","Singular/plural wording variation; same bank category.","PROPOSED_NOT_APPLIED"
+"T003","Public Sector Banking","Public Sector Banks","PNB","High","Singular/plural wording variation; same bank category.","PROPOSED_NOT_APPLIED"
+"T004","Cement & Building Materials","Cement Manufacturers","RAMCOCEM;SHREECEM","Medium","Cement appears to be dominant, but verify whether broader building-material exposure warrants a separate group.","PROPOSED_NOT_APPLIED"
+"T005","Housing Finance & Mortgage Lending","Housing Finance","PNBHOUSING","High","Mortgage lending is descriptive wording for specialist housing finance.","PROPOSED_NOT_APPLIED"
+"T006","Hospitals & Tertiary Healthcare Services","Hospitals & Healthcare Services","MEDANTA","High","Tertiary healthcare is a service subtype within hospital operations.","PROPOSED_NOT_APPLIED"
+"T007","IT Services & Digital Engineering","IT Services & Consulting","COFORGE","Medium","Adjacent IT services category; retain digital engineering as a secondary descriptor if merged.","PROPOSED_NOT_APPLIED"
+"T007","IT Services & Digital Transformation","IT Services & Consulting","KELLTONTEC;ZENSARTECH","Medium","Adjacent IT services category; confirm whether digital transformation is a meaningful separate trading group.","PROPOSED_NOT_APPLIED"
+"T007","IT Services, Cloud & Application Modernization","IT Services & Consulting","MPHASIS","Medium","Cloud/application modernisation is a service specialization within IT services.","PROPOSED_NOT_APPLIED"
+"T007","IT Services, Consulting & Digital Transformation","IT Services & Consulting","LTM","Medium","Potentially equivalent IT consulting category; confirm taxonomy granularity.","PROPOSED_NOT_APPLIED"
+"T007","IT Services, Telecom & Digital Transformation","IT Services & Consulting","TECHM","Medium","Telecom specialization is meaningful; consider preserving it as a secondary tag.","PROPOSED_NOT_APPLIED"
+"T008","Jewellery Retailers","Jewellery Retail","KALYANKJIL","High","Singular/plural naming variation; same jewellery retail business.","PROPOSED_NOT_APPLIED"
+"T009","Tyres & Rubber Products","Tyre Manufacturers","MRF","Medium","Tyres are central, but the broader rubber-products wording should be checked against product mix.","PROPOSED_NOT_APPLIED"
+"T010","Hotels & Luxury Hospitality","Hotels & Hospitality","EIHOTEL","Medium","Hotel operations fit the broader hotel group; luxury positioning can remain a secondary descriptor.","PROPOSED_NOT_APPLIED"
+"T011","Real Estate Developers","Real Estate Development","BRIGADE","High","Near-identical category wording.","PROPOSED_NOT_APPLIED"
+"T011","Residential Real Estate Development","Real Estate Development","SOBHA","High","Residential describes project mix within real estate development.","PROPOSED_NOT_APPLIED"
+"T011","Residential, Commercial & Mixed-Use Real Estate","Real Estate Development","PRESTIGE","High","Project mix describes the real-estate portfolio rather than a distinct business model.","PROPOSED_NOT_APPLIED"
+"T012","Renewable Power Generation","Renewable Power Producers","NTPCGREEN","High","Equivalent renewable electricity-generation business category.","PROPOSED_NOT_APPLIED"
+"T013","Water & Wastewater Infrastructure","Water Treatment & Wastewater Infrastructure","EMS","Medium","Likely adjacent water/wastewater infrastructure category; verify service and project mix.","PROPOSED_NOT_APPLIED"
+"T013","Water Treatment & Environmental Solutions","Water Treatment & Wastewater Infrastructure","IONEXCHANG","Medium","Environmental solutions may extend beyond water treatment; do not merge without segment review.","PROPOSED_NOT_APPLIED"
+"T014","Alcoholic Beverages & Distilled Spirits","Alcoholic Beverages & Spirits","GLOBUSSPR","High","Distilled spirits are a subtype of alcoholic beverages.","PROPOSED_NOT_APPLIED"
+"T014","Spirits & Alcoholic Beverages","Alcoholic Beverages & Spirits","UNITDSPR","High","Word-order variation for the same spirits business category.","PROPOSED_NOT_APPLIED"
+"T015","Organised Fashion & Lifestyle Retail","Apparel & Fashion Retail","TRENT","Medium","Potential common apparel/fashion retail group; preserve organised/value positioning as a secondary tag.","PROPOSED_NOT_APPLIED"
+"T015","Value Fashion & Apparel Retail","Apparel & Fashion Retail","V2RETAIL","Medium","Potential common apparel/fashion retail group; value positioning can remain a secondary tag.","PROPOSED_NOT_APPLIED"
+"T016","Integrated Steel Producers","Integrated Steel Manufacturing","JINDALSTEL;JSWSTEEL","High","Producer/manufacturer wording variation for integrated steel businesses.","PROPOSED_NOT_APPLIED"
+"T017","Two-Wheeler & Motorcycle OEMs","Two-Wheeler & Three-Wheeler OEMs","HEROMOTOCO","Medium","Motorcycle OEM is a narrower subtype; decide whether two-wheeler-only grouping is analytically useful.","PROPOSED_NOT_APPLIED"
+"T018","Fertiliser Manufacturers","Fertilizer Manufacturers","FACT","High","Spelling variation only; same fertilizer manufacturing category.","PROPOSED_NOT_APPLIED"
+"T019","Footwear Manufacturers & Brands","Footwear Manufacturers & Retailers","CAMPUS","Medium","Manufacturer/brand and retailer wording overlap; verify retail versus manufacturing mix.","PROPOSED_NOT_APPLIED"
+"T019","Footwear Manufacturing & Retail","Footwear Manufacturers & Retailers","RELAXO","Medium","Potential wording consolidation; confirm manufacturing/retail mix before applying.","PROPOSED_NOT_APPLIED"
+"T020","Oil & Gas Exploration, Production and Transportation","Oil & Gas Exploration & Production","OIL","Medium","Transportation wording may reflect ancillary activity; verify operating segment mix.","PROPOSED_NOT_APPLIED"
+"T021","Power Sector Financing & Infrastructure Lending","Power & Infrastructure Financing","PFC","Medium","Could align with REC; preserve power-sector specialization as a secondary tag.","PROPOSED_NOT_APPLIED"
