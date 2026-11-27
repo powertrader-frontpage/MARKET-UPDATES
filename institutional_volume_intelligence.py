@@ -257,7 +257,7 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
             )
             st.download_button(
                 "Download HVQ + PPV watchlist",
-                result.to_csv(index=False).encode("utf-8"),
+                display_result.to_csv(index=False).encode("utf-8"),
                 "hvq_ppv_watchlist.csv",
                 "text/csv",
             )
