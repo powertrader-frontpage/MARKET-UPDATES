@@ -33,7 +33,7 @@ This report does not approve any new peer-group assignments. It records existing
 | 12 | 1 |
 | **Total** | **302** |
 
-**Important reconciliation discrepancy:** the 2026-11-27 audit closure records **278 canonical primary microsectors**, while the current `data/stock_classification_master.csv` contains **302 distinct primary microsector strings** across 422 rows. This is a difference of 24 labels. Do not normalize, merge, or overwrite these labels silently. First reconcile the exact master version / canonical taxonomy snapshot used by the 278-count audit with the current branch master. The 278 figure is not interchangeable with the 302 count.
+**Reconciliation resolved:** the current master has **302 raw primary-label strings**. The approved alias map contains **24 exact label mappings**, all with exact symbol coverage and zero errors. Applying only those approved aliases produces **278 canonical primary microsectors**, matching the 2026-11-27 audit closure. This is a presentation/taxonomy mapping only; the 422 stock-level primary assignments in the master remain unchanged. The alias coverage was independently recomputed against the current master: 24/24 exact, 0 mismatches, 422 unique symbols.
 
 ## 3. Existing approved peer-group guardrails
 
@@ -102,3 +102,17 @@ Rules:
 ## 7. Source record
 
 This report uses the current branch master and the existing audit closure record dated 2026-11-27. The closure record contains the five approved peer-group guardrails listed above and explicitly states that shadow validation and ranking-invariance checks remain incomplete. No new peer assignments are approved by this report.
+
+
+## 8. Reconciliation verification update (2026-11-28)
+
+A fresh programmatic comparison of the current branch files confirms:
+
+- Master rows / unique symbols: **422 / 422**
+- Raw distinct MIT primary labels: **302**
+- Approved alias-map rows: **24**
+- Exact alias symbol-coverage checks: **24 passed, 0 failed**
+- Distinct labels after approved alias mapping: **278**
+- Primary microsector blanks: **0**
+
+Therefore the apparent 278-versus-302 discrepancy is explained by the 24 approved alias mappings. No master labels were edited during this check. This report supersedes the earlier unresolved-discrepancy note in Section 2.
