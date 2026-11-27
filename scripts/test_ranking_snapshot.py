@@ -1,5 +1,10 @@
 """Unit checks for deterministic ranking input snapshots."""
+import sys
+from pathlib import Path
+
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ranking_snapshot import build_ranking_snapshot, load_ranking_snapshot
 
