@@ -11,6 +11,7 @@ on:
       - "data/stock_classification_master.csv"
       - "data/microsector_canonical_alias_map.csv"
       - "scripts/audit_canonical_microsectors.py"
+      - "scripts/build_canonical_microsector_shadow.py"
       - ".github/workflows/canonical-microsector-audit.yml"
   workflow_dispatch:
 
@@ -32,13 +33,17 @@ jobs:
       - name: Install audit dependency
         run: python -m pip install --disable-pip-version-check pandas
       - name: Compile canonical modules
-        run: python -m py_compile classification_master.py canonical_microsectors.py scripts/audit_canonical_microsectors.py
+        run: python -m py_compile classification_master.py canonical_microsectors.py scripts/audit_canonical_microsectors.py scripts/build_canonical_microsector_shadow.py
       - name: Run read-only migration audit
         run: python scripts/audit_canonical_microsectors.py
-      - name: Upload audit outputs
+      - name: Build canonical baskets in shadow mode
+        run: python scripts/build_canonical_microsector_shadow.py
+      - name: Upload audit and shadow outputs
         uses: actions/upload-artifact@v4
         with:
           name: canonical-microsector-audit
           path: |
             reports/canonical_microsector_migration_audit.md
             reports/microsector_legacy_vs_canonical_membership.csv
+            reports/canonical_microsector_shadow_baskets.csv
+            reports/canonical_microsector_shadow_summary.md
