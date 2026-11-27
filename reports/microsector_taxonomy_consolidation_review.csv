@@ -25,7 +25,7 @@
 "T015","Value Fashion & Apparel Retail","Apparel & Fashion Retail","V2RETAIL","Medium","Potential common apparel/fashion retail group; value positioning can remain a secondary tag.","PROPOSED_NOT_APPLIED"
 "T016","Integrated Steel Producers","Integrated Steel Manufacturing","JINDALSTEL;JSWSTEEL","High","Producer/manufacturer wording variation for integrated steel businesses.","PROPOSED_NOT_APPLIED"
 "T017","Two-Wheeler & Motorcycle OEMs","Two-Wheeler & Three-Wheeler OEMs","HEROMOTOCO","Medium","Motorcycle OEM is a narrower subtype; decide whether two-wheeler-only grouping is analytically useful.","PROPOSED_NOT_APPLIED"
-"T018","Fertiliser Manufacturers","Fertilizer Manufacturers","FACT","High","Spelling variation only; same fertilizer manufacturing category.","PROPOSED_NOT_APPLIED"
+"T018","Fertiliser Manufacturers","Fertilizer Manufacturers","CHAMBLFERT","High","Spelling variation only; same fertilizer manufacturing category.","PROPOSED_NOT_APPLIED"
 "T019","Footwear Manufacturers & Brands","Footwear Manufacturers & Retailers","CAMPUS","Medium","Manufacturer/brand and retailer wording overlap; verify retail versus manufacturing mix.","PROPOSED_NOT_APPLIED"
 "T019","Footwear Manufacturing & Retail","Footwear Manufacturers & Retailers","RELAXO","Medium","Potential wording consolidation; confirm manufacturing/retail mix before applying.","PROPOSED_NOT_APPLIED"
 "T020","Oil & Gas Exploration, Production and Transportation","Oil & Gas Exploration & Production","OIL","Medium","Transportation wording may reflect ancillary activity; verify operating segment mix.","PROPOSED_NOT_APPLIED"
