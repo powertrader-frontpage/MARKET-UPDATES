@@ -11,7 +11,8 @@ on:
       - "data/stock_classification_master.csv"
       - "data/microsector_canonical_alias_map.csv"
       - "scripts/audit_canonical_microsectors.py"
-      - "scripts/build_canonical_microsector_shadow.py"\n      - "scripts/build_microsector_per_consumer_shadow.py"
+      - "scripts/build_canonical_microsector_shadow.py"
+      - "scripts/build_microsector_per_consumer_shadow.py"
       - ".github/workflows/canonical-microsector-audit.yml"
   workflow_dispatch:
 
@@ -38,7 +39,9 @@ jobs:
         run: python scripts/audit_canonical_microsectors.py
       - name: Build canonical baskets in shadow mode
         run: python scripts/build_canonical_microsector_shadow.py
-      - name: Build per-consumer membership diffs\n        run: python scripts/build_microsector_per_consumer_shadow.py\n      - name: Upload audit and shadow outputs
+      - name: Build per-consumer membership diffs
+        run: python scripts/build_microsector_per_consumer_shadow.py
+      - name: Upload audit and shadow outputs
         uses: actions/upload-artifact@v4
         with:
           name: canonical-microsector-audit
@@ -46,4 +49,6 @@ jobs:
             reports/canonical_microsector_migration_audit.md
             reports/microsector_legacy_vs_canonical_membership.csv
             reports/canonical_microsector_shadow_baskets.csv
-            reports/canonical_microsector_shadow_summary.md\n            reports/microsector_per_consumer_membership_diff.csv\n            reports/microsector_per_consumer_shadow_summary.md
+            reports/canonical_microsector_shadow_summary.md
+            reports/microsector_per_consumer_membership_diff.csv
+            reports/microsector_per_consumer_shadow_summary.md
