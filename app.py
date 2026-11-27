@@ -16,6 +16,8 @@ import yfinance as yf
 import nse500_screener as nse500_data
 from nse500_screener import render_nse500_screener
 from hourly_strength_screener import render_hourly_strength_screener
+from classification_master import load_classification_master
+from pathlib import Path
 
 import hashlib
 import hmac
@@ -25,6 +27,26 @@ import re
 from urllib.parse import urlencode
 
 st.set_page_config(page_title="Market Intelligence Terminal", page_icon="📈", layout="wide")
+
+# Phase 1: load and validate the classification master without changing
+# existing sector/microsector calculations. The migration happens separately.
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_stock_classification_master():
+    master_path = Path(__file__).resolve().parent / "data" / "stock_classification_master.csv"
+    return load_classification_master(master_path)
+
+try:
+    STOCK_CLASSIFICATION_MASTER = _load_stock_classification_master()
+    CLASSIFICATION_MASTER_LOAD_ERROR = None
+except Exception as _classification_error:
+    STOCK_CLASSIFICATION_MASTER = pd.DataFrame()
+    CLASSIFICATION_MASTER_LOAD_ERROR = str(_classification_error)
+    st.warning(
+        "Stock classification master could not be loaded. Existing dashboard "
+        "classification logic remains active until the master is available. "
+        f"Details: {CLASSIFICATION_MASTER_LOAD_ERROR}"
+    )
+
 
 # Weekly rotation history is stored in the repository; the token is read only from Streamlit Secrets.
 ROTATION_ZONE_CELL_COLORS = {
