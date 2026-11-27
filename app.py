@@ -2828,6 +2828,14 @@ if active_page == "Main Dashboard":
                     for item in rotation_rows if item.get("Sector") and item.get("Current zone")
                 }
                 st.session_state["master_sector_rotation_zones"] = _authoritative_sector_zone_map
+                # Publish one-week relative strength from the same sector-index dataset.
+                st.session_state["master_sector_rotation_weekly_strength"] = {
+                    str(item.get("Sector")): (
+                        float(item.get("1W vs NIFTY (pp)"))
+                        if pd.notna(item.get("1W vs NIFTY (pp)")) else np.nan
+                    )
+                    for item in sector_rows if item.get("Sector")
+                }
                 st.session_state["master_sector_rotation_asof"] = max(
                     [str(item.get("Last source bar", "")) for item in rotation_rows] or [""]
                 )
