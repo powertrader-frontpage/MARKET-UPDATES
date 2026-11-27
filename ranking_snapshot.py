@@ -1,8 +1,8 @@
 """Deterministic input snapshots for microsector ranking-invariance audits.
 
-This module is deliberately independent of Streamlit and ranking formulas. It
-stores the exact daily OHLCV inputs (including the benchmark) used by the
-microsector rotation calculation, with stable ordering and a SHA-256 digest.
+This module is independent of Streamlit and ranking formulas. It stores the
+exact daily OHLCV inputs (including the benchmark) with stable ordering and a
+SHA-256 digest so old and canonical baskets can be tested on identical inputs.
 """
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import base64
 import hashlib
 import json
 import zlib
-from datetime import datetime, timezone
 from typing import Mapping
 
 import pandas as pd
@@ -47,14 +46,12 @@ def build_ranking_snapshot(frame: pd.DataFrame, *, as_of: str, source: str,
     if benchmark_symbol not in symbols:
         raise ValueError(f"Required benchmark {benchmark_symbol} is missing.")
     records = []
-    for row in data.itertuples(index=False, name=None):
-        date, symbol, open_, high, low, close, volume = row
+    for date, symbol, open_, high, low, close, volume in data.itertuples(index=False, name=None):
         records.append([date.isoformat(), symbol, float(open_), float(high),
                         float(low), float(close), float(volume)])
     payload = {
         "schema_version": SCHEMA_VERSION,
         "as_of": str(as_of),
-        "captured_at_utc": datetime.now(timezone.utc).isoformat(),
         "source": str(source),
         "price_adjustment": "auto_adjusted",
         "benchmark_symbol": benchmark_symbol,
