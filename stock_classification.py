@@ -9,7 +9,9 @@ REQUIRED_COLUMNS = ["Symbol","Company","NSE_Macro_Economic_Sector","NSE_Sector",
 APPROVED_STATUS = "VERIFIED"
 
 def _normalise_symbol(value: object) -> str:
-    return str(value or "").strip().upper().removesuffix(".NS")
+    if pd.isna(value):
+        return ""
+    return str(value).strip().upper().removesuffix(".NS")
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_classification_master() -> pd.DataFrame:
@@ -36,6 +38,14 @@ def build_classified_universe(constituents: pd.DataFrame) -> pd.DataFrame:
     universe["Symbol"] = universe["Symbol"].map(_normalise_symbol)
     master = load_classification_master()
     merged = universe.merge(master, on="Symbol", how="left", suffixes=("", "_master"), validate="one_to_one")
+    # Carry the official constituent feed's available classification fields into
+    # the corresponding master columns without inventing the deeper NSE levels.
+    if "Company" in universe.columns:
+        merged["Company"] = merged["Company"].fillna("").replace("", pd.NA).fillna(merged.get("Company_master", ""))
+    if "Sector" in universe.columns:
+        merged["NSE_Sector"] = merged.get("NSE_Sector", pd.Series("", index=merged.index)).fillna("").replace("", pd.NA).fillna(merged["Sector"])
+    if "Industry" in universe.columns:
+        merged["NSE_Industry"] = merged.get("NSE_Industry", pd.Series("", index=merged.index)).fillna("").replace("", pd.NA).fillna(merged["Industry"])
     for column in REQUIRED_COLUMNS:
         if column != "Symbol":
             if column not in merged:
