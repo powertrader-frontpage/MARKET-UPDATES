@@ -98,3 +98,47 @@ def load_ranking_snapshot(snapshot: Mapping) -> tuple[pd.DataFrame, dict]:
     frame = pd.DataFrame(payload["records"], columns=payload["columns"])
     frame["Date"] = pd.to_datetime(frame["Date"], utc=True)
     return frame, payload
+
+
+
+def save_ranking_snapshot_to_github(frame: pd.DataFrame, *, token: str, repository: str,
+                                   branch: str, path: str, as_of: str,
+                                   source: str = "Yahoo Finance auto-adjusted daily OHLCV",
+                                   benchmark_symbol: str = "^CRSLDX") -> dict:
+    """Write one immutable-input audit snapshot to a dedicated GitHub data file."""
+    import requests
+
+    snapshot = build_ranking_snapshot(
+        frame, as_of=as_of, source=source, benchmark_symbol=benchmark_symbol
+    )
+    body = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
+    url = f"https://api.github.com/repos/{repository}/contents/{path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    response = requests.get(url, headers=headers, params={"ref": branch}, timeout=20)
+    if response.status_code == 404:
+        existing_sha = None
+    else:
+        response.raise_for_status()
+        existing_sha = response.json().get("sha")
+    import base64
+    payload = {
+        "message": f"Capture ranking invariance OHLCV snapshot {as_of}",
+        "content": base64.b64encode(body.encode("utf-8")).decode("ascii"),
+        "branch": branch,
+    }
+    if existing_sha:
+        payload["sha"] = existing_sha
+    written = requests.put(url, headers=headers, json=payload, timeout=45)
+    written.raise_for_status()
+    return {
+        "sha256": snapshot["sha256"],
+        "as_of": snapshot["as_of"],
+        "row_count": snapshot["row_count"],
+        "symbol_count": snapshot["symbol_count"],
+        "compressed_bytes": snapshot["compressed_bytes"],
+        "commit_sha": written.json().get("commit", {}).get("sha"),
+    }
