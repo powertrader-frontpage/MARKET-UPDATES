@@ -21,6 +21,7 @@ on:
       - "ranking_snapshot.py"
       - "scripts/test_ranking_snapshot.py"
       - "scripts/run_ranking_invariance.py"
+      - "data/ranking_invariance_snapshot.json"
       - ".github/workflows/canonical-microsector-audit.yml"
   workflow_dispatch:
 
@@ -82,3 +83,4 @@ jobs:
             reports/ranking_invariance_group_scores.csv
             reports/ranking_invariance_stock_transitions.csv
             reports/ranking_invariance_summary.md
+            reports/ranking_invariance_missing_symbols.csv
