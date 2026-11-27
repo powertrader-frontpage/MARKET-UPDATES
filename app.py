@@ -4073,7 +4073,12 @@ if active_page == "Main Dashboard":
                                     if _column not in _part.columns:
                                         _part[_column] = np.nan
                                 _part["Symbol"] = _ticker
-                                snapshot_parts.append(_part[["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"]])
+                                # Yahoo Finance can return partial OHLCV rows for holidays,
+                                # newly listed symbols, or sparse trading histories. Keep only
+                                # complete rows; never fill or estimate missing market data.
+                                _part = _part.dropna(subset=["Date", "Open", "High", "Low", "Close", "Volume"])
+                                if not _part.empty:
+                                    snapshot_parts.append(_part[["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"]])
                             if not snapshot_parts:
                                 raise ValueError("No daily OHLCV rows were available for the snapshot.")
                             _snapshot_frame = pd.concat(snapshot_parts, ignore_index=True)
@@ -4097,7 +4102,7 @@ if active_page == "Main Dashboard":
                         except Exception as _snapshot_error:
                             st.warning(
                                 "Ranking audit snapshot was not saved; live dashboard calculations "
-                                f"are unaffected. Reason: {_snapshot_error.__class__.__name__}."
+                                f"are unaffected. Reason: {_snapshot_error.__class__.__name__}: {_snapshot_error}."
                             )
                     elif not history_configured:
                         st.info("Weekly history is ready to enable. Add MARKET_HISTORY_GITHUB_TOKEN to Streamlit Secrets; the dashboard will continue working without it.")
