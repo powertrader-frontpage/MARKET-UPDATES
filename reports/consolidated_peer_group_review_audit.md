@@ -7,14 +7,14 @@ Source files: the four peer-group review batch CSVs and verified stock master `d
 ## Consolidation audit
 
 - Verified master securities: **422**
-- Unique securities reviewed across Batches 1–6: **370**
-- Master securities covered by the review register: **370**
-- Master securities not yet reviewed: **52**
+- Unique securities reviewed across Batches 1–8: **422**
+- Master securities covered by the review register: **422**
+- Master securities not yet reviewed: **0**
 - Duplicate symbol mentions consolidated to one row: **10**
 - Conflicting proposed peer-group assignments: **2**
 - Batch symbols absent from verified master: **0**
 
-Batch symbol mentions: Batch 1: 62 mentions across 10 rows; Batch 2: 80 mentions across 32 rows; Batch 3: 99 mentions across 37 rows; Batch 4: 89 mentions across 54 rows; Batch 5: 25 reviewed stocks; Batch 6: 25 reviewed stocks.
+Batch symbol mentions: Batch 1: 62 mentions across 10 rows; Batch 2: 80 mentions across 32 rows; Batch 3: 99 mentions across 37 rows; Batch 4: 89 mentions across 54 rows; Batch 5: 25 reviewed stocks; Batch 6: 25 reviewed stocks; Batch 7: 25 reviewed stocks; Batch 8: 27 reviewed stocks.
 
 ## Conflict handling
 
@@ -24,10 +24,10 @@ Batch symbol mentions: Batch 1: 62 mentions across 10 rows; Batch 2: 80 mentions
 
 ## Important interpretation
 
-This is a **coverage and review register**, not an approved taxonomy. All rows remain `PENDING_USER_REVIEW`. The remaining 52 uncovered master securities are explicitly retained as `NOT_YET_REVIEWED`; they are not silently assigned to a peer group. Batches 5 and 6 add 50 proposed reviews, all still `PENDING_USER_REVIEW`.
+This is a **coverage and review register**, not an approved taxonomy. All rows remain `PENDING_USER_REVIEW`. All 422 master securities now have a proposed review entry in the register. Batches 5–8 added 102 proposed reviews, all still `PENDING_USER_REVIEW`; review coverage does not imply user approval or live activation.
 
 No primary business microsector, live rotation basket, dashboard tab, score, weight, calculation, data source or ranking has been changed. No changes were made to `app.py`.
 
 ## Next checkpoint
 
-Review the flagged duplicate identities and group conflicts, then work through the uncovered master securities in manageable batches. Only after user approval should a separate approved peer-group mapping be produced for shadow validation.
+Review the flagged duplicate identities and group conflicts, then obtain the user's explicit approval/revisions for proposed peer groups, including flagged conflicts and symbol-identity exceptions. Only after user approval should a separate approved peer-group mapping be produced for shadow validation.
