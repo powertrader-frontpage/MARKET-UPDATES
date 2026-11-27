@@ -110,9 +110,17 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
                     signals = "HVQ + PPV" if hvq and ppv else "HVQ" if hvq else "PPV"
                     sectors = list(dict.fromkeys(groups.get(symbol, [])))
                     micro_names = list(dict.fromkeys(memberships.get(symbol, [])))
+                    # Calculate daily change from the latest two completed cash-equity sessions.
+                    completed = _latest_completed_session(candles)
+                    daily_change = None
+                    if len(completed) >= 2 and float(completed["Close"].iloc[-2]) != 0:
+                        daily_change = (
+                            float(completed["Close"].iloc[-1]) / float(completed["Close"].iloc[-2]) - 1
+                        ) * 100
                     rows.append({
                         "Stock": symbol,
                         "Signal": signals,
+                        "Daily Change %": daily_change,
                         "Sector": "; ".join(sectors) or "Not mapped",
                         "Microsector": "; ".join(micro_names) or "Not mapped",
                     })
@@ -124,7 +132,7 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
         progress.empty()
         result = pd.DataFrame(
             sorted(rows, key=lambda item: item["Stock"]),
-            columns=["Stock", "Signal", "Sector", "Microsector"],
+            columns=["Stock", "Signal", "Daily Change %", "Sector", "Microsector"],
         )
         st.session_state["ivi_compact_results"] = result
         st.session_state["ivi_compact_failures"] = failures
@@ -142,7 +150,17 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
             st.info("No stocks met either HVQ or PPV condition in the latest scan.")
         else:
             sector_zones = st.session_state.get("master_sector_rotation_zones", {})
+            sector_weekly_strength = st.session_state.get("master_sector_rotation_weekly_strength", {})
             micro_zones = st.session_state.get("master_microsector_rotation_zones", {})
+            # Reuse the exact broad-group mapping already used by the Main Dashboard.
+            # Leave groups without a direct sector-index equivalent explicitly unmapped.
+            group_to_main_sector = {
+                "Pharma": "Pharma", "Technology": "IT", "Industrials": "Infrastructure",
+                "Media & Services": "Media", "Financials": "Financial Services",
+                "Consumer": "Consumption", "Consumer Durables": "Consumption",
+                "Power": "Energy", "Auto": "Auto", "Construction": "Infrastructure",
+                "Real Estate": "Realty",
+            }
             display_result = result.copy()
             # Stack multiple memberships on separate lines to keep the mobile table readable.
             display_result["Sector"] = display_result["Sector"].map(
@@ -153,7 +171,17 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
             )
             display_result["Sector Zone"] = result["Sector"].map(
                 lambda value: "\\n".join(
-                    f"{name.strip()}: {sector_zones.get(name.strip(), 'Unavailable')}"
+                    (
+                        f"{name.strip()} → {group_to_main_sector[name.strip()]}: "
+                        f"{sector_zones.get(group_to_main_sector[name.strip()], 'Unavailable')}"
+                        + (
+                            f" ({sector_weekly_strength[group_to_main_sector[name.strip()]]:+.2f} pp · 1W vs NIFTY)"
+                            if group_to_main_sector.get(name.strip()) in sector_weekly_strength
+                            and pd.notna(sector_weekly_strength[group_to_main_sector[name.strip()]])
+                            else ""
+                        )
+                    ) if name.strip() in group_to_main_sector else
+                    f"{name.strip()}: No direct sector-index mapping"
                     for name in dict.fromkeys(str(value).split(";")) if name.strip()
                 )
             )
@@ -176,7 +204,12 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
                 # One cell can contain multiple memberships; use the strongest
                 # available zone for the cell tint while preserving every label.
                 priority = {"Leading": 4, "Improving": 3, "Weakening": 2, "Lagging": 1, "Unavailable": 0}
-                selected = max(zones, key=lambda zone: priority.get(zone, 0), default="Unavailable")
+                # Zone labels now include weekly strength text; detect the zone token itself.
+                selected = max(
+                    (zone for zone in priority if zone in str(value)),
+                    key=lambda zone: priority.get(zone, 0),
+                    default="Unavailable",
+                )
                 return zone_css.get(selected, zone_css["Unavailable"])
 
             styled = (
@@ -192,6 +225,15 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
                     else "text-align: center; font-weight: 700; color: #60A5FA;",
                     subset=["Signal"],
                 )
+                .map(
+                    lambda value: (
+                        "color: #F87171; font-weight: 800;" if pd.notna(value) and float(value) < 0
+                        else "color: #22C55E; font-weight: 800;" if pd.notna(value) and float(value) > 0
+                        else "color: #94A3B8; font-weight: 700;"
+                    ),
+                    subset=["Daily Change %"],
+                )
+                .format({"Daily Change %": lambda value: "—" if pd.isna(value) else f"{float(value):+.2f}%"})
                 .map(lambda _: "color: #7DD3FC; font-weight: 600;", subset=["Sector"])
                 .map(lambda _: "color: #C4B5FD; font-weight: 600;", subset=["Microsector"])
                 .map(_zone_style, subset=["Sector Zone", "Microsector Zone"])
@@ -203,6 +245,7 @@ def render_institutional_volume_intelligence(app_id: str | None, access_token: s
                 column_config={
                     "Stock": st.column_config.TextColumn("Stock", width="small"),
                     "Signal": st.column_config.TextColumn("Signal", width="small"),
+                    "Daily Change %": st.column_config.TextColumn("Daily %", width="small"),
                     "Sector": st.column_config.TextColumn("Sector", width="medium"),
                     "Microsector": st.column_config.TextColumn("Microsector", width="large"),
                     "Sector Zone": st.column_config.TextColumn("Sector Zone", width="medium"),
