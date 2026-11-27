@@ -18,6 +18,7 @@ from nse500_screener import render_nse500_screener
 from hourly_strength_screener import render_hourly_strength_screener
 from classification_master import load_classification_master
 from canonical_microsector_runtime import load_canonical_runtime
+from ranking_snapshot import save_ranking_snapshot_to_github
 from pathlib import Path
 
 import hashlib
@@ -4047,6 +4048,57 @@ if active_page == "Main Dashboard":
                             st.success(history_message)
                         else:
                             st.warning(history_message)
+
+                        # Capture the exact adjusted daily OHLCV inputs separately from
+                        # the human-readable weekly summary. This is audit-only and does
+                        # not feed or alter any live score, breadth, zone or ranking.
+                        try:
+                            history_token = str(st.secrets["MARKET_HISTORY_GITHUB_TOKEN"]).strip()
+                            snapshot_parts = []
+                            for _ticker in micro_tickers:
+                                _part = pd.DataFrame()
+                                if isinstance(micro_raw.columns, pd.MultiIndex):
+                                    if (_ticker, "Close") in micro_raw.columns:
+                                        _part = micro_raw[_ticker].copy()
+                                    elif ("Close", _ticker) in micro_raw.columns:
+                                        _part = micro_raw.xs(_ticker, axis=1, level=1).copy()
+                                elif _ticker == micro_tickers[0] and "Close" in micro_raw.columns:
+                                    _part = micro_raw.copy()
+                                if _part.empty or "Close" not in _part.columns:
+                                    continue
+                                _part = _part.rename_axis("Date").reset_index()
+                                _date_col = "Date" if "Date" in _part.columns else _part.columns[0]
+                                _part = _part.rename(columns={_date_col: "Date"})
+                                for _column in ["Open", "High", "Low", "Close", "Volume"]:
+                                    if _column not in _part.columns:
+                                        _part[_column] = np.nan
+                                _part["Symbol"] = _ticker
+                                snapshot_parts.append(_part[["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"]])
+                            if not snapshot_parts:
+                                raise ValueError("No daily OHLCV rows were available for the snapshot.")
+                            _snapshot_frame = pd.concat(snapshot_parts, ignore_index=True)
+                            _snapshot_as_of = pd.to_datetime(_snapshot_frame["Date"], errors="coerce").max()
+                            if pd.isna(_snapshot_as_of):
+                                raise ValueError("The downloaded price history has no valid as-of date.")
+                            _snapshot_result = save_ranking_snapshot_to_github(
+                                _snapshot_frame,
+                                token=history_token,
+                                repository=ROTATION_HISTORY_REPO,
+                                branch=ROTATION_HISTORY_BRANCH,
+                                path="data/ranking_invariance_snapshot.json",
+                                as_of=_snapshot_as_of.strftime("%Y-%m-%d"),
+                            )
+                            st.success(
+                                "Ranking audit OHLCV snapshot saved · "
+                                f"{_snapshot_result['symbol_count']} symbols · "
+                                f"{_snapshot_result['row_count']:,} rows · "
+                                f"SHA-256 {_snapshot_result['sha256'][:12]}…"
+                            )
+                        except Exception as _snapshot_error:
+                            st.warning(
+                                "Ranking audit snapshot was not saved; live dashboard calculations "
+                                f"are unaffected. Reason: {_snapshot_error.__class__.__name__}."
+                            )
                     elif not history_configured:
                         st.info("Weekly history is ready to enable. Add MARKET_HISTORY_GITHUB_TOKEN to Streamlit Secrets; the dashboard will continue working without it.")
                     history_data, history_sha, history_error = _rotation_history_read() if history_configured else (None, None, None)
