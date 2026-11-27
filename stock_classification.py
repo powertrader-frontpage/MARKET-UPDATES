@@ -51,11 +51,38 @@ def build_classified_universe(constituents: pd.DataFrame) -> pd.DataFrame:
             if column not in merged:
                 merged[column] = ""
             merged[column] = merged[column].fillna("").astype(str)
-    approved = merged["Verification_Status"].str.upper().eq(APPROVED_STATUS) & merged["MIT_Primary_Microsector"].str.strip().ne("")
+    evidence_complete = (
+        merged["Evidence_Source"].str.strip().ne("")
+        & merged["Evidence_URL"].str.strip().ne("")
+        & merged["Evidence_Type"].str.strip().ne("")
+        & merged["Verified_On"].str.strip().ne("")
+    )
+    approved = (
+        merged["Verification_Status"].str.upper().eq(APPROVED_STATUS)
+        & merged["MIT_Primary_Microsector"].str.strip().ne("")
+        & evidence_complete
+    )
     merged.loc[~approved, ["MIT_Primary_Microsector", "MIT_Secondary_Tags"]] = ""
     merged.loc[~approved, "Verification_Status"] = "PENDING_VERIFICATION"
     merged.loc[approved, "Verification_Status"] = APPROVED_STATUS
     return merged
+
+def build_stock_microsector_map(classified_universe: pd.DataFrame) -> dict[str, str]:
+    """Return only evidence-backed primary assignments, keyed by normalized NSE symbol."""
+    if classified_universe is None or classified_universe.empty:
+        return {}
+    status = classified_universe.get("Verification_Status", pd.Series("", index=classified_universe.index)).astype(str).str.upper()
+    primary = classified_universe.get("MIT_Primary_Microsector", pd.Series("", index=classified_universe.index)).fillna("").astype(str).str.strip()
+    evidence_columns = ["Evidence_Source", "Evidence_URL", "Evidence_Type", "Verified_On"]
+    if not all(column in classified_universe.columns for column in evidence_columns):
+        return {}
+    evidence_complete = classified_universe[evidence_columns].fillna("").astype(str).apply(lambda col: col.str.strip().ne("")).all(axis=1)
+    approved = status.eq(APPROVED_STATUS) & primary.ne("") & evidence_complete
+    return {
+        _normalise_symbol(symbol): microsector
+        for symbol, microsector in zip(classified_universe.loc[approved, "Symbol"], primary.loc[approved])
+        if _normalise_symbol(symbol)
+    }
 
 def classification_audit(universe: pd.DataFrame) -> dict:
     """Coverage and duplicate checks; never infer a missing microsector."""
