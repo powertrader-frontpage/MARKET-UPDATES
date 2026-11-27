@@ -17,6 +17,7 @@ import nse500_screener as nse500_data
 from nse500_screener import render_nse500_screener
 from hourly_strength_screener import render_hourly_strength_screener
 from classification_master import load_classification_master
+from canonical_microsector_runtime import load_canonical_runtime
 from pathlib import Path
 
 import hashlib
@@ -46,6 +47,30 @@ except Exception as _classification_error:
         "classification logic remains active until the master is available. "
         f"Details: {CLASSIFICATION_MASTER_LOAD_ERROR}"
     )
+
+
+# Canonical master-driven classification is loaded in SHADOW mode. It is
+# available to dashboard consumers for validation, but legacy live baskets
+# remain authoritative until frozen-snapshot ranking invariance passes.
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_canonical_microsector_shadow():
+    return load_canonical_runtime()
+
+
+try:
+    (
+        CANONICAL_MICROSECTOR_SHADOW,
+        CANONICAL_MICROSECTOR_MAP,
+        CANONICAL_MICROSECTOR_BASKETS,
+        CANONICAL_CLASSIFICATION_AUDIT,
+    ) = _load_canonical_microsector_shadow()
+    CANONICAL_CLASSIFICATION_LOAD_ERROR = None
+except Exception as _canonical_classification_error:
+    CANONICAL_MICROSECTOR_SHADOW = pd.DataFrame()
+    CANONICAL_MICROSECTOR_MAP = {}
+    CANONICAL_MICROSECTOR_BASKETS = {}
+    CANONICAL_CLASSIFICATION_AUDIT = {}
+    CANONICAL_CLASSIFICATION_LOAD_ERROR = str(_canonical_classification_error)
 
 
 # Weekly rotation history is stored in the repository; the token is read only from Streamlit Secrets.
