@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pandas as pd
 
+# Allow direct execution as: python scripts/audit_canonical_microsectors.py
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from classification_master import load_classification_master
 from canonical_microsectors import (
     build_canonical_classification, canonical_microsector_baskets,
