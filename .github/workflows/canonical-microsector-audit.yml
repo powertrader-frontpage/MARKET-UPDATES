@@ -13,6 +13,7 @@ on:
       - "scripts/audit_canonical_microsectors.py"
       - "scripts/build_canonical_microsector_shadow.py"
       - "scripts/build_microsector_per_consumer_shadow.py"
+      - "scripts/audit_sector_hierarchy_completeness.py"
       - ".github/workflows/canonical-microsector-audit.yml"
   workflow_dispatch:
 
@@ -34,13 +35,15 @@ jobs:
       - name: Install audit dependency
         run: python -m pip install --disable-pip-version-check pandas
       - name: Compile canonical modules
-        run: python -m py_compile classification_master.py canonical_microsectors.py scripts/audit_canonical_microsectors.py scripts/build_canonical_microsector_shadow.py scripts/build_microsector_per_consumer_shadow.py
+        run: python -m py_compile classification_master.py canonical_microsectors.py scripts/audit_canonical_microsectors.py scripts/build_canonical_microsector_shadow.py scripts/build_microsector_per_consumer_shadow.py scripts/audit_sector_hierarchy_completeness.py
       - name: Run read-only migration audit
         run: python scripts/audit_canonical_microsectors.py
       - name: Build canonical baskets in shadow mode
         run: python scripts/build_canonical_microsector_shadow.py
       - name: Build per-consumer membership diffs
         run: python scripts/build_microsector_per_consumer_shadow.py
+      - name: Audit sector hierarchy completeness
+        run: python scripts/audit_sector_hierarchy_completeness.py
       - name: Upload audit and shadow outputs
         uses: actions/upload-artifact@v4
         with:
@@ -52,3 +55,5 @@ jobs:
             reports/canonical_microsector_shadow_summary.md
             reports/microsector_per_consumer_membership_diff.csv
             reports/microsector_per_consumer_shadow_summary.md
+            reports/sector_hierarchy_completeness_audit.md
+            reports/sector_hierarchy_missing_values.csv
