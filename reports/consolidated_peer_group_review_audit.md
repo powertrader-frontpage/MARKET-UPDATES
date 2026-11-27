@@ -7,14 +7,14 @@ Source files: the four peer-group review batch CSVs and verified stock master `d
 ## Consolidation audit
 
 - Verified master securities: **422**
-- Unique securities mentioned in the four review batches: **320**
-- Master securities covered by the review batches: **320**
-- Master securities not yet covered: **102**
+- Unique securities reviewed across Batches 1–5: **345**
+- Master securities covered by the review register: **345**
+- Master securities not yet reviewed: **77**
 - Duplicate symbol mentions consolidated to one row: **10**
 - Conflicting proposed peer-group assignments: **2**
 - Batch symbols absent from verified master: **0**
 
-Batch symbol mentions: Batch 1: 62 mentions across 10 rows; Batch 2: 80 mentions across 32 rows; Batch 3: 99 mentions across 37 rows; Batch 4: 89 mentions across 54 rows.
+Batch symbol mentions: Batch 1: 62 mentions across 10 rows; Batch 2: 80 mentions across 32 rows; Batch 3: 99 mentions across 37 rows; Batch 4: 89 mentions across 54 rows; Batch 5: 25 reviewed stocks.
 
 ## Conflict handling
 
@@ -24,7 +24,7 @@ Batch symbol mentions: Batch 1: 62 mentions across 10 rows; Batch 2: 80 mentions
 
 ## Important interpretation
 
-This is a **coverage and review register**, not an approved taxonomy. All rows remain `PENDING_USER_REVIEW`. The 102 uncovered master securities are explicitly retained as `NOT_YET_REVIEWED`; they are not silently assigned to a peer group.
+This is a **coverage and review register**, not an approved taxonomy. All rows remain `PENDING_USER_REVIEW`. The remaining 77 uncovered master securities are explicitly retained as `NOT_YET_REVIEWED`; they are not silently assigned to a peer group. Batch 5 adds 25 proposed reviews, all still `PENDING_USER_REVIEW`.
 
 No primary business microsector, live rotation basket, dashboard tab, score, weight, calculation, data source or ranking has been changed. No changes were made to `app.py`.
 
