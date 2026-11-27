@@ -43,6 +43,8 @@ def main():
     aliases = load_microsector_alias_map(ALIAS_PATH)
     canonical = build_canonical_classification(master, aliases)
     alias_errors = validate_alias_symbol_coverage(master, aliases)
+    if alias_errors:
+        raise SystemExit("Alias symbol-coverage validation failed: " + " | ".join(alias_errors))
     canonical_baskets = canonical_microsector_baskets(canonical)
     legacy = legacy_baskets_from_app(APP_PATH)
 
