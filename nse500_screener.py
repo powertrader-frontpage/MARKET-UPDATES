@@ -10,7 +10,7 @@ import requests
 import streamlit as st
 import yfinance as yf
 
-from canonical_microsector import load_canonical_microsectors, canonical_microsector_lookup
+from canonical_microsector import load_canonical_microsectors, canonical_microsector_lookup, map_to_canonical_price_ticker
 
 
 STAGE_1 = "Stage 1 · Base"
@@ -45,7 +45,7 @@ def _constituents():
         "Industry": industry_values,
     })
     out = out[out["Symbol"].ne("") & out["Symbol"].str.lower().ne("nan")].drop_duplicates("Symbol")
-    out["Ticker"] = out["Symbol"] + ".NS"
+    out["Ticker"] = out["Symbol"].apply(lambda symbol: map_to_canonical_price_ticker(str(symbol) + ".NS"))
     return out.reset_index(drop=True)
 
 
