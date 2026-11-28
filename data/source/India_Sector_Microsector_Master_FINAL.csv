@@ -1,0 +1,202 @@
+Macro Sector,Sector,Industry,Microsector,Stocks mapped in Nifty 500 file
+Commodities,Chemicals,Chemicals & Petrochemicals,Commodity Chemicals,3
+Commodities,Chemicals,Chemicals & Petrochemicals,Specialty Chemicals,12
+Commodities,Chemicals,Chemicals & Petrochemicals,Carbon Black,1
+Commodities,Chemicals,Chemicals & Petrochemicals,Dyes And Pigments,0
+Commodities,Chemicals,Chemicals & Petrochemicals,Explosives,1
+Commodities,Chemicals,Chemicals & Petrochemicals,Petrochemicals,0
+Commodities,Chemicals,Chemicals & Petrochemicals,Printing Inks,0
+Commodities,Chemicals,Chemicals & Petrochemicals,Trading - Chemicals,1
+Commodities,Chemicals,Chemicals & Petrochemicals,Industrial Gases,1
+Commodities,Chemicals,Fertilizers & Agrochemicals,Fertilizers,4
+Commodities,Chemicals,Fertilizers & Agrochemicals,Pesticides & Agrochemicals,3
+Commodities,Construction Materials,Cement & Cement Products,Cement & Cement Products,11
+Commodities,Construction Materials,Other Construction Materials,Other Construction Materials,0
+Commodities,Metals & Mining,Ferrous Metals,Ferro & Silica Manganese,0
+Commodities,Metals & Mining,Ferrous Metals,Pig Iron,0
+Commodities,Metals & Mining,Ferrous Metals,Sponge Iron,0
+Commodities,Metals & Mining,Ferrous Metals,Iron & Steel,8
+Commodities,Metals & Mining,Non - Ferrous Metals,Aluminum,3
+Commodities,Metals & Mining,Non - Ferrous Metals,Copper,1
+Commodities,Metals & Mining,Non - Ferrous Metals,Zinc,1
+Commodities,Metals & Mining,Non - Ferrous Metals,Precious Metals,0
+Commodities,Metals & Mining,Diversified Metals,Diversified Metals,2
+Commodities,Metals & Mining,Minerals & Mining,Industrial Minerals,4
+Commodities,Metals & Mining,Metals & Minerals Trading,Trading - Metals,0
+Commodities,Metals & Mining,Metals & Minerals Trading,Trading - Minerals,1
+Commodities,Forest Materials,"Paper, Forest & Jute Products",Paper & Paper Products,0
+Commodities,Forest Materials,"Paper, Forest & Jute Products",Forest Products,0
+Commodities,Forest Materials,"Paper, Forest & Jute Products",Jute & Jute Products,0
+Consumer Discretionary,Automobile and Auto Components,Automobiles,Passenger Cars & Utility Vehicles,6
+Consumer Discretionary,Automobile and Auto Components,Automobiles,2/3 Wheelers,6
+Consumer Discretionary,Automobile and Auto Components,Automobiles,Trading - Automobiles,0
+Consumer Discretionary,Automobile and Auto Components,Auto Components,Auto Components & Equipments,21
+Consumer Discretionary,Automobile and Auto Components,Auto Components,Batteries - Automobile,2
+Consumer Discretionary,Automobile and Auto Components,Auto Components,Fastener,0
+Consumer Discretionary,Automobile and Auto Components,Auto Components,Gas Cylinders,0
+Consumer Discretionary,Automobile and Auto Components,Auto Components,Trading - Auto Ancillaries,0
+Consumer Discretionary,Automobile and Auto Components,Auto Components,Tyres & Rubber Products,5
+Consumer Discretionary,Consumer Durables,Consumer Durables,Air Conditioner,0
+Consumer Discretionary,Consumer Durables,Consumer Durables,Cycles,0
+Consumer Discretionary,Consumer Durables,Consumer Durables,Consumer Electronics,1
+Consumer Discretionary,Consumer Durables,Consumer Durables,"Furniture, Home Furnishing, Flooring",0
+Consumer Discretionary,Consumer Durables,Consumer Durables,"Gems, Jewellery And Watches",3
+Consumer Discretionary,Consumer Durables,Consumer Durables,Glass - Consumer,0
+Consumer Discretionary,Consumer Durables,Consumer Durables,Household Appliances,8
+Consumer Discretionary,Consumer Durables,Consumer Durables,Houseware,0
+Consumer Discretionary,Consumer Durables,Consumer Durables,Leather And Leather Products,1
+Consumer Discretionary,Consumer Durables,Consumer Durables,Leisure Products,0
+Consumer Discretionary,Consumer Durables,Consumer Durables,Plastic Products - Consumer,0
+Consumer Discretionary,Consumer Durables,Consumer Durables,Plywood Boards/ Laminates,0
+Consumer Discretionary,Consumer Durables,Consumer Durables,Sanitary Ware,0
+Consumer Discretionary,Consumer Durables,Consumer Durables,Ceramics,1
+Consumer Discretionary,Consumer Durables,Consumer Durables,Toys,0
+Consumer Discretionary,Consumer Durables,Consumer Durables,Paints,2
+Consumer Discretionary,Consumer Durables,Consumer Durables,Diversified Consumer Products,0
+Consumer Discretionary,Textiles,Textiles & Apparels,Garments & Apparels,2
+Consumer Discretionary,Textiles,Textiles & Apparels,Other Textile Products,3
+Consumer Discretionary,Textiles,Textiles & Apparels,Trading - Textile Products,0
+Consumer Discretionary,"Media, Entertainment & Publication",Media,Advertising & Media Agencies,0
+Consumer Discretionary,"Media, Entertainment & Publication",Media,Electronic Media,0
+Consumer Discretionary,"Media, Entertainment & Publication",Media,Web based media and service,0
+Consumer Discretionary,"Media, Entertainment & Publication",Media,Print Media,0
+Consumer Discretionary,"Media, Entertainment & Publication",Entertainment,"Film Production, Distribution & Exhibition",1
+Consumer Discretionary,"Media, Entertainment & Publication",Entertainment,Digital Entertainment,0
+Consumer Discretionary,"Media, Entertainment & Publication",Entertainment,Media & Entertainment,0
+Consumer Discretionary,"Media, Entertainment & Publication",Entertainment,TV Broadcasting & Software Production,2
+Consumer Discretionary,"Media, Entertainment & Publication",Printing & Publication,Printing & Publication,0
+Consumer Discretionary,Realty,Realty,"Residential, Commercial Projects",11
+Consumer Discretionary,Realty,Realty,Real Estate related services,0
+Consumer Discretionary,Realty,Realty,Real Estate Investment Trusts (REITs),3
+Consumer Discretionary,Consumer Services,Leisure Services,Hotels & Resorts,4
+Consumer Discretionary,Consumer Services,Leisure Services,Restaurants,2
+Consumer Discretionary,Consumer Services,Leisure Services,Amusement Parks/ Other Recreation,0
+Consumer Discretionary,Consumer Services,Leisure Services,Wellness,0
+Consumer Discretionary,Consumer Services,Leisure Services,"Tour, Travel Related Services",3
+Consumer Discretionary,Consumer Services,Other Consumer Services,Education,0
+Consumer Discretionary,Consumer Services,Other Consumer Services,E-Learning,1
+Consumer Discretionary,Consumer Services,Other Consumer Services,Food Storage Facilities,0
+Consumer Discretionary,Consumer Services,Other Consumer Services,Other Consumer Services,0
+Consumer Discretionary,Consumer Services,Retailing,Speciality Retail,2
+Consumer Discretionary,Consumer Services,Retailing,Pharmacy Retail,0
+Consumer Discretionary,Consumer Services,Retailing,Diversified Retail,2
+Consumer Discretionary,Consumer Services,Retailing,E-Retail/ E-Commerce,9
+Consumer Discretionary,Consumer Services,Retailing,Internet & Catalogue Retail,0
+Consumer Discretionary,Consumer Services,Retailing,Distributors,0
+Energy,"Oil, Gas & Consumable Fuels",Gas,Gas Transmission/Marketing,1
+Energy,"Oil, Gas & Consumable Fuels",Gas,Industrial Gas,0
+Energy,"Oil, Gas & Consumable Fuels",Gas,LPG/CNG/PNG/LNG Supplier,4
+Energy,"Oil, Gas & Consumable Fuels",Gas,Trading - Gas,0
+Energy,"Oil, Gas & Consumable Fuels",Oil,Oil Exploration & Production,3
+Energy,"Oil, Gas & Consumable Fuels",Oil,Offshore Support Solution Drilling,0
+Energy,"Oil, Gas & Consumable Fuels",Oil,Oil Storage & Transportation,2
+Energy,"Oil, Gas & Consumable Fuels",Oil,Oil Equipment & Services,0
+Energy,"Oil, Gas & Consumable Fuels",Petroleum Products,Refineries & Marketing,6
+Energy,"Oil, Gas & Consumable Fuels",Petroleum Products,Lubricants,1
+Energy,"Oil, Gas & Consumable Fuels",Consumable Fuels,Coal,2
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Agricultural Food & other Products,Edible Oil,2
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Agricultural Food & other Products,Sugar,2
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Agricultural Food & other Products,Tea & Coffee,2
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Agricultural Food & other Products,Other Agricultural Products,1
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Beverages,Breweries & Distilleries,4
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Beverages,Other Beverages,1
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Cigarettes & Tobacco Products,Cigarettes & Tobacco Products,1
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Food Products,Animal Feed,1
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Food Products,Dairy Products,0
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Food Products,Other Food Products,0
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Food Products,Packaged Foods,3
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Personal Products,Personal Care,8
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Household Products,Household Products,0
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Household Products,Batteries,0
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Household Products,Photographic Products,0
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Household Products,Stationary,1
+Fast Moving Consumer Goods,Fast Moving Consumer Goods,Diversified FMCG,Diversified FMCG,2
+Financial Services,Financial Services,Finance,Financial Institution,6
+Financial Services,Financial Services,Finance,Housing Finance Company,10
+Financial Services,Financial Services,Finance,Investment Company,4
+Financial Services,Financial Services,Finance,Non Banking Financial Company (NBFC),18
+Financial Services,Financial Services,Finance,Other Financial Services,0
+Financial Services,Financial Services,Finance,Holding Company,2
+Financial Services,Financial Services,Banks,Public Sector Bank,11
+Financial Services,Financial Services,Banks,Private Sector Bank,14
+Financial Services,Financial Services,Banks,Other Bank,1
+Financial Services,Financial Services,Capital Markets,Asset Management Company,5
+Financial Services,Financial Services,Capital Markets,"Depositories, Clearing Houses and Other Intermediaries",1
+Financial Services,Financial Services,Capital Markets,Financial Products Distributor,1
+Financial Services,Financial Services,Capital Markets,Ratings,1
+Financial Services,Financial Services,Capital Markets,Exchange and Data Platform,3
+Financial Services,Financial Services,Capital Markets,Stockbroking & Allied,6
+Financial Services,Financial Services,Capital Markets,Other Capital Market related Services,2
+Financial Services,Financial Services,Insurance,General Insurance,4
+Financial Services,Financial Services,Insurance,Life Insurance,6
+Financial Services,Financial Services,Insurance,Other Insurance Companies,0
+Financial Services,Financial Services,Insurance,Insurance Distributors,0
+Financial Services,Financial Services,Financial Technology (Fintech),Financial Technology (Fintech),3
+Healthcare,Healthcare,Pharmaceuticals & Biotechnology,Pharmaceuticals,31
+Healthcare,Healthcare,Pharmaceuticals & Biotechnology,Biotechnology,2
+Healthcare,Healthcare,Healthcare Equipment & Supplies,Medical Equipment & Supplies,1
+Healthcare,Healthcare,Healthcare Services,Hospital,8
+Healthcare,Healthcare,Healthcare Services,Healthcare Service Provider,2
+Healthcare,Healthcare,Healthcare Services,"Healthcare Research, Analytics & Technology",1
+Industrials,Construction,Construction,Civil Construction,13
+Industrials,Construction,Construction,"Engineering, Designing & Construction",0
+Industrials,Capital Goods,Aerospace & Defense,Aerospace & Defense,7
+Industrials,Capital Goods,"Agricultural, Commercial & Construction Vehicles",Tractors,1
+Industrials,Capital Goods,"Agricultural, Commercial & Construction Vehicles",Commercial Vehicles,2
+Industrials,Capital Goods,"Agricultural, Commercial & Construction Vehicles",Construction Vehicles,2
+Industrials,Capital Goods,Electrical Equipment,Heavy Electrical Equipment,14
+Industrials,Capital Goods,Electrical Equipment,Other Electrical Equipment,5
+Industrials,Capital Goods,Industrial Manufacturing,Elevators,0
+Industrials,Capital Goods,Industrial Manufacturing,Engineering & Construction products,0
+Industrials,Capital Goods,Industrial Manufacturing,Industrial Electronics,4
+Industrials,Capital Goods,Industrial Manufacturing,Industrial Equipments,0
+Industrials,Capital Goods,Industrial Manufacturing,Railway Wagons,2
+Industrials,Capital Goods,Industrial Manufacturing,Ship Building & Allied Services,3
+Industrials,Capital Goods,Industrial Manufacturing,Industrial Machinery,2
+Industrials,Capital Goods,Industrial Products,Abrasives,1
+Industrials,Capital Goods,Industrial Products,Bearings,1
+Industrials,Capital Goods,Industrial Products,Cables - Electricals,4
+Industrials,Capital Goods,Industrial Products,Castings & Forgings,1
+Industrials,Capital Goods,Industrial Products,Compressors & Pumps,3
+Industrials,Capital Goods,Industrial Products,Diesel Engines,2
+Industrials,Capital Goods,Industrial Products,Electrodes,2
+Industrials,Capital Goods,Industrial Products,Packaging,0
+Industrials,Capital Goods,Industrial Products,Plastic Products - Industrial,2
+Industrials,Capital Goods,Industrial Products,Refractories,1
+Industrials,Capital Goods,Industrial Products,Rubber,0
+Industrials,Capital Goods,Industrial Products,Other Industrial Products,3
+Industrials,Capital Goods,Industrial Products,Glass - Industrial,0
+Industrials,Capital Goods,Industrial Products,"Aluminium, Copper & Zinc Products",0
+Industrials,Capital Goods,Industrial Products,Iron & Steel Products,7
+Information Technology,Information Technology,IT - Software,Computers - Software & Consulting,20
+Information Technology,Information Technology,IT - Software,Software Products,1
+Information Technology,Information Technology,IT - Services,IT Enabled Services,3
+Information Technology,Information Technology,IT - Hardware,Computers Hardware & Equipments,1
+Services,Services,Engineering Services,Dredging,0
+Services,Services,Transport Services,Airline,1
+Services,Services,Transport Services,Logistics Solution Provider,2
+Services,Services,Transport Services,Railways,0
+Services,Services,Transport Services,Road Transport,0
+Services,Services,Transport Services,Shipping,2
+Services,Services,Transport Services,Transport Related Services,0
+Services,Services,Transport Infrastructure,Airport & Airport services,1
+Services,Services,Transport Infrastructure,Port & Port services,2
+Services,Services,Transport Infrastructure,Toll bridge operator,0
+Services,Services,Commercial Services & Supplies,Trading & Distributors,2
+Services,Services,Commercial Services & Supplies,Consulting Services,1
+Services,Services,Commercial Services & Supplies,Data Processing Services,0
+Services,Services,Commercial Services & Supplies,Diversified Commercial Services,1
+Services,Services,Commercial Services & Supplies,Business Process Outsourcing (BPO)/ Knowledge Process Outsourcing (KPO),2
+Telecommunication,Telecommunication,Telecom - Services,Telecom - Cellular & Fixed line services,4
+Telecommunication,Telecommunication,Telecom - Services,Telecom - Infrastructure,1
+Telecommunication,Telecommunication,Telecom - Services,Other Telecom Services,2
+Telecommunication,Telecommunication,Telecom - Equipment & Accessories,Telecom - Equipment & Accessories,4
+Utilities,Power,Power,Electric Utilities,17
+Utilities,Power,Power,Power Trading,0
+Utilities,Power,Power,Power - Transmission,2
+Utilities,Utilities,Other Utilities,Water Supply & Management,0
+Utilities,Utilities,Other Utilities,Waste Management,0
+Utilities,Utilities,Other Utilities,Emergency Services,0
+Utilities,Utilities,Other Utilities,Multi Utilities,0
+Utilities,Utilities,Other Utilities,Other Utilities,0
+Diversified,Diversified,Diversified,Diversified,1
