@@ -1,4 +1,8 @@
 """Trial checks for the canonical Nifty 500 Sector/Microsector mapping."""
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from canonical_microsector import (
     load_canonical_microsectors,
     canonical_microsector_lookup,
