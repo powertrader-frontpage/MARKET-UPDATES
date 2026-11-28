@@ -23,6 +23,18 @@ COVERAGE_PATH = ROOT / "data" / "nse_ohlcv_422_symbol_coverage_2026-11-28.csv"
 UNRESOLVED_PRICE_SYMBOLS = {"GFL"}
 
 
+def rotation_zone_from_relative_strength(rel1: float, rel3: float) -> str:
+    """Apply the dashboard's existing four-quadrant relative-strength thresholds."""
+    if pd.isna(rel1) or pd.isna(rel3):
+        return "Unclassified"
+    return (
+        "Leading" if rel3 >= 0 and rel1 >= 0 else
+        "Weakening" if rel3 >= 0 else
+        "Improving" if rel1 >= 0 else
+        "Lagging"
+    )
+
+
 def relative_rotation_zone(aligned: pd.DataFrame, position: int | None = None) -> str | None:
     """Classify a stock against its benchmark using the dashboard's existing 1M/3M rules."""
     if aligned is None or aligned.empty:
@@ -38,12 +50,7 @@ def relative_rotation_zone(aligned: pd.DataFrame, position: int | None = None) -
         (current["stock"].iloc[-1] / current["stock"].iloc[-min(64, len(current))] - 1) * 100
         - (current["bench"].iloc[-1] / current["bench"].iloc[-min(64, len(current))] - 1) * 100
     )
-    return (
-        "Leading" if rel3 >= 0 and rel1 >= 0 else
-        "Weakening" if rel3 >= 0 else
-        "Improving" if rel1 >= 0 else
-        "Lagging"
-    )
+    return rotation_zone_from_relative_strength(rel1, rel3)
 
 
 @lru_cache(maxsize=1)
