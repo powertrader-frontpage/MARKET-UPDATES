@@ -10,7 +10,7 @@ import requests
 import streamlit as st
 import yfinance as yf
 
-from canonical_microsector import load_canonical_microsectors
+from canonical_microsector import load_canonical_microsectors, canonical_microsector_lookup
 
 
 STAGE_1 = "Stage 1 · Base"
@@ -360,7 +360,7 @@ def _calculate():
     # existing NSE Sector/Industry peer calculations and every score formula stay unchanged.
     try:
         _, _, canonical_master = load_canonical_microsectors()
-        microsector_map = canonical_master.set_index("Symbol")["MIT_Primary_Microsector"].to_dict()
+        microsector_map = canonical_microsector_lookup()
         result["Primary Microsector"] = result["Symbol"].astype(str).str.upper().map(microsector_map).fillna("Unclassified")
     except Exception:
         result["Primary Microsector"] = "Unclassified"
