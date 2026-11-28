@@ -16,6 +16,12 @@ def main():
     assert metadata["canonical_microsectors"] == 278, metadata
     assert metadata["alias_coverage_errors"] == 0, metadata
     assert metadata["verified_price_aliases"] == 8, metadata
+    assert metadata["eligible_price_stocks"] == 414, metadata
+    assert metadata["microsectors_with_price_coverage"] == 272, metadata
+    assert metadata["single_stock_microsectors"] == 223, metadata
+    assert metadata["two_stock_microsectors"] == 17, metadata
+    assert metadata["microsectors_with_3plus_stocks"] == 32, metadata
+    assert metadata["microsectors_without_price_coverage"] == 6, metadata
     assert len(joined) == 422
     assert len(lookup) >= 422
     assert sum(len(tickers) for _, tickers in baskets.values()) == metadata["eligible_price_stocks"]
