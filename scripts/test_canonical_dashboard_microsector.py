@@ -1,4 +1,10 @@
 """Preview integration checks for canonical microsector and ticker mappings."""
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
 from canonical_microsector import load_canonical_microsectors, canonical_microsector_lookup
 
 
@@ -16,7 +22,6 @@ def main():
     assert len({ticker for _, tickers in baskets.values() for ticker in tickers}) == metadata["eligible_price_stocks"]
     assert "GFL" in metadata["excluded_price_symbols"], metadata
 
-    # Current exchange symbols and legacy master symbols must resolve identically.
     for old, current in {
         "AMARAJABAT": "ARE&M",
         "IIFLSEC": "IIFLCAPS",
