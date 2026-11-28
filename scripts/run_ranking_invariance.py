@@ -129,6 +129,9 @@ def main():
     transitions.to_csv(STOCK_OUT, index=False)
     union = {s for members in legacy.values() for s in members}
     union |= {s for members in canonical.values() for s in members}
+    mapped_union = [map_price_symbol(symbol, PRICE_ALIASES) for symbol in union]
+    if len(set(mapped_union)) != len(mapped_union):
+        raise ValueError("Price-symbol aliases create a collision in the 422-stock ranking universe.")
     available = set(frame["Symbol"].astype(str).str.upper().unique()) - {BENCHMARK}
     missing_rows = [
         {"Missing symbol": symbol, "Expected price symbol": map_price_symbol(symbol, PRICE_ALIASES)}
