@@ -2434,7 +2434,7 @@ if active_page == "Main Dashboard":
             with st.expander("Micro Sector Rotation", expanded=False):
                 st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#a78bfa,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Micro Sector Rotation</div>""", unsafe_allow_html=True)
                 st.caption("Explore leading, improving, weakening and lagging micro industries, compare their strength against NIFTY 500, and drill down to constituent stocks.")
-                st.caption("Custom equal-weight stock baskets · ranks combine 1M/3M/6M returns and 50-EMA breadth. Public prices may be delayed. This is a research tool, not investment advice.")
+                st.caption("Canonical primary-microsector equal-weight baskets · existing 1M/3M/6M returns, 50-EMA breadth and 25/35/25/15 ranking weights are preserved. Public prices may be delayed. This is a research tool, not investment advice.")
                 # Canonical primary membership is loaded from the verified 422-stock master.
                 # Legacy broad groups remain display-only references until official NSE hierarchy
                 # fields are completed; they are not used to assign canonical sector identities.
@@ -2456,11 +2456,11 @@ if active_page == "Main Dashboard":
                         "Official NSE macro-sector / sector / industry fields are not populated in the current master. "
                         "Legacy broad groups are shown only as reference labels; no canonical sector is inferred."
                     )
-                if microsector_metadata["unresolved_price_symbols"]:
+                if microsector_metadata["excluded_price_symbols"]:
                     st.warning(
-                        "Price-based rotation excludes unresolved ticker identity: "
-                        + ", ".join(microsector_metadata["unresolved_price_symbols"])
-                        + ". Classification is retained in the master."
+                        "Price-based rotation excludes symbols with unresolved or duplicate ticker mappings: "
+                        + ", ".join(microsector_metadata["excluded_price_symbols"])
+                        + ". Their classification records remain in the 422-stock master; no price series is double-counted."
                     )
                 micro_tickers = sorted({ticker for _, tickers in MICRO_SECTORS.values() for ticker in tickers} | {"^CRSLDX"})
                 @st.cache_data(ttl=900, show_spinner=False)
@@ -2664,7 +2664,7 @@ if active_page == "Main Dashboard":
                     choices = sorted(MICRO_SECTORS.keys())
                     chosen = st.selectbox("Select micro sector", choices, key="micro_sector_drilldown")
                     chosen_group, chosen_symbols = MICRO_SECTORS[chosen]
-                    st.write(f"**{chosen}** · {chosen_group} · equal-weight basket")
+                    st.write(f"**{chosen}** · legacy reference group: {chosen_group} · equal-weight basket")
                     drill_rows = []
                     stock_transition_rows = []
                     stock_zone_colors = {"Leading":"#198754","Improving":"#2864c5","Weakening":"#c27c16","Lagging":"#c92a2a"}
