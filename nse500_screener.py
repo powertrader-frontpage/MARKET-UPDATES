@@ -10,6 +10,8 @@ import requests
 import streamlit as st
 import yfinance as yf
 
+from canonical_microsector import load_canonical_microsectors
+
 
 STAGE_1 = "Stage 1 · Base"
 STAGE_2 = "Stage 2 · Uptrend"
@@ -353,6 +355,16 @@ def _calculate():
     result = pd.DataFrame(records)
     if result.empty:
         raise ValueError("No NSE 500 symbols had enough usable weekly price history.")
+
+    # Shared canonical primary microsector mapping. Descriptive metadata only:
+    # existing NSE Sector/Industry peer calculations and every score formula stay unchanged.
+    try:
+        _, _, canonical_master = load_canonical_microsectors()
+        microsector_map = canonical_master.set_index("Symbol")["MIT_Primary_Microsector"].to_dict()
+        result["Primary Microsector"] = result["Symbol"].astype(str).str.upper().map(microsector_map).fillna("Unclassified")
+    except Exception:
+        result["Primary Microsector"] = "Unclassified"
+
     result = result.sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False]).reset_index(drop=True)
 
     # Stock strength relative to the median return of its assigned sector/industry peer group.
@@ -545,7 +557,7 @@ def render_nse500_screener():
             st.caption("A ranking aid, not a prediction. Strict mode applies hard confirmation filters and shows up to 20 strongest candidates; Broad mode ranks every current Stage 2 stock.")
             quality_mode = st.radio("Stage 2 view", ["Strict · Top 20", "Broad · All Stage 2"], horizontal=True, key="nse500_quality_mode")
             quality_frame = strict_stage2 if quality_mode == "Strict · Top 20" else ranked_stage2
-            quality_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Breakout Quality", "Volume vs 10W Avg", "Sector Median RS", "30W Slope %", "Gap vs 30W %", "Base Count"]
+            quality_cols = ["Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank", "Breakout Quality", "Volume vs 10W Avg", "Sector Median RS", "30W Slope %", "Gap vs 30W %", "Base Count"]
             if quality_frame.empty:
                 st.info("No stocks currently meet all strict breakout-quality filters. Switch to Broad mode to inspect all Stage 2 stocks.")
             else:
@@ -555,7 +567,7 @@ def render_nse500_screener():
             st.markdown("#### v8 · Current Stage 2 Winner-Profile Watchlist")
             st.caption("All current Stage 2 stocks ranked by historical winner-profile resemblance. Uses 12W momentum, 13W excess vs NIFTY 500, 30W position/slope, prior 52W high and a current Stage 2 duration proxy (not historical B1 base duration). Research ranking only; not a probability or buy signal. Missing benchmark data earns no relative-strength points.")
             v8_frame = current_stage2.sort_values(["v8 Setup Score", "RS Rank"], ascending=[False, False])
-            v8_cols = ["Symbol", "Company", "Sector", "Price", "v8 Setup Score", "Prior 12W %", "13W Excess vs NIFTY500 (pp)", "RS Rank", "30W Slope %", "Gap vs 30W %", "Base Count", "New Stage 2"]
+            v8_cols = ["Symbol", "Company", "Sector", "Primary Microsector", "Price", "v8 Setup Score", "Prior 12W %", "13W Excess vs NIFTY500 (pp)", "RS Rank", "30W Slope %", "Gap vs 30W %", "Base Count", "New Stage 2"]
             st.dataframe(v8_frame[v8_cols], use_container_width=True, hide_index=True, height=400)
             st.download_button("Download v8 Stage 2 watchlist (CSV)", v8_frame[v8_cols].to_csv(index=False).encode("utf-8"), "nse500_v8_current_stage2.csv", "text/csv", key="download_nse500_v8_stage2")
 
@@ -736,7 +748,7 @@ def render_nse500_screener():
             if fresh.empty:
                 st.info("No confirmed Stage 1 → Stage 2 transitions were detected in the latest completed week.")
             else:
-                fresh_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Gap vs 30W %", "Extension", "Daily Change %"]
+                fresh_cols = ["Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank", "Gap vs 30W %", "Extension", "Daily Change %"]
                 st.dataframe(fresh[fresh_cols], use_container_width=True, hide_index=True, height=min(360, 42 + 38 * len(fresh)))
                 st.download_button(
                     "Download fresh Stage 2 entries (CSV)",
@@ -751,7 +763,7 @@ def render_nse500_screener():
             if reclaimed.empty:
                 st.info("No confirmed 10-week reclaim signals in the latest completed week.")
             else:
-                reclaimed_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "30W Avg", "Gap vs 10W %", "Stage", "Daily Change %"]
+                reclaimed_cols = ["Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank", "30W Avg", "Gap vs 10W %", "Stage", "Daily Change %"]
                 st.dataframe(reclaimed[reclaimed_cols], use_container_width=True, hide_index=True, height=min(360, 42 + 38 * len(reclaimed)))
                 st.download_button(
                     "Download reclaimed 10-week stocks (CSV)",
@@ -773,7 +785,7 @@ def render_nse500_screener():
 
             st.markdown("""<div style="font-size:22px;font-weight:800;background:linear-gradient(90deg,#34d399,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Sector strength · median RS and advancing participation</div>""", unsafe_allow_html=True)
             st.caption("Stock RS versus sector is measured as the stock's 4W/12W return minus its group's median return.")
-            sector_rs_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "4W Return %", "12W Return %", "RS vs Sector 4W (pp)", "RS vs Sector 12W (pp)", "Stage"]
+            sector_rs_cols = ["Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank", "4W Return %", "12W Return %", "RS vs Sector 4W (pp)", "RS vs Sector 12W (pp)", "Stage"]
             sector_rs_view = results.sort_values(["RS vs Sector 12W (pp)", "RS vs Sector 4W (pp)"], ascending=False, na_position="last")
             with st.expander("Stock RS versus its sector · find leaders within each group", expanded=False):
                 selected_rs_sector = st.selectbox("Choose sector group", ["All sector groups"] + sorted(results["Sector"].dropna().astype(str).unique()), key="nse500_rs_sector_group")
@@ -848,6 +860,11 @@ def render_nse500_screener():
                 stage_filter = st.multiselect("Weinstein stage", STAGES, default=[STAGE_2], key="nse500_stage_filter")
             with c3:
                 sector_filter = st.selectbox("Sector", ["All sectors"] + sorted(results["Sector"].dropna().astype(str).unique()), key="nse500_sector_filter")
+            microsector_filter = st.selectbox(
+                "Canonical primary microsector",
+                ["All microsectors"] + sorted(results["Primary Microsector"].dropna().astype(str).unique()),
+                key="nse500_primary_microsector_filter",
+            )
             filtered = results.copy()
             if query.strip():
                 q = query.strip().lower()
@@ -867,7 +884,9 @@ def render_nse500_screener():
                 filtered = filtered[(filtered["Stage"] == STAGE_2) & (filtered["Base Count"] == 2)]
             if sector_filter != "All sectors":
                 filtered = filtered[filtered["Sector"].astype(str) == sector_filter]
-            columns = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Stage", "Previous Stage", "New Stage 2", "Reclaimed 10W", "Gap vs 10W %", "Base Count", "Fresh B2", "Breakout Quality", "Volume vs 10W Avg", "Gap vs 30W %", "Extension", "Daily Change %"]
+            if microsector_filter != "All microsectors":
+                filtered = filtered[filtered["Primary Microsector"].astype(str) == microsector_filter]
+            columns = ["Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank", "Stage", "Previous Stage", "New Stage 2", "Reclaimed 10W", "Gap vs 10W %", "Base Count", "Fresh B2", "Breakout Quality", "Volume vs 10W Avg", "Gap vs 30W %", "Extension", "Daily Change %"]
             st.dataframe(filtered[columns], use_container_width=True, hide_index=True, height=520)
             st.download_button(
                 "Download filtered NSE 500 screener (CSV)",
