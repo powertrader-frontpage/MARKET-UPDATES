@@ -1002,7 +1002,16 @@ def get_auto_universe(period: str = "2y") -> pd.DataFrame:
                     rows.append(part[[c for c in ["Date","Symbol","Industry","Open","High","Low","Close","Volume"] if c in part.columns]])
             except Exception:
                 continue
-        return pd.concat(rows,ignore_index=True) if rows else pd.DataFrame()
+        if not rows:
+            return pd.DataFrame()
+        combined = pd.concat(rows,ignore_index=True)
+        try:
+            _, _, _canonical_master = load_canonical_microsectors()
+            _micro_map = _canonical_master.set_index("Symbol")["MIT_Primary_Microsector"].to_dict()
+            combined["Primary Microsector"] = combined["Symbol"].astype(str).str.upper().map(_micro_map).fillna("Unclassified")
+        except Exception:
+            combined["Primary Microsector"] = "Unclassified"
+        return combined
     except Exception:
         return pd.DataFrame()
 
@@ -3011,7 +3020,12 @@ if active_page == "Sector Leadership & Heatmap":
                                 stock_close = pd.to_numeric(stock_df["Close"], errors="coerce").dropna()
                                 if len(stock_close) >= 6 and stock_close.iloc[-6] != 0:
                                     stock_return = (float(stock_close.iloc[-1]) / float(stock_close.iloc[-6]) - 1) * 100
-                                    stock_leaders.append({"Stock": stock_name, "Ticker": stock_ticker, "1W return (%)": stock_return})
+                                    _stock_symbol = stock_ticker.replace(".NS", "").upper()
+                                    stock_leaders.append({
+                                        "Stock": stock_name, "Ticker": stock_ticker,
+                                        "Primary Microsector": _primary_microsector_by_symbol.get(_stock_symbol, "Unclassified"),
+                                        "1W return (%)": stock_return
+                                    })
                         leader_col.markdown("**Top 5 stocks · latest 5 sessions**")
                         if stock_leaders:
                             stock_leaders = sorted(stock_leaders, key=lambda row: row["1W return (%)"], reverse=True)[:5]
@@ -3019,7 +3033,7 @@ if active_page == "Sector Leadership & Heatmap":
                                 stock_color = "#22c55e" if stock["1W return (%)"] >= 0 else "#ef4444"
                                 leader_col.markdown(
                                     f'<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #343a46;">'
-                                    f'<span style="font-size:13px;color:#d1d5db;">{rank}. {stock["Stock"]}</span>'
+                                    f'<span style="font-size:13px;color:#d1d5db;">{rank}. {stock["Stock"]}<small style="display:block;color:#9ca3af;">{html.escape(stock["Primary Microsector"])}</small></span>'
                                     f'<span style="font-size:13px;font-weight:700;color:{stock_color};">{stock["1W return (%)"]:+.2f}%</span></div>',
                                     unsafe_allow_html=True,
                                 )
@@ -3053,7 +3067,11 @@ if active_page == "Sector Leadership & Heatmap":
                 if len(closes) >= 2 and float(closes.iloc[-2]) != 0:
                     last_close = float(closes.iloc[-1])
                     change_pct = (last_close / float(closes.iloc[-2]) - 1) * 100
-                    rows.append({"Symbol": symbol.removesuffix(".NS"), "Close": last_close, "Change (%)": change_pct})
+                    _symbol = symbol.removesuffix(".NS").upper()
+                    rows.append({
+                        "Symbol": _symbol, "Close": last_close, "Change (%)": change_pct,
+                        "Primary Microsector": _primary_microsector_by_symbol.get(_symbol, "Unclassified")
+                    })
             except (KeyError, TypeError, ValueError, IndexError):
                 continue
         return pd.DataFrame(rows)
@@ -3076,15 +3094,15 @@ if active_page == "Sector Leadership & Heatmap":
                 heatmap_df, path=["Direction", "Symbol"], values=np.ones(len(heatmap_df)),
                 color="Change (%)", color_continuous_scale=["#ef4444", "#252a34", "#16a34a"],
                 color_continuous_midpoint=0,
-                custom_data=["Display change", "Close"],
-                hover_data={"Close": ":,.2f", "Change (%)": ":.2f", "Direction": False, "Display change": False}
+                custom_data=["Display change", "Close", "Primary Microsector"],
+                hover_data={"Close": ":,.2f", "Change (%)": ":.2f", "Primary Microsector": True, "Direction": False, "Display change": False}
             )
             # Use explicit customdata for the percentage text; %{color} is not a reliable
             # numeric placeholder in Plotly treemap text templates.
             heatmap_fig.update_traces(
                 texttemplate="%{label}<br>%{customdata[0]}",
                 textfont_size=12,
-                hovertemplate="<b>%{label}</b><br>Daily change: %{customdata[0]}<br>Close: ₹%{customdata[1]:,.2f}<extra></extra>",
+                hovertemplate="<b>%{label}</b><br>Primary microsector: %{customdata[2]}<br>Daily change: %{customdata[0]}<br>Close: ₹%{customdata[1]:,.2f}<extra></extra>",
             )
             heatmap_fig.update_layout(template="plotly_dark", height=520, margin=dict(l=4, r=4, t=8, b=4), coloraxis_colorbar_title="Daily %")
             st.plotly_chart(heatmap_fig, use_container_width=True, config={"displaylogo": False}, key="nifty50_only_treemap")
