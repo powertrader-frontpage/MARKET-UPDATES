@@ -434,7 +434,10 @@ def _calculate(fyers_app_id="", fyers_access_token=""):
     # Do not mix a live constituent download with stale/renamed symbols.
     _, _, canonical_universe = load_canonical_microsectors()
     universe = canonical_universe[["Symbol", "Company", "Sector", "Microsector", "Assignment_Status", "Yahoo_Symbol"]].copy()
-    universe = universe.rename(columns={"Yahoo_Symbol": "Ticker", "Company": "Company Name"})
+    universe = universe.rename(columns={"Yahoo_Symbol": "Ticker"})
+    # Keep the legacy Company field consumed by the existing scan output;
+    # expose Company Name as an additional display alias for newer UI code.
+    universe["Company Name"] = universe["Company"]
     tickers = tuple(universe["Ticker"].tolist())
     prices, daily_high, daily_low, daily_volume = _daily_ohlc(tickers, fyers_app_id, fyers_access_token)
     if prices.empty or len(prices.index) < 160:
