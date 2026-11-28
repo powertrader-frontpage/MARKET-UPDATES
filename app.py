@@ -19,6 +19,7 @@ from hourly_strength_screener import render_hourly_strength_screener
 from classification_master import load_classification_master
 from canonical_microsector_runtime import load_canonical_runtime
 from ranking_snapshot import save_ranking_snapshot_to_github
+from price_symbol_aliases import load_price_symbol_aliases, map_price_symbol
 from pathlib import Path
 
 import hashlib
@@ -4054,33 +4055,54 @@ if active_page == "Main Dashboard":
                         # not feed or alter any live score, breadth, zone or ranking.
                         try:
                             history_token = str(st.secrets["MARKET_HISTORY_GITHUB_TOKEN"]).strip()
+                            # Use explicit, NSE-verified current symbols for this audit-only
+                            # snapshot. The live micro_raw download and live calculations stay
+                            # on their existing legacy ticker inputs.
+                            _price_alias_path = Path(__file__).resolve().parent / "data" / "price_symbol_alias_map.csv"
+                            _price_aliases = load_price_symbol_aliases(_price_alias_path)
+                            _audit_tickers = sorted({map_price_symbol(ticker, _price_aliases) for ticker in micro_tickers})
+                            _audit_raw = yf.download(
+                                _audit_tickers, period="1y", interval="1d", group_by="ticker",
+                                auto_adjust=True, progress=False, threads=False
+                            )
+
+                            def _extract_audit_ticker(raw, ticker):
+                                if raw is None or raw.empty:
+                                    return pd.DataFrame()
+                                if isinstance(raw.columns, pd.MultiIndex):
+                                    if (ticker, "Close") in raw.columns:
+                                        return raw[ticker].copy()
+                                    if ("Close", ticker) in raw.columns:
+                                        return raw.xs(ticker, axis=1, level=1).copy()
+                                    return pd.DataFrame()
+                                return raw.copy() if len(_audit_tickers) == 1 else pd.DataFrame()
+
                             snapshot_parts = []
-                            for _ticker in micro_tickers:
-                                _part = pd.DataFrame()
-                                if isinstance(micro_raw.columns, pd.MultiIndex):
-                                    if (_ticker, "Close") in micro_raw.columns:
-                                        _part = micro_raw[_ticker].copy()
-                                    elif ("Close", _ticker) in micro_raw.columns:
-                                        _part = micro_raw.xs(_ticker, axis=1, level=1).copy()
-                                elif _ticker == micro_tickers[0] and "Close" in micro_raw.columns:
-                                    _part = micro_raw.copy()
-                                if _part.empty or "Close" not in _part.columns:
+                            for _price_ticker in _audit_tickers:
+                                _part = _extract_audit_ticker(_audit_raw, _price_ticker)
+                                _required_ohlcv = ["Open", "High", "Low", "Close", "Volume"]
+                                if _part.empty or not set(_required_ohlcv).issubset(_part.columns):
+                                    # Retry only symbols omitted by the batch response. Never
+                                    # fill, estimate, or synthesize a missing OHLCV value.
+                                    try:
+                                        _retry_raw = yf.download(
+                                            _price_ticker, period="1y", interval="1d",
+                                            auto_adjust=True, progress=False, threads=False
+                                        )
+                                        _part = _extract_audit_ticker(_retry_raw, _price_ticker)
+                                    except Exception:
+                                        _part = pd.DataFrame()
+                                if _part.empty or not set(_required_ohlcv).issubset(_part.columns):
                                     continue
                                 _part = _part.rename_axis("Date").reset_index()
                                 _date_col = "Date" if "Date" in _part.columns else _part.columns[0]
                                 _part = _part.rename(columns={_date_col: "Date"})
-                                for _column in ["Open", "High", "Low", "Close", "Volume"]:
-                                    if _column not in _part.columns:
-                                        _part[_column] = np.nan
-                                _part["Symbol"] = _ticker
-                                # Yahoo Finance can return partial OHLCV rows for holidays,
-                                # newly listed symbols, or sparse trading histories. Keep only
-                                # complete rows; never fill or estimate missing market data.
-                                _part = _part.dropna(subset=["Date", "Open", "High", "Low", "Close", "Volume"])
+                                _part["Symbol"] = _price_ticker
+                                _part = _part.dropna(subset=["Date", *_required_ohlcv])
                                 if not _part.empty:
-                                    snapshot_parts.append(_part[["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"]])
+                                    snapshot_parts.append(_part[["Date", "Symbol", *_required_ohlcv]])
                             if not snapshot_parts:
-                                raise ValueError("No daily OHLCV rows were available for the snapshot.")
+                                raise ValueError("No daily OHLCV rows were available for the ranking audit snapshot.")
                             _snapshot_frame = pd.concat(snapshot_parts, ignore_index=True)
                             _snapshot_as_of = pd.to_datetime(_snapshot_frame["Date"], errors="coerce").max()
                             if pd.isna(_snapshot_as_of):
