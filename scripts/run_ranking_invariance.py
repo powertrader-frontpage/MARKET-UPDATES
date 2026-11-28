@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from canonical_microsector_runtime import load_canonical_runtime
 from ranking_snapshot import load_ranking_snapshot
+from price_symbol_aliases import load_price_symbol_aliases, map_price_symbol
 APP_PATH = ROOT / "app.py"
 SNAPSHOT_PATH = ROOT / "data" / "ranking_invariance_snapshot.json"
 GROUP_OUT = ROOT / "reports" / "ranking_invariance_group_scores.csv"
@@ -20,6 +21,7 @@ BENCHMARK = "^CRSLDX"
 PRODUCTION_WEIGHTS = (0.25, 0.35, 0.25, 0.15)
 PRODUCTION_WINDOWS = (22, 64, 127)
 MINIMUM_HISTORY = 60
+PRICE_ALIASES = load_price_symbol_aliases(ROOT / "data" / "price_symbol_alias_map.csv")
 
 def load_legacy_baskets():
     tree = ast.parse(APP_PATH.read_text(encoding="utf-8"))
@@ -47,7 +49,7 @@ def calculate_rotation(frame, baskets, version):
         returns, breadth = [], []
         available = []
         for symbol in symbols:
-            close = close_series(frame, symbol)
+            close = close_series(frame, map_price_symbol(symbol, PRICE_ALIASES))
             if len(close) < MINIMUM_HISTORY:
                 continue
             last = float(close.iloc[-1])
@@ -127,10 +129,15 @@ def main():
     transitions.to_csv(STOCK_OUT, index=False)
     union = {s for members in legacy.values() for s in members}
     union |= {s for members in canonical.values() for s in members}
-    available = set(frame["Symbol"].astype(str).unique()) - {BENCHMARK}
-    missing = sorted(union - available)
+    available = set(frame["Symbol"].astype(str).str.upper().unique()) - {BENCHMARK}
+    missing_rows = [
+        {"Missing symbol": symbol, "Expected price symbol": map_price_symbol(symbol, PRICE_ALIASES)}
+        for symbol in sorted(union)
+        if map_price_symbol(symbol, PRICE_ALIASES) not in available
+    ]
+    missing = [row["Missing symbol"] for row in missing_rows]
     coverage = 1 - len(missing) / max(1, len(union))
-    pd.DataFrame({"Missing symbol": missing}).to_csv(MISSING_OUT, index=False)
+    pd.DataFrame(missing_rows, columns=["Missing symbol", "Expected price symbol"]).to_csv(MISSING_OUT, index=False)
     changed = int((transitions["Rank change"] != 0).sum()) if not transitions.empty else 0
     median_delta = float(transitions["Rank change"].abs().median()) if not transitions.empty else float("nan")
     lines = [
