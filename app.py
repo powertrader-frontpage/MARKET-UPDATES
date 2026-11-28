@@ -18,6 +18,12 @@ from nse500_screener import render_nse500_screener
 from hourly_strength_screener import render_hourly_strength_screener
 from classification_master import load_classification_master
 from canonical_microsector_runtime import load_canonical_runtime
+from canonical_microsector import (
+    load_canonical_microsectors,
+    canonical_microsector_lookup,
+    map_to_canonical_price_ticker,
+    relative_rotation_zone,
+)
 from ranking_snapshot import save_ranking_snapshot_to_github
 from price_symbol_aliases import load_price_symbol_aliases, map_price_symbol
 from pathlib import Path
@@ -597,6 +603,25 @@ MICRO_SECTORS = {
      "Wealth Management": ("Financials", ["360ONE.NS","ANANDRATHI.NS"]),
      "Healthcare Services": ("Healthcare", ["SAGILITY.NS"]),
 }
+
+# Canonical primary microsectors are the single source of truth for every
+# dashboard consumer. Legacy baskets remain available only as a fallback
+# reference if canonical data cannot load; that condition is surfaced clearly.
+LEGACY_MICRO_SECTORS = MICRO_SECTORS
+try:
+    (
+        CANONICAL_MICROSECTOR_BASKETS,
+        CANONICAL_MICROSECTOR_METADATA,
+        CANONICAL_MICROSECTOR_MASTER,
+    ) = load_canonical_microsectors()
+    MICRO_SECTORS = CANONICAL_MICROSECTOR_BASKETS
+    CANONICAL_MICROSECTOR_LOAD_ERROR = None
+except Exception as _canonical_basket_error:
+    CANONICAL_MICROSECTOR_BASKETS = {}
+    CANONICAL_MICROSECTOR_METADATA = {}
+    CANONICAL_MICROSECTOR_MASTER = pd.DataFrame()
+    CANONICAL_MICROSECTOR_LOAD_ERROR = str(_canonical_basket_error)
+    MICRO_SECTORS = {}
 
 with st.sidebar:
     st.header("Dashboard controls")
@@ -3060,12 +3085,7 @@ if active_page == "Main Dashboard":
                         if len(aligned_stock) < 60:
                             continue
                         def _stock_rotation_zone(position):
-                            window = aligned_stock.iloc[:position+1]
-                            if len(window) < 22:
-                                return None
-                            rel1 = (window["stock"].iloc[-1] / window["stock"].iloc[-22] - 1) * 100 - (window["bench"].iloc[-1] / window["bench"].iloc[-22] - 1) * 100
-                            rel3 = (window["stock"].iloc[-1] / window["stock"].iloc[-min(64,len(window))] - 1) * 100 - (window["bench"].iloc[-1] / window["bench"].iloc[-min(64,len(window))] - 1) * 100
-                            return "Leading" if rel3 >= 0 and rel1 >= 0 else "Weakening" if rel3 >= 0 else "Improving" if rel1 >= 0 else "Lagging"
+                            return relative_rotation_zone(aligned_stock, position)
                         current_stock_zone = _stock_rotation_zone(len(aligned_stock)-1)
                         prior_stock_zone = _stock_rotation_zone(len(aligned_stock)-6) if len(aligned_stock) >= 27 else None
                         stock_zone_history = pd.Series(
@@ -3194,7 +3214,15 @@ if active_page == "Main Dashboard":
                 st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#a78bfa,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Micro Sector Rotation</div>""", unsafe_allow_html=True)
                 st.caption("Explore leading, improving, weakening and lagging micro industries, compare their strength against NIFTY 500, and drill down to constituent stocks.")
                 st.caption("Custom equal-weight stock baskets · ranks combine 1M/3M/6M returns and 50-EMA breadth. Weekly 200 EMA proximity is a separate confirmation layer and does not change the existing Score or Zone. Uses five years of weekly prices; unavailable if fewer than 200 weekly bars exist. Public prices may be delayed. This is a research tool, not investment advice.")
-                micro_tickers = sorted(({ticker for _, tickers in MICRO_SECTORS.values() for ticker in tickers} | {ticker for tickers in CANONICAL_MICROSECTOR_BASKETS.values() for ticker in tickers} | {"^CRSLDX"}))
+                if CANONICAL_MICROSECTOR_LOAD_ERROR:
+                    st.error(f"Canonical microsector baskets could not be loaded; no legacy basket results are substituted. Details: {CANONICAL_MICROSECTOR_LOAD_ERROR}")
+                else:
+                    st.caption(
+                        f"Canonical primary taxonomy · {CANONICAL_MICROSECTOR_METADATA.get('canonical_microsectors', 0)} approved groups · "
+                        f"{CANONICAL_MICROSECTOR_METADATA.get('eligible_price_stocks', 0)} unambiguous price-mapped stocks. "
+                        "Single-stock groups are stock-level proxies; legacy broad-group labels are reference context only, not official NSE hierarchy."
+                    )
+                micro_tickers = sorted({ticker for _, tickers in MICRO_SECTORS.values() for ticker in tickers} | {"^CRSLDX"})
                 @st.cache_data(ttl=900, show_spinner=False)
                 def _micro_sector_download(symbols):
                     try:
@@ -3282,17 +3310,11 @@ if active_page == "Main Dashboard":
                             stock_aligned_export = pd.concat([close.rename("stock"), bench.rename("bench")], axis=1).dropna() if not bench.empty else pd.DataFrame()
                             rel1_export = ((stock_aligned_export["stock"].iloc[-1] / stock_aligned_export["stock"].iloc[-min(22, len(stock_aligned_export))] - 1) - (stock_aligned_export["bench"].iloc[-1] / stock_aligned_export["bench"].iloc[-min(22, len(stock_aligned_export))] - 1)) * 100 if len(stock_aligned_export) >= 22 else np.nan
                             rel3_export = ((stock_aligned_export["stock"].iloc[-1] / stock_aligned_export["stock"].iloc[-min(64, len(stock_aligned_export))] - 1) - (stock_aligned_export["bench"].iloc[-1] / stock_aligned_export["bench"].iloc[-min(64, len(stock_aligned_export))] - 1)) * 100 if len(stock_aligned_export) >= 64 else np.nan
-                            stock_zone_history = pd.Series(index=stock_aligned_export.index, dtype="object")
-                            if len(stock_aligned_export) >= 64:
-                                stock_rel1 = (stock_aligned_export["stock"] / stock_aligned_export["stock"].shift(21) - 1) - (stock_aligned_export["bench"] / stock_aligned_export["bench"].shift(21) - 1)
-                                stock_rel3 = (stock_aligned_export["stock"] / stock_aligned_export["stock"].shift(63) - 1) - (stock_aligned_export["bench"] / stock_aligned_export["bench"].shift(63) - 1)
-                                stock_zone_history = pd.Series(
-                                    np.select(
-                                        [(stock_rel3 >= 0) & (stock_rel1 >= 0), (stock_rel3 >= 0) & (stock_rel1 < 0), (stock_rel3 < 0) & (stock_rel1 >= 0)],
-                                        ["Leading", "Weakening", "Improving"], default="Lagging"
-                                    ),
-                                    index=stock_aligned_export.index,
-                                ).where(stock_rel1.notna() & stock_rel3.notna())
+                            stock_zone_history = pd.Series(
+                                [relative_rotation_zone(stock_aligned_export, pos) for pos in range(len(stock_aligned_export))],
+                                index=stock_aligned_export.index,
+                                dtype="object",
+                            )
                             stock_zone_days, stock_zone_entry = _zone_streak_details(stock_zone_history)
                             micro_stock_export_rows.append({
                                 "Micro sector": micro_name, "Group": micro_group, "Stock": symbol.replace(".NS", ""),
