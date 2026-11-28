@@ -394,28 +394,55 @@ def fyers_nse_equity_symbols():
         return [], f"Symbol master unavailable ({exc.__class__.__name__})."
 
 def fyers_history(app_id: str, access_token: str, symbol: str, resolution: str, days: int):
+    """Fetch FYERS history in documented date-range chunks and fail closed on partial errors."""
     date_to = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-    date_from = date_to - pd.Timedelta(days=days)
+    date_from = (pd.Timestamp(date_to) - pd.Timedelta(days=max(1, int(days)))).date()
+    max_days = 366 if resolution in {"D", "1D", "1W", "1M"} else 100
+    cursor = date_from
+    frames = []
     try:
-        response = requests.get(
-            "https://api-t1.fyers.in/data/history",
-            params={"symbol": symbol, "resolution": resolution, "date_format": "1",
-                    "range_from": str(date_from), "range_to": str(date_to), "cont_flag": "1"},
-            headers={"Authorization": f"{app_id}:{access_token}"},
-            timeout=25,
-        )
-        payload = response.json()
-        if not response.ok or payload.get("s") != "ok":
-            return pd.DataFrame(), str(payload.get("message", "FYERS historical candle request failed."))
-        candles = payload.get("candles") or []
-        if not candles:
+        while cursor <= date_to:
+            chunk_to = min(
+                (pd.Timestamp(cursor) + pd.Timedelta(days=max_days - 1)).date(),
+                date_to,
+            )
+            response = requests.get(
+                "https://api-t1.fyers.in/data/history",
+                params={
+                    "symbol": symbol, "resolution": resolution, "date_format": "1",
+                    "range_from": str(cursor), "range_to": str(chunk_to), "cont_flag": "1",
+                },
+                headers={"Authorization": f"{app_id}:{access_token}"},
+                timeout=25,
+            )
+            payload = response.json()
+            if not response.ok or payload.get("s") not in {"ok", "no_data"}:
+                return pd.DataFrame(), str(
+                    payload.get("message") or payload.get("messageCode")
+                    or f"FYERS historical request failed (HTTP {response.status_code})."
+                )
+            candles = payload.get("candles") or []
+            if candles:
+                frame = pd.DataFrame(
+                    candles,
+                    columns=["Epoch", "Open", "High", "Low", "Close", "Volume"][:len(candles[0])],
+                )
+                frame["Date"] = pd.to_datetime(
+                    frame["Epoch"], unit="s", utc=True
+                ).dt.tz_convert("Asia/Kolkata")
+                for col in ["Open", "High", "Low", "Close", "Volume"]:
+                    if col in frame:
+                        frame[col] = pd.to_numeric(frame[col], errors="coerce")
+                frame = frame.dropna(subset=["Date", "Close"])
+                if not frame.empty:
+                    frames.append(frame)
+            cursor = chunk_to + pd.Timedelta(days=1)
+        if not frames:
             return pd.DataFrame(), "FYERS returned no candles for this symbol and interval."
-        frame = pd.DataFrame(candles, columns=["Epoch", "Open", "High", "Low", "Close", "Volume"][:len(candles[0])])
-        frame["Date"] = pd.to_datetime(frame["Epoch"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
-        for col in ["Open", "High", "Low", "Close", "Volume"]:
-            if col in frame:
-                frame[col] = pd.to_numeric(frame[col], errors="coerce")
-        return frame.dropna(subset=["Date", "Close"]).sort_values("Date"), None
+        result = pd.concat(frames, ignore_index=True)
+        result = result.sort_values("Date").drop_duplicates("Date", keep="last").reset_index(drop=True)
+        result["Source"] = "FYERS"
+        return result, None
     except Exception as exc:
         return pd.DataFrame(), f"FYERS historical request failed ({exc.__class__.__name__})."
 
@@ -915,9 +942,73 @@ def _yahoo_chart_history(ticker: str, period: str, interval: str) -> tuple[pd.Da
         return pd.DataFrame(), f"Yahoo chart fallback failed: {type(exc).__name__}"
 
 
+def _fyers_symbol_for_history(ticker: str) -> str | None:
+    """Translate supported Yahoo-style tickers into documented FYERS symbol format."""
+    value = str(ticker).strip().upper()
+    index_symbols = {
+        "^NSEI": "NSE:NIFTY50-INDEX",
+        "^NSEBANK": "NSE:NIFTYBANK-INDEX",
+        "^INDIAVIX": "NSE:INDIAVIX-INDEX",
+    }
+    if value in index_symbols:
+        return index_symbols[value]
+    if value.startswith("^") or not value.endswith(".NS"):
+        return None
+    base = value[:-3]
+    return f"NSE:{base}-EQ" if base else None
+
+
+def _fyers_resolution_for_history(interval: str) -> str | None:
+    return {
+        "1d": "D", "1wk": "1W", "1mo": "1M",
+        "1m": "1", "2m": "2", "3m": "3", "5m": "5",
+        "10m": "10", "15m": "15", "20m": "20", "30m": "30",
+        "45m": "45", "60m": "60", "1h": "60", "2h": "120", "4h": "240",
+    }.get(str(interval).lower())
+
+
+def _period_days(period: str) -> int:
+    return {"1mo": 31, "3mo": 93, "6mo": 186, "1y": 365, "2y": 730, "5y": 1825}.get(period, 210)
+
+
 @st.cache_data(ttl=120, show_spinner=False)
-def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, str | None]:
-    """Fetch Yahoo history and use the direct chart endpoint if it has a newer candle."""
+def _get_history_cached(
+    ticker: str, period: str, interval: str, fyers_app_id: str, fyers_access_token: str
+) -> tuple[pd.DataFrame, str | None]:
+    """Prefer validated FYERS candles when connected; fall back to Yahoo history."""
+    fyers_error = None
+    fyers_symbol = _fyers_symbol_for_history(ticker)
+    fyers_resolution = _fyers_resolution_for_history(interval)
+    if fyers_app_id and fyers_access_token and fyers_symbol and fyers_resolution:
+        if fyers_symbol.endswith("-EQ"):
+            symbols, symbol_error = fyers_nse_equity_symbols()
+            valid_symbols = {symbol for symbol, _ in symbols}
+            if fyers_symbol not in valid_symbols:
+                fyers_error = f"FYERS symbol master does not list {fyers_symbol}."
+                fyers_symbol = None
+        if fyers_symbol:
+            fyers_frame, fyers_error = fyers_history(
+                fyers_app_id, fyers_access_token, fyers_symbol,
+                fyers_resolution, _period_days(period)
+            )
+            if not fyers_frame.empty:
+                required = {"Date", "Open", "High", "Low", "Close"}
+                candidate = fyers_frame.copy()
+                if required.issubset(candidate.columns):
+                    for column in ["Open", "High", "Low", "Close", "Volume"]:
+                        if column in candidate:
+                            candidate[column] = pd.to_numeric(candidate[column], errors="coerce")
+                    candidate = candidate.dropna(subset=["Date", "Open", "High", "Low", "Close"])
+                    valid_ohlc = (
+                        (candidate["High"] >= candidate["Low"])
+                        & (candidate["High"] >= candidate[["Open", "Close"]].max(axis=1))
+                        & (candidate["Low"] <= candidate[["Open", "Close"]].min(axis=1))
+                    )
+                    if not candidate.empty and valid_ohlc.all():
+                        candidate["Source"] = "FYERS"
+                        return candidate.sort_values("Date").drop_duplicates("Date", keep="last").reset_index(drop=True), None
+                fyers_error = "FYERS returned candles that failed OHLC validation."
+
     yf_error = None
     try:
         data = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False, actions=False, raise_errors=True)
@@ -946,7 +1037,18 @@ def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, 
         return fallback, None
     if not data.empty:
         return data.reset_index(drop=True), None
-    return pd.DataFrame(), yf_error or fallback_error or "Both Yahoo history routes returned no data."
+    return pd.DataFrame(), yf_error or fallback_error or fyers_error or "FYERS and both Yahoo history routes returned no data."
+
+
+def get_history(ticker: str, period: str, interval: str) -> tuple[pd.DataFrame, str | None]:
+    """Session-aware wrapper so cached history is separated by FYERS access token."""
+    config = fyers_credentials()
+    access_token = str(st.session_state.get("fyers_access_token") or "")
+    app_id = config[0] if config and access_token else ""
+    return _get_history_cached(ticker, period, interval, app_id, access_token)
+
+
+get_history.clear = _get_history_cached.clear
 
 # Actually invalidate only the short-lived Yahoo history cache once per new browser session.
 # Keep longer-running research/scanner caches untouched to avoid expensive reloads.
