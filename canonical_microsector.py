@@ -84,17 +84,18 @@ def load_canonical_microsectors():
         lambda value: str(value).split("|")[0].strip() if str(value).strip() else "Unassigned"
     )
 
-    eligible = joined[
-        ~joined["Symbol"].isin(UNRESOLVED_PRICE_SYMBOLS)
-        & joined["OHLCV_Mapping_Status"].str.upper().eq("MAPPED")
+    mapped = joined[
+        joined["OHLCV_Mapping_Status"].str.upper().eq("MAPPED")
         & joined["Yahoo_Symbol"].ne("")
     ].copy()
+    duplicate_mask = mapped["Yahoo_Symbol"].duplicated(keep=False)
+    duplicate_ticker_rows = mapped.loc[duplicate_mask, ["Symbol", "Yahoo_Symbol"]]
+    duplicate_ticker_symbols = sorted(duplicate_ticker_rows["Symbol"].unique().tolist())
+    excluded_symbols = set(UNRESOLVED_PRICE_SYMBOLS) | set(duplicate_ticker_symbols)
 
-    if eligible["Yahoo_Symbol"].duplicated().any():
-        duplicates = eligible.loc[
-            eligible["Yahoo_Symbol"].duplicated(keep=False), ["Symbol", "Yahoo_Symbol"]
-        ].to_dict("records")
-        raise ValueError(f"Duplicate Yahoo ticker mappings in eligible universe: {duplicates}")
+    # Never count one Yahoo price series twice under two different NSE master symbols.
+    # Keep those classification rows in the joined master but omit them from price baskets.
+    eligible = mapped[~mapped["Symbol"].isin(excluded_symbols)].copy()
 
     baskets = {}
     for microsector, rows in eligible.groupby("MIT_Primary_Microsector", sort=True):
@@ -121,10 +122,12 @@ def load_canonical_microsectors():
         "master_stocks": int(len(master)),
         "eligible_price_stocks": int(len(eligible)),
         "unresolved_price_symbols": sorted(UNRESOLVED_PRICE_SYMBOLS.intersection(set(joined["Symbol"]))),
+        "duplicate_ticker_symbols": duplicate_ticker_symbols,
+        "excluded_price_symbols": sorted(excluded_symbols.intersection(set(joined["Symbol"]))),
         "canonical_microsectors": int(master["MIT_Primary_Microsector"].nunique()),
         "microsectors_with_price_coverage": int(len(baskets)),
         "nse_hierarchy_populated_cells": hierarchy_populated,
         "nse_hierarchy_total_cells": int(len(joined) * len(hierarchy_columns)),
-        "excluded_unresolved_count": int(len(UNRESOLVED_PRICE_SYMBOLS.intersection(set(joined["Symbol"])))),
+        "excluded_unresolved_count": int(len(excluded_symbols.intersection(set(joined["Symbol"])))),
     }
     return baskets, metadata, joined
