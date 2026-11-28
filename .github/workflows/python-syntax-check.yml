@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - phase1-fyers-main-dashboard-data
+      - phase1-canonical-microsector-preview
       - mobile-navigation-refactor
   pull_request:
     branches:
@@ -17,6 +18,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install validation dependencies
+        run: python -m pip install pandas numpy
       - name: Compile dashboard and scanner modules
         run: |
-          python -m py_compile app.py nse500_screener.py explosive_breakout_scanner.py historical_breakout_postmortem.py b1_fundamental_screener.py
+          python -m py_compile app.py nse500_screener.py canonical_microsector.py canonical_microsector_runtime.py canonical_microsectors.py classification_master.py price_symbol_aliases.py explosive_breakout_scanner.py historical_breakout_postmortem.py b1_fundamental_screener.py
+          python scripts/test_canonical_microsector_runtime.py
+          python scripts/test_price_symbol_aliases.py
+          python scripts/test_canonical_dashboard_microsector.py

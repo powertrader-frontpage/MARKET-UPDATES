@@ -1,0 +1,501 @@
+Symbol,Company,Sector,Microsector,Assignment_Status
+ATHERENERG,Ather Energy,Automobile and Auto Components,2/3 Wheelers,Draft - verify
+BAJAJ-AUTO,Bajaj Auto,Automobile and Auto Components,2/3 Wheelers,Draft - verify
+EICHERMOT,Eicher Motors,Automobile and Auto Components,2/3 Wheelers,Draft - verify
+HEROMOTOCO,Hero MotoCorp,Automobile and Auto Components,2/3 Wheelers,Draft - verify
+OLAELEC,Ola Electric Mobility,Automobile and Auto Components,2/3 Wheelers,Draft - verify
+TVSMOTOR,TVS Motor,Automobile and Auto Components,2/3 Wheelers,Draft - verify
+ASAHIINDIA,Asahi India Glass,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+BELRISE,Belrise Industries,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+BHARATFORG,Bharat Forge,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+BOSCHLTD,Bosch,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+CIEINDIA,CIE Automotive India,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+CRAFTSMAN,Craftsman Automation,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+ENDURANCE,Endurance Technologies,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+GABRIEL,Gabriel India,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+JBMA,JBM Auto,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+MINDACORP,Minda Corporation,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+MSUMI,Motherson Sumi Wiring India,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+RKFORGE,Ramkrishna Forgings,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+MOTHERSON,Samvardhana Motherson International,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+SANSERA,Sansera Engineering,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+SCHAEFFLER,Schaeffler India,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+SONACOMS,Sona BLW Precision Forgings,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+SHRIPISTON,SPR Auto Technologies,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+TENNIND,Tenneco Clean Air India,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+TIINDIA,Tube Investments of India,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+UNOMINDA,UNO Minda,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+ZFCVINDIA,ZF Commercial Vehicle Control Systems,Automobile and Auto Components,Auto Components & Equipments,Draft - verify
+ARE&M,Amara Raja Energy & Mobility,Automobile and Auto Components,Batteries - Automobile,Draft - verify
+EXIDEIND,Exide Industries,Automobile and Auto Components,Batteries - Automobile,Draft - verify
+FORCEMOT,Force Motors,Automobile and Auto Components,Passenger Cars & Utility Vehicles,Draft - verify
+HYUNDAI,Hyundai Motor India,Automobile and Auto Components,Passenger Cars & Utility Vehicles,Draft - verify
+M&M,Mahindra & Mahindra,Automobile and Auto Components,Passenger Cars & Utility Vehicles,Draft - verify
+MARUTI,Maruti Suzuki India,Automobile and Auto Components,Passenger Cars & Utility Vehicles,Draft - verify
+OLECTRA,Olectra Greentech,Automobile and Auto Components,Passenger Cars & Utility Vehicles,Web classification found
+TMPV,Tata Motors Passenger Vehicles,Automobile and Auto Components,Passenger Cars & Utility Vehicles,Draft - verify
+APOLLOTYRE,Apollo Tyres,Automobile and Auto Components,Tyres & Rubber Products,Draft - verify
+BALKRISIND,Balkrishna Industries,Automobile and Auto Components,Tyres & Rubber Products,Draft - verify
+CEATLTD,Ceat,Automobile and Auto Components,Tyres & Rubber Products,Draft - verify
+JKTYRE,JK Tyre & Industries,Automobile and Auto Components,Tyres & Rubber Products,Draft - verify
+MRF,MRF,Automobile and Auto Components,Tyres & Rubber Products,Draft - verify
+CARBORUNIV,Carborundum Universal,Capital Goods,Abrasives,Draft - verify
+AZAD,Azad Engineering,Capital Goods,Aerospace & Defense,Draft - verify
+BDL,Bharat Dynamics,Capital Goods,Aerospace & Defense,Draft - verify
+BEL,Bharat Electronics,Capital Goods,Aerospace & Defense,Draft - verify
+DATAPATTNS,Data Patterns,Capital Goods,Aerospace & Defense,Draft - verify
+HAL,Hindustan Aeronautics,Capital Goods,Aerospace & Defense,Draft - verify
+MTARTECH,MTAR Technologies,Capital Goods,Aerospace & Defense,Draft - verify
+ZENTEC,Zen Technologies,Capital Goods,Aerospace & Defense,Draft - verify
+TIMKEN,Timken India,Capital Goods,Bearings,Draft - verify
+FINCABLES,Finolex Cables,Capital Goods,Cables - Electricals,Draft - verify
+KEI,KEI Industries,Capital Goods,Cables - Electricals,Draft - verify
+POLYCAB,Polycab India,Capital Goods,Cables - Electricals,Draft - verify
+RRKABEL,R R Kabel,Capital Goods,Cables - Electricals,Draft - verify
+PTCIL,PTC Industries,Capital Goods,Castings & Forgings,Draft - verify
+ASHOKLEY,Ashok Leyland,Capital Goods,Commercial Vehicles,Draft - verify
+TMCV,Tata Motors,Capital Goods,Commercial Vehicles,Draft - verify
+ELGIEQUIP,Elgi Equipments,Capital Goods,Compressors & Pumps,Draft - verify
+KIRLOSBROS,Kirloskar Brothers,Capital Goods,Compressors & Pumps,Draft - verify
+KSB,KSB,Capital Goods,Compressors & Pumps,Draft - verify
+ACE,Action Construction Equipment,Capital Goods,Construction Vehicles,Draft - verify
+BEML,BEML,Capital Goods,Construction Vehicles,Draft - verify
+CUMMINSIND,Cummins India,Capital Goods,Diesel Engines,Draft - verify
+KIRLOSENG,Kirloskar Oil Engines,Capital Goods,Diesel Engines,Draft - verify
+GRAPHITE,Graphite India,Capital Goods,Electrodes,Draft - verify
+HEG,HEG,Capital Goods,Electrodes,Draft - verify
+ABB,ABB India,Capital Goods,Heavy Electrical Equipment,Draft - verify
+BHEL,Bharat Heavy Electricals,Capital Goods,Heavy Electrical Equipment,Draft - verify
+CGPOWER,CG Power and Industrial Solutions,Capital Goods,Heavy Electrical Equipment,Draft - verify
+GVT&D,GE Vernova T&D India,Capital Goods,Heavy Electrical Equipment,Draft - verify
+POWERINDIA,Hitachi Energy India,Capital Goods,Heavy Electrical Equipment,Draft - verify
+INOXWIND,Inox Wind,Capital Goods,Heavy Electrical Equipment,Draft - verify
+SCHNEIDER,Schneider Electric Infrastructure,Capital Goods,Heavy Electrical Equipment,Draft - verify
+SIEMENS,Siemens,Capital Goods,Heavy Electrical Equipment,Draft - verify
+ENRIN,Siemens Energy India,Capital Goods,Heavy Electrical Equipment,Draft - verify
+SUZLON,Suzlon Energy,Capital Goods,Heavy Electrical Equipment,Draft - verify
+TDPOWERSYS,TD Power Systems,Capital Goods,Heavy Electrical Equipment,Draft - verify
+THERMAX,Thermax,Capital Goods,Heavy Electrical Equipment,Draft - verify
+TARIL,Transformers and Rectifiers (India),Capital Goods,Heavy Electrical Equipment,Draft - verify
+TRITURBINE,Triveni Turbine,Capital Goods,Heavy Electrical Equipment,Draft - verify
+CPPLUS,Aditya Infotech,Capital Goods,Industrial Electronics,Assigned by business - verify
+HONAUT,Honeywell Automation India,Capital Goods,Industrial Electronics,Draft - verify
+KAYNES,Kaynes Technology,Capital Goods,Industrial Electronics,Draft - verify
+SYRMA,Syrma SGS Technology,Capital Goods,Industrial Electronics,Draft - verify
+ELECON,Elecon Engineering,Capital Goods,Industrial Machinery,Draft - verify
+JYOTICNC,Jyoti CNC Automation,Capital Goods,Industrial Machinery,Draft - verify
+APLAPOLLO,APL Apollo Tubes,Capital Goods,Iron & Steel Products,Draft - verify
+GALLANTT,Gallantt Ispat,Capital Goods,Iron & Steel Products,Draft - verify
+GPIL,Godawari Power & Ispat,Capital Goods,Iron & Steel Products,Draft - verify
+JINDALSAW,Jindal Saw,Capital Goods,Iron & Steel Products,Draft - verify
+SHYAMMETL,Shyam Metalics and Energy,Capital Goods,Iron & Steel Products,Draft - verify
+USHAMART,Usha Martin,Capital Goods,Iron & Steel Products,Draft - verify
+WELCORP,Welspun Corp,Capital Goods,Iron & Steel Products,Draft - verify
+APARINDS,Apar Industries,Capital Goods,Other Electrical Equipment,Draft - verify
+EMMVEE,Emmvee Photovoltaic Power,Capital Goods,Other Electrical Equipment,Draft - verify
+HBLENGINE,HBL Engineering,Capital Goods,Other Electrical Equipment,Draft - verify
+PREMIERENE,Premier Energies,Capital Goods,Other Electrical Equipment,Draft - verify
+WAAREEENER,Waaree Energies,Capital Goods,Other Electrical Equipment,Draft - verify
+AIAENG,AIA Engineering,Capital Goods,Other Industrial Products,Draft - verify
+INOXINDIA,INOX India,Capital Goods,Other Industrial Products,Draft - verify
+TEGA,Tega Industries,Capital Goods,Other Industrial Products,Draft - verify
+ASTRAL,Astral,Capital Goods,Plastic Products - Industrial,Draft - verify
+SUPREMEIND,Supreme Industries,Capital Goods,Plastic Products - Industrial,Draft - verify
+JWL,Jupiter Wagons,Capital Goods,Railway Wagons,Draft - verify
+TITAGARH,Titagarh Rail Systems,Capital Goods,Railway Wagons,Draft - verify
+RHIM,RHI Magnesita India,Capital Goods,Refractories,Draft - verify
+COCHINSHIP,Cochin Shipyard,Capital Goods,Ship Building & Allied Services,Draft - verify
+GRSE,Garden Reach Shipbuilders & Engineers,Capital Goods,Ship Building & Allied Services,Draft - verify
+MAZDOCK,Mazagon Dock Shipbuilders,Capital Goods,Ship Building & Allied Services,Draft - verify
+ESCORTS,Escorts Kubota,Capital Goods,Tractors,Draft - verify
+PCBL,PCBL Chemical,Chemicals,Carbon Black,Draft - verify
+DEEPAKFERT,Deepak Fertilisers & Petrochemicals,Chemicals,Commodity Chemicals,Draft - verify
+DEEPAKNTR,Deepak Nitrite,Chemicals,Commodity Chemicals,Draft - verify
+TATACHEM,Tata Chemicals,Chemicals,Commodity Chemicals,Draft - verify
+SOLARINDS,Solar Industries India,Chemicals,Explosives,Draft - verify
+CHAMBLFERT,Chambal Fertilizers & Chemicals,Chemicals,Fertilizers,Draft - verify
+COROMANDEL,Coromandel International,Chemicals,Fertilizers,Draft - verify
+FACT,Fertilisers and Chemicals Travancore,Chemicals,Fertilizers,Draft - verify
+PARADEEP,Paradeep Phosphates,Chemicals,Fertilizers,Draft - verify
+LINDEINDIA,Linde India,Chemicals,Industrial Gases,Draft - verify
+PIIND,PI Industries,Chemicals,Pesticides & Agrochemicals,Draft - verify
+SUMICHEM,Sumitomo Chemical India,Chemicals,Pesticides & Agrochemicals,Draft - verify
+UPL,UPL,Chemicals,Pesticides & Agrochemicals,Draft - verify
+AARTIIND,Aarti Industries,Chemicals,Specialty Chemicals,Draft - verify
+AETHER,Aether Industries,Chemicals,Specialty Chemicals,Draft - verify
+ANURAS,Anupam Rasayan India,Chemicals,Specialty Chemicals,Draft - verify
+ATUL,Atul,Chemicals,Specialty Chemicals,Draft - verify
+CLEAN,Clean Science and Technology,Chemicals,Specialty Chemicals,Draft - verify
+FLUOROCHEM,Gujarat Fluorochemicals,Chemicals,Specialty Chemicals,Draft - verify
+HSCL,Himadri Speciality Chemical,Chemicals,Specialty Chemicals,Draft - verify
+JUBLINGREA,Jubilant Ingrevia,Chemicals,Specialty Chemicals,Draft - verify
+NAVINFLUOR,Navin Fluorine International,Chemicals,Specialty Chemicals,Draft - verify
+PIDILITIND,Pidilite Industries,Chemicals,Specialty Chemicals,Draft - verify
+PRIVISCL,Privi Speciality Chemicals,Chemicals,Specialty Chemicals,Draft - verify
+SRF,SRF,Chemicals,Specialty Chemicals,Draft - verify
+SWANCORP,Swan Corp,Chemicals,Trading - Chemicals,Assigned by business - verify
+AFCONS,Afcons Infrastructure,Construction,Civil Construction,Draft - verify
+CEMPRO,Cemindia Projects,Construction,Civil Construction,Draft - verify
+ENGINERSIN,Engineers India,Construction,Civil Construction,Draft - verify
+IRB,IRB Infrastructure Developers,Construction,Civil Construction,Draft - verify
+IRCON,IRCON International,Construction,Civil Construction,Draft - verify
+KPIL,Kalpataru Projects International,Construction,Civil Construction,Draft - verify
+KEC,KEC International,Construction,Civil Construction,Draft - verify
+LT,Larsen & Toubro,Construction,Civil Construction,Draft - verify
+NBCC,NBCC (India),Construction,Civil Construction,Draft - verify
+NCC,NCC,Construction,Civil Construction,Draft - verify
+RVNL,Rail Vikas Nigam,Construction,Civil Construction,Draft - verify
+RITES,RITES,Construction,Civil Construction,Draft - verify
+TECHNOE,Techno Electric & Engineering,Construction,Civil Construction,Draft - verify
+ACC,ACC,Construction Materials,Cement & Cement Products,Draft - verify
+AMBUJACEM,Ambuja Cements,Construction Materials,Cement & Cement Products,Draft - verify
+DALBHARAT,Dalmia Bharat,Construction Materials,Cement & Cement Products,Draft - verify
+GRASIM,Grasim Industries,Construction Materials,Cement & Cement Products,Draft - verify
+INDIACEM,India Cements,Construction Materials,Cement & Cement Products,Draft - verify
+JKCEMENT,J.K. Cement,Construction Materials,Cement & Cement Products,Draft - verify
+JSWCEMENT,JSW Cement,Construction Materials,Cement & Cement Products,Draft - verify
+NUVOCO,Nuvoco Vistas,Construction Materials,Cement & Cement Products,Draft - verify
+RAMCOCEM,Ramco Cements,Construction Materials,Cement & Cement Products,Draft - verify
+SHREECEM,Shree Cement,Construction Materials,Cement & Cement Products,Draft - verify
+ULTRACEMCO,UltraTech Cement,Construction Materials,Cement & Cement Products,Draft - verify
+KAJARIACER,Kajaria Ceramics,Consumer Durables,Ceramics,Web classification found
+DIXON,Dixon Technologies,Consumer Durables,Consumer Electronics,Draft - verify
+KALYANKJIL,Kalyan Jewellers,Consumer Durables,"Gems, Jewellery And Watches",Draft - verify
+THANGAMAYL,Thangamayil Jewellery,Consumer Durables,"Gems, Jewellery And Watches",Draft - verify
+TITAN,Titan Company,Consumer Durables,"Gems, Jewellery And Watches",Draft - verify
+AMBER,Amber Enterprises India,Consumer Durables,Household Appliances,Draft - verify
+BLUESTARCO,Blue Star,Consumer Durables,Household Appliances,Draft - verify
+CROMPTON,Crompton Greaves Consumer Electricals,Consumer Durables,Household Appliances,Draft - verify
+HAVELLS,Havells India,Consumer Durables,Household Appliances,Draft - verify
+LGEINDIA,LG Electronics India,Consumer Durables,Household Appliances,Draft - verify
+PGEL,PG Electroplast,Consumer Durables,Household Appliances,Draft - verify
+VOLTAS,Voltas,Consumer Durables,Household Appliances,Draft - verify
+WHIRLPOOL,Whirlpool of India,Consumer Durables,Household Appliances,Draft - verify
+BATAINDIA,Bata India,Consumer Durables,Leather And Leather Products,Draft - verify
+ASIANPAINT,Asian Paints,Consumer Durables,Paints,Draft - verify
+BERGEPAINT,Berger Paints India,Consumer Durables,Paints,Draft - verify
+DMART,Avenue Supermarts,Consumer Services,Diversified Retail,Draft - verify
+VMM,Vishal Mega Mart,Consumer Services,Diversified Retail,Draft - verify
+PWL,PhysicsWallah,Consumer Services,E-Learning,Draft - verify
+FIRSTCRY,Brainbees Solutions,Consumer Services,E-Retail/ E-Commerce,Draft - verify
+CARTRADE,Cartrade Tech,Consumer Services,E-Retail/ E-Commerce,Draft - verify
+ETERNAL,Eternal,Consumer Services,E-Retail/ E-Commerce,Draft - verify
+NYKAA,FSN E-Commerce Ventures (Nykaa),Consumer Services,E-Retail/ E-Commerce,Draft - verify
+INDIAMART,IndiaMART InterMESH,Consumer Services,E-Retail/ E-Commerce,Draft - verify
+NAUKRI,Info Edge (India),Consumer Services,E-Retail/ E-Commerce,Draft - verify
+MEESHO,Meesho,Consumer Services,E-Retail/ E-Commerce,Draft - verify
+SWIGGY,Swiggy,Consumer Services,E-Retail/ E-Commerce,Draft - verify
+URBANCO,Urban Company,Consumer Services,E-Retail/ E-Commerce,Business checked (web)
+EIHOTEL,EIH,Consumer Services,Hotels & Resorts,Draft - verify
+INDHOTEL,Indian Hotels,Consumer Services,Hotels & Resorts,Draft - verify
+ITCHOTELS,ITC Hotels,Consumer Services,Hotels & Resorts,Draft - verify
+LEMONTREE,Lemon Tree Hotels,Consumer Services,Hotels & Resorts,Draft - verify
+DEVYANI,Devyani International,Consumer Services,Restaurants,Draft - verify
+JUBLFOOD,Jubilant Foodworks,Consumer Services,Restaurants,Draft - verify
+LENSKART,Lenskart Solutions,Consumer Services,Speciality Retail,Draft - verify
+TRENT,Trent,Consumer Services,Speciality Retail,Draft - verify
+BLS,BLS International Services,Consumer Services,"Tour, Travel Related Services",Draft - verify
+IRCTC,IRCTC,Consumer Services,"Tour, Travel Related Services",Draft - verify
+TBOTEK,TBO Tek,Consumer Services,"Tour, Travel Related Services",Draft - verify
+GODREJIND,Godrej Industries,Diversified,Diversified,Draft - verify
+AVANTIFEED,Avanti Feeds,Fast Moving Consumer Goods,Animal Feed,Draft - verify
+ABDL,Allied Blenders and Distillers,Fast Moving Consumer Goods,Breweries & Distilleries,Draft - verify
+RADICO,Radico Khaitan,Fast Moving Consumer Goods,Breweries & Distilleries,Draft - verify
+UBL,United Breweries,Fast Moving Consumer Goods,Breweries & Distilleries,Draft - verify
+UNITDSPR,United Spirits,Fast Moving Consumer Goods,Breweries & Distilleries,Draft - verify
+GODFRYPHLP,Godfrey Phillips India,Fast Moving Consumer Goods,Cigarettes & Tobacco Products,Draft - verify
+HINDUNILVR,Hindustan Unilever,Fast Moving Consumer Goods,Diversified FMCG,Draft - verify
+ITC,ITC,Fast Moving Consumer Goods,Diversified FMCG,Draft - verify
+AWL,AWL Agri Business,Fast Moving Consumer Goods,Edible Oil,Draft - verify
+PATANJALI,Patanjali Foods,Fast Moving Consumer Goods,Edible Oil,Business checked (web)
+LTFOODS,LT Foods,Fast Moving Consumer Goods,Other Agricultural Products,Draft - verify
+VBL,Varun Beverages,Fast Moving Consumer Goods,Other Beverages,Draft - verify
+BRITANNIA,Britannia Industries,Fast Moving Consumer Goods,Packaged Foods,Draft - verify
+NESTLEIND,Nestle India,Fast Moving Consumer Goods,Packaged Foods,Draft - verify
+ZYDUSWELL,Zydus Wellness,Fast Moving Consumer Goods,Packaged Foods,Draft - verify
+COLPAL,Colgate Palmolive India,Fast Moving Consumer Goods,Personal Care,Draft - verify
+CUPID,Cupid,Fast Moving Consumer Goods,Personal Care,Web classification found
+DABUR,Dabur India,Fast Moving Consumer Goods,Personal Care,Draft - verify
+EMAMILTD,Emami,Fast Moving Consumer Goods,Personal Care,Draft - verify
+GILLETTE,Gillette India,Fast Moving Consumer Goods,Personal Care,Draft - verify
+GODREJCP,Godrej Consumer Products,Fast Moving Consumer Goods,Personal Care,Draft - verify
+HONASA,Honasa Consumer,Fast Moving Consumer Goods,Personal Care,Draft - verify
+MARICO,Marico,Fast Moving Consumer Goods,Personal Care,Draft - verify
+DOMS,DOMS Industries,Fast Moving Consumer Goods,Stationary,Draft - verify
+BALRAMCHIN,Balrampur Chini Mills,Fast Moving Consumer Goods,Sugar,Draft - verify
+EIDPARRY,E.I.D. Parry,Fast Moving Consumer Goods,Sugar,Draft - verify
+CCL,CCL Products,Fast Moving Consumer Goods,Tea & Coffee,Draft - verify
+TATACONSUM,Tata Consumer Products,Fast Moving Consumer Goods,Tea & Coffee,Business checked (web)
+ABSLAMC,Aditya Birla Sun Life AMC,Financial Services,Asset Management Company,Draft - verify
+HDFCAMC,HDFC Asset Management,Financial Services,Asset Management Company,Draft - verify
+ICICIAMC,ICICI Prudential AMC,Financial Services,Asset Management Company,Draft - verify
+NAM-INDIA,Nippon Life India AMC,Financial Services,Asset Management Company,Draft - verify
+UTIAMC,UTI AMC,Financial Services,Asset Management Company,Draft - verify
+CDSL,Central Depository Services,Financial Services,"Depositories, Clearing Houses and Other Intermediaries",Draft - verify
+BSE,BSE,Financial Services,Exchange and Data Platform,Draft - verify
+IEX,Indian Energy Exchange,Financial Services,Exchange and Data Platform,Draft - verify
+MCX,Multi Commodity Exchange,Financial Services,Exchange and Data Platform,Draft - verify
+HUDCO,Housing & Urban Development Corporation,Financial Services,Financial Institution,Draft - verify
+IFCI,IFCI,Financial Services,Financial Institution,Draft - verify
+IRFC,Indian Railway Finance Corporation,Financial Services,Financial Institution,Draft - verify
+IREDA,IREDA,Financial Services,Financial Institution,Draft - verify
+PFC,Power Finance Corporation,Financial Services,Financial Institution,Draft - verify
+RECLTD,REC,Financial Services,Financial Institution,Draft - verify
+ANANDRATHI,Anand Rathi Wealth,Financial Services,Financial Products Distributor,Draft - verify
+PAYTM,One 97 Communications,Financial Services,Financial Technology (Fintech),Draft - verify
+POLICYBZR,PB Fintech,Financial Services,Financial Technology (Fintech),Draft - verify
+PINELABS,Pine Labs,Financial Services,Financial Technology (Fintech),Draft - verify
+GICRE,General Insurance Corporation of India,Financial Services,General Insurance,Draft - verify
+ICICIGI,ICICI Lombard General Insurance,Financial Services,General Insurance,Draft - verify
+NIACL,New India Assurance,Financial Services,General Insurance,Draft - verify
+STARHEALTH,Star Health and Allied Insurance,Financial Services,General Insurance,Draft - verify
+BAJAJFINSV,Bajaj Finserv,Financial Services,Holding Company,Draft - verify
+JMFINANCIL,JM Financial,Financial Services,Holding Company,Assigned by business - verify
+AADHARHFC,Aadhar Housing Finance,Financial Services,Housing Finance Company,Draft - verify
+AAVAS,Aavas Financiers,Financial Services,Housing Finance Company,Draft - verify
+APTUS,Aptus Value Housing Finance,Financial Services,Housing Finance Company,Draft - verify
+BAJAJHFL,Bajaj Housing Finance,Financial Services,Housing Finance Company,Draft - verify
+CANFINHOME,Can Fin Homes,Financial Services,Housing Finance Company,Draft - verify
+HOMEFIRST,Home First Finance,Financial Services,Housing Finance Company,Draft - verify
+LICHSGFIN,LIC Housing Finance,Financial Services,Housing Finance Company,Draft - verify
+PIRAMALFIN,Piramal Finance,Financial Services,Housing Finance Company,Business checked (web)
+PNBHOUSING,PNB Housing Finance,Financial Services,Housing Finance Company,Draft - verify
+SAMMAANCAP,Sammaan Capital,Financial Services,Housing Finance Company,Business checked (web)
+BAJAJHLDNG,Bajaj Holdings & Investment,Financial Services,Investment Company,Draft - verify
+CHOLAHLDNG,Cholamandalam Financial Holdings,Financial Services,Investment Company,Draft - verify
+JIOFIN,Jio Financial Services,Financial Services,Investment Company,Business checked (web)
+TATAINVEST,Tata Investment Corporation,Financial Services,Investment Company,Draft - verify
+CANHLIFE,Canara HSBC Life Insurance,Financial Services,Life Insurance,Draft - verify
+HDFCLIFE,HDFC Life Insurance,Financial Services,Life Insurance,Draft - verify
+ICICIPRULI,ICICI Prudential Life Insurance,Financial Services,Life Insurance,Draft - verify
+LICI,Life Insurance Corporation of India,Financial Services,Life Insurance,Draft - verify
+MFSL,Max Financial Services,Financial Services,Life Insurance,Web classification found
+SBILIFE,SBI Life Insurance,Financial Services,Life Insurance,Draft - verify
+ABCAPITAL,Aditya Birla Capital,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+AIIL,Authum Investment & Infrastructure,Financial Services,Non Banking Financial Company (NBFC),Business checked (web)
+BAJFINANCE,Bajaj Finance,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+CGCL,Capri Global Capital,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+CHOLAFIN,Cholamandalam Investment and Finance,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+CREDITACC,CreditAccess Grameen,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+FIVESTAR,Five-Star Business Finance,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+HDBFS,HDB Financial Services,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+IIFL,IIFL Finance,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+LTF,L&T Finance,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+M&MFIN,Mahindra & Mahindra Financial Services,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+MANAPPURAM,Manappuram Finance,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+MUTHOOTFIN,Muthoot Finance,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+POONAWALLA,Poonawalla Fincorp,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+SBICARD,SBI Cards,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+SHRIRAMFIN,Shriram Finance,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+SUNDARMFIN,Sundaram Finance,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+TATACAP,Tata Capital,Financial Services,Non Banking Financial Company (NBFC),Draft - verify
+AUBANK,AU Small Finance Bank,Financial Services,Other Bank,Draft - verify
+CAMS,Computer Age Management Services,Financial Services,Other Capital Market related Services,Draft - verify
+KFINTECH,KFin Technologies,Financial Services,Other Capital Market related Services,Draft - verify
+AXISBANK,Axis Bank,Financial Services,Private Sector Bank,Draft - verify
+BANDHANBNK,Bandhan Bank,Financial Services,Private Sector Bank,Draft - verify
+CUB,City Union Bank,Financial Services,Private Sector Bank,Draft - verify
+FEDERALBNK,Federal Bank,Financial Services,Private Sector Bank,Draft - verify
+HDFCBANK,HDFC Bank,Financial Services,Private Sector Bank,Draft - verify
+ICICIBANK,ICICI Bank,Financial Services,Private Sector Bank,Draft - verify
+IDBI,IDBI Bank,Financial Services,Private Sector Bank,Draft - verify
+IDFCFIRSTB,IDFC First Bank,Financial Services,Private Sector Bank,Draft - verify
+INDUSINDBK,IndusInd Bank,Financial Services,Private Sector Bank,Draft - verify
+J&KBANK,Jammu & Kashmir Bank,Financial Services,Private Sector Bank,Draft - verify
+KARURVYSYA,Karur Vysya Bank,Financial Services,Private Sector Bank,Draft - verify
+KOTAKBANK,Kotak Mahindra Bank,Financial Services,Private Sector Bank,Draft - verify
+RBLBANK,RBL Bank,Financial Services,Private Sector Bank,Draft - verify
+YESBANK,Yes Bank,Financial Services,Private Sector Bank,Draft - verify
+BANKBARODA,Bank of Baroda,Financial Services,Public Sector Bank,Draft - verify
+BANKINDIA,Bank of India,Financial Services,Public Sector Bank,Draft - verify
+MAHABANK,Bank of Maharashtra,Financial Services,Public Sector Bank,Draft - verify
+CANBK,Canara Bank,Financial Services,Public Sector Bank,Draft - verify
+CENTRALBK,Central Bank of India,Financial Services,Public Sector Bank,Draft - verify
+INDIANB,Indian Bank,Financial Services,Public Sector Bank,Draft - verify
+IOB,Indian Overseas Bank,Financial Services,Public Sector Bank,Draft - verify
+PNB,Punjab National Bank,Financial Services,Public Sector Bank,Draft - verify
+SBIN,State Bank of India,Financial Services,Public Sector Bank,Draft - verify
+UCOBANK,UCO Bank,Financial Services,Public Sector Bank,Draft - verify
+UNIONBANK,Union Bank of India,Financial Services,Public Sector Bank,Draft - verify
+CRISIL,CRISIL,Financial Services,Ratings,Draft - verify
+360ONE,360 ONE WAM,Financial Services,Stockbroking & Allied,Web classification found
+ANGELONE,Angel One,Financial Services,Stockbroking & Allied,Draft - verify
+GROWW,Billionbrains Garage Ventures,Financial Services,Stockbroking & Allied,Draft - verify
+CHOICEIN,Choice International,Financial Services,Stockbroking & Allied,Draft - verify
+MOTILALOFS,Motilal Oswal Financial Services,Financial Services,Stockbroking & Allied,Draft - verify
+NUVAMA,Nuvama Wealth Management,Financial Services,Stockbroking & Allied,Web classification found
+BIOCON,Biocon,Healthcare,Biotechnology,Draft - verify
+CONCORDBIO,Concord Biotech,Healthcare,Biotechnology,Draft - verify
+SYNGENE,Syngene International,Healthcare,"Healthcare Research, Analytics & Technology",Web classification found
+LALPATHLAB,Dr. Lal PathLabs,Healthcare,Healthcare Service Provider,Draft - verify
+VIJAYA,Vijaya Diagnostic Centre,Healthcare,Healthcare Service Provider,Draft - verify
+APOLLOHOSP,Apollo Hospitals Enterprise,Healthcare,Hospital,Draft - verify
+ASTERDM,Aster DM Healthcare,Healthcare,Hospital,Draft - verify
+FORTIS,Fortis Healthcare,Healthcare,Hospital,Draft - verify
+MEDANTA,Global Health,Healthcare,Hospital,Draft - verify
+KIMS,Krishna Institute of Medical Sciences,Healthcare,Hospital,Draft - verify
+MAXHEALTH,Max Healthcare Institute,Healthcare,Hospital,Draft - verify
+NH,Narayana Hrudayalaya,Healthcare,Hospital,Draft - verify
+RAINBOW,Rainbow Children's Medicare,Healthcare,Hospital,Draft - verify
+POLYMED,Poly Medicure,Healthcare,Medical Equipment & Supplies,Draft - verify
+ABBOTINDIA,Abbott India,Healthcare,Pharmaceuticals,Draft - verify
+ACUTAAS,Acutaas Chemicals,Healthcare,Pharmaceuticals,Business checked (web)
+AJANTPHARM,Ajanta Pharmaceuticals,Healthcare,Pharmaceuticals,Draft - verify
+ALKEM,Alkem Laboratories,Healthcare,Pharmaceuticals,Draft - verify
+ANTHEM,Anthem Biosciences,Healthcare,Pharmaceuticals,Assigned by business - verify
+AUROPHARMA,Aurobindo Pharma,Healthcare,Pharmaceuticals,Draft - verify
+CAPLIPOINT,Caplin Point Laboratories,Healthcare,Pharmaceuticals,Draft - verify
+CIPLA,Cipla,Healthcare,Pharmaceuticals,Draft - verify
+COHANCE,Cohance Lifesciences,Healthcare,Pharmaceuticals,Assigned by business - verify
+DIVISLAB,Divi's Laboratories,Healthcare,Pharmaceuticals,Draft - verify
+DRREDDY,Dr. Reddy's Laboratories,Healthcare,Pharmaceuticals,Draft - verify
+EMCURE,Emcure Pharmaceuticals,Healthcare,Pharmaceuticals,Draft - verify
+GLAND,Gland Pharma,Healthcare,Pharmaceuticals,Draft - verify
+GLAXO,GlaxoSmithKline Pharmaceuticals,Healthcare,Pharmaceuticals,Draft - verify
+GLENMARK,Glenmark Pharmaceuticals,Healthcare,Pharmaceuticals,Draft - verify
+GRANULES,Granules India,Healthcare,Pharmaceuticals,Draft - verify
+IPCALAB,Ipca Laboratories,Healthcare,Pharmaceuticals,Draft - verify
+JBCHEPHARM,J.B. Chemicals & Pharmaceuticals,Healthcare,Pharmaceuticals,Draft - verify
+LAURUSLABS,Laurus Labs,Healthcare,Pharmaceuticals,Draft - verify
+LUPIN,Lupin,Healthcare,Pharmaceuticals,Draft - verify
+MANKIND,Mankind Pharma,Healthcare,Pharmaceuticals,Draft - verify
+NATCOPHARM,NATCO Pharma,Healthcare,Pharmaceuticals,Draft - verify
+NEULANDLAB,Neuland Laboratories,Healthcare,Pharmaceuticals,Draft - verify
+ONESOURCE,OneSource Specialty Pharma,Healthcare,Pharmaceuticals,Assigned by business - verify
+PPLPHARMA,Piramal Pharma,Healthcare,Pharmaceuticals,Draft - verify
+RUBICON,Rubicon Research,Healthcare,Pharmaceuticals,Draft - verify
+SAILIFE,Sai Life Sciences,Healthcare,Pharmaceuticals,Web classification found
+SUNPHARMA,Sun Pharmaceutical Industries,Healthcare,Pharmaceuticals,Draft - verify
+TORNTPHARM,Torrent Pharmaceuticals,Healthcare,Pharmaceuticals,Draft - verify
+WOCKPHARMA,Wockhardt,Healthcare,Pharmaceuticals,Draft - verify
+ZYDUSLIFE,Zydus Lifesciences,Healthcare,Pharmaceuticals,Draft - verify
+AFFLE,Affle 3i,Information Technology,Computers - Software & Consulting,Draft - verify
+BSOFT,Birlasoft,Information Technology,Computers - Software & Consulting,Draft - verify
+BBOX,Black Box,Information Technology,Computers - Software & Consulting,Draft - verify
+COFORGE,Coforge,Information Technology,Computers - Software & Consulting,Draft - verify
+CYIENT,Cyient,Information Technology,Computers - Software & Consulting,Draft - verify
+FRACTAL,Fractal Analytics,Information Technology,Computers - Software & Consulting,Draft - verify
+HCLTECH,HCL Technologies,Information Technology,Computers - Software & Consulting,Draft - verify
+HEXT,Hexaware Technologies,Information Technology,Computers - Software & Consulting,Draft - verify
+INFY,Infosys,Information Technology,Computers - Software & Consulting,Draft - verify
+KPITTECH,KPIT Technologies,Information Technology,Computers - Software & Consulting,Draft - verify
+LTTS,L&T Technology Services,Information Technology,Computers - Software & Consulting,Draft - verify
+LTM,LTM,Information Technology,Computers - Software & Consulting,Draft - verify
+MPHASIS,Mphasis,Information Technology,Computers - Software & Consulting,Draft - verify
+OFSS,Oracle Financial Services Software,Information Technology,Computers - Software & Consulting,Draft - verify
+PERSISTENT,Persistent Systems,Information Technology,Computers - Software & Consulting,Draft - verify
+TCS,Tata Consultancy Services,Information Technology,Computers - Software & Consulting,Draft - verify
+TATAELXSI,Tata Elxsi,Information Technology,Computers - Software & Consulting,Draft - verify
+TECHM,Tech Mahindra,Information Technology,Computers - Software & Consulting,Draft - verify
+WIPRO,Wipro,Information Technology,Computers - Software & Consulting,Draft - verify
+ZENSARTECH,Zensar Technologies,Information Technology,Computers - Software & Consulting,Draft - verify
+NETWEB,Netweb Technologies India,Information Technology,Computers Hardware & Equipments,Draft - verify
+IKS,Inventurus Knowledge Solutions,Information Technology,IT Enabled Services,Draft - verify
+SAGILITY,Sagility,Information Technology,IT Enabled Services,Draft - verify
+TATATECH,Tata Technologies,Information Technology,IT Enabled Services,Web classification found
+INTELLECT,Intellect Design Arena,Information Technology,Software Products,Draft - verify
+PVRINOX,PVR INOX,Media Entertainment & Publication,"Film Production, Distribution & Exhibition",Draft - verify
+SUNTV,Sun TV Network,Media Entertainment & Publication,TV Broadcasting & Software Production,Draft - verify
+ZEEL,Zee Entertainment Enterprises,Media Entertainment & Publication,TV Broadcasting & Software Production,Draft - verify
+HINDALCO,Hindalco Industries,Metals & Mining,Aluminum,Draft - verify
+NATIONALUM,National Aluminium,Metals & Mining,Aluminum,Draft - verify
+VAML,Vedanta Aluminium Metal,Metals & Mining,Aluminum,Draft - verify
+HINDCOPPER,Hindustan Copper,Metals & Mining,Copper,Draft - verify
+JAINREC,Jain Resource Recycling,Metals & Mining,Diversified Metals,Assigned by business - verify
+VEDL,Vedanta,Metals & Mining,Diversified Metals,Draft - verify
+GRAVITA,Gravita India,Metals & Mining,Industrial Minerals,Web classification found
+GMDCLTD,Gujarat Mineral Development Corporation,Metals & Mining,Industrial Minerals,Draft - verify
+LLOYDSME,Lloyds Metals and Energy,Metals & Mining,Industrial Minerals,Assigned by business - verify
+NMDC,NMDC,Metals & Mining,Industrial Minerals,Draft - verify
+JSL,Jindal Stainless,Metals & Mining,Iron & Steel,Draft - verify
+JINDALSTEL,Jindal Steel,Metals & Mining,Iron & Steel,Draft - verify
+JSWSTEEL,JSW Steel,Metals & Mining,Iron & Steel,Draft - verify
+NSLNISP,NMDC Steel,Metals & Mining,Iron & Steel,Draft - verify
+SARDAEN,Sarda Energy and Minerals,Metals & Mining,Iron & Steel,Business checked (web)
+SAIL,Steel Authority of India,Metals & Mining,Iron & Steel,Draft - verify
+TATASTEEL,Tata Steel,Metals & Mining,Iron & Steel,Draft - verify
+VISL,Vedanta Iron and Steel,Metals & Mining,Iron & Steel,Draft - verify
+ADANIENT,Adani Enterprises,Metals & Mining,Trading - Minerals,Draft - verify
+HINDZINC,Hindustan Zinc,Metals & Mining,Zinc,Draft - verify
+BHARATCOAL,Bharat Coking Coal,Oil Gas & Consumable Fuels,Coal,Draft - verify
+COALINDIA,Coal India,Oil Gas & Consumable Fuels,Coal,Draft - verify
+GAIL,GAIL (India),Oil Gas & Consumable Fuels,Gas Transmission/Marketing,Draft - verify
+ATGL,Adani Total Gas,Oil Gas & Consumable Fuels,LPG/CNG/PNG/LNG Supplier,Draft - verify
+IGL,Indraprastha Gas,Oil Gas & Consumable Fuels,LPG/CNG/PNG/LNG Supplier,Draft - verify
+MGL,Mahanagar Gas,Oil Gas & Consumable Fuels,LPG/CNG/PNG/LNG Supplier,Draft - verify
+PETRONET,Petronet LNG,Oil Gas & Consumable Fuels,LPG/CNG/PNG/LNG Supplier,Draft - verify
+CASTROLIND,Castrol India,Oil Gas & Consumable Fuels,Lubricants,Draft - verify
+ONGC,Oil & Natural Gas Corporation,Oil Gas & Consumable Fuels,Oil Exploration & Production,Draft - verify
+OIL,Oil India,Oil Gas & Consumable Fuels,Oil Exploration & Production,Draft - verify
+VOGL,Vedanta Oil and Gas,Oil Gas & Consumable Fuels,Oil Exploration & Production,Draft - verify
+AEGISLOG,Aegis Logistics,Oil Gas & Consumable Fuels,Oil Storage & Transportation,Draft - verify
+AEGISVOPAK,Aegis Vopak Terminals,Oil Gas & Consumable Fuels,Oil Storage & Transportation,Business checked (web)
+BPCL,Bharat Petroleum,Oil Gas & Consumable Fuels,Refineries & Marketing,Draft - verify
+CHENNPETRO,Chennai Petroleum,Oil Gas & Consumable Fuels,Refineries & Marketing,Draft - verify
+HINDPETRO,Hindustan Petroleum,Oil Gas & Consumable Fuels,Refineries & Marketing,Draft - verify
+IOC,Indian Oil Corporation,Oil Gas & Consumable Fuels,Refineries & Marketing,Draft - verify
+MRPL,Mangalore Refinery & Petrochemicals,Oil Gas & Consumable Fuels,Refineries & Marketing,Draft - verify
+RELIANCE,Reliance Industries,Oil Gas & Consumable Fuels,Refineries & Marketing,Draft - verify
+ACMESOLAR,ACME Solar Holdings,Power,Electric Utilities,Draft - verify
+ADANIGREEN,Adani Green Energy,Power,Electric Utilities,Draft - verify
+ADANIPOWER,Adani Power,Power,Electric Utilities,Draft - verify
+CESC,CESC,Power,Electric Utilities,Draft - verify
+CLEANMAX,Clean Max Enviro Energy Solutions,Power,Electric Utilities,Draft - verify
+JPPOWER,Jaiprakash Power Ventures,Power,Electric Utilities,Draft - verify
+JSWENERGY,JSW Energy,Power,Electric Utilities,Draft - verify
+NAVA,Nava,Power,Electric Utilities,Business checked (web)
+NHPC,NHPC,Power,Electric Utilities,Draft - verify
+NLCINDIA,NLC India,Power,Electric Utilities,Draft - verify
+NTPC,NTPC,Power,Electric Utilities,Draft - verify
+NTPCGREEN,NTPC Green Energy,Power,Electric Utilities,Draft - verify
+RPOWER,Reliance Power,Power,Electric Utilities,Draft - verify
+SJVN,SJVN,Power,Electric Utilities,Draft - verify
+TATAPOWER,Tata Power,Power,Electric Utilities,Draft - verify
+TORNTPOWER,Torrent Power,Power,Electric Utilities,Draft - verify
+VEDPOWER,Vedanta Power,Power,Electric Utilities,Draft - verify
+ADANIENSOL,Adani Energy Solutions,Power,Power - Transmission,Draft - verify
+POWERGRID,Power Grid Corporation,Power,Power - Transmission,Draft - verify
+BAGMANE,Bagmane Prime Office REIT,Realty,Real Estate Investment Trusts (REITs),Draft - verify
+BIRET,Brookfield India Real Estate Trust,Realty,Real Estate Investment Trusts (REITs),Draft - verify
+EMBASSY,Embassy Office Parks REIT,Realty,Real Estate Investment Trusts (REITs),Draft - verify
+ABREL,Aditya Birla Real Estate,Realty,"Residential, Commercial Projects",Draft - verify
+ANANTRAJ,Anant Raj,Realty,"Residential, Commercial Projects",Draft - verify
+BRIGADE,Brigade Enterprises,Realty,"Residential, Commercial Projects",Draft - verify
+DLF,DLF,Realty,"Residential, Commercial Projects",Draft - verify
+GODREJPROP,Godrej Properties,Realty,"Residential, Commercial Projects",Draft - verify
+LODHA,Lodha Developers,Realty,"Residential, Commercial Projects",Draft - verify
+OBEROIRLTY,Oberoi Realty,Realty,"Residential, Commercial Projects",Draft - verify
+PHOENIXLTD,Phoenix Mills,Realty,"Residential, Commercial Projects",Draft - verify
+PRESTIGE,Prestige Estates Projects,Realty,"Residential, Commercial Projects",Draft - verify
+SIGNATURE,Signatureglobal (India),Realty,"Residential, Commercial Projects",Draft - verify
+SOBHA,Sobha,Realty,"Residential, Commercial Projects",Draft - verify
+INDIGO,InterGlobe Aviation,Services,Airline,Draft - verify
+GMRAIRPORT,GMR Airports,Services,Airport & Airport services,Draft - verify
+ECLERX,eClerx Services,Services,Business Process Outsourcing (BPO)/ Knowledge Process Outsourcing (KPO),Draft - verify
+FSL,Firstsource Solutions,Services,Business Process Outsourcing (BPO)/ Knowledge Process Outsourcing (KPO),Draft - verify
+CMPDI,Central Mine Planning & Design Institute,Services,Consulting Services,Draft - verify
+IGIL,International Gemmological Institute,Services,Diversified Commercial Services,Assigned by business - verify
+CONCOR,Container Corporation of India,Services,Logistics Solution Provider,Draft - verify
+DELHIVERY,Delhivery,Services,Logistics Solution Provider,Draft - verify
+ADANIPORTS,Adani Ports and SEZ,Services,Port & Port services,Draft - verify
+JSWINFRA,JSW Infrastructure,Services,Port & Port services,Draft - verify
+GESHIP,Great Eastern Shipping,Services,Shipping,Draft - verify
+SCI,Shipping Corporation of India,Services,Shipping,Draft - verify
+MMTC,MMTC,Services,Trading & Distributors,Draft - verify
+REDINGTON,Redington,Services,Trading & Distributors,Draft - verify
+RAILTEL,RailTel Corporation,Telecommunication,Other Telecom Services,Draft - verify
+TATACOMM,Tata Communications,Telecommunication,Other Telecom Services,Draft - verify
+BHARTIARTL,Bharti Airtel,Telecommunication,Telecom - Cellular & Fixed line services,Draft - verify
+BHARTIHEXA,Bharti Hexacom,Telecommunication,Telecom - Cellular & Fixed line services,Draft - verify
+TTML,Tata Teleservices (Maharashtra),Telecommunication,Telecom - Cellular & Fixed line services,Draft - verify
+IDEA,Vodafone Idea,Telecommunication,Telecom - Cellular & Fixed line services,Draft - verify
+HFCL,HFCL,Telecommunication,Telecom - Equipment & Accessories,Draft - verify
+ITI,ITI,Telecommunication,Telecom - Equipment & Accessories,Draft - verify
+STLTECH,Sterlite Technologies,Telecommunication,Telecom - Equipment & Accessories,Draft - verify
+TEJASNET,Tejas Networks,Telecommunication,Telecom - Equipment & Accessories,Draft - verify
+INDUSTOWER,Indus Towers,Telecommunication,Telecom - Infrastructure,Draft - verify
+KPRMILL,K.P.R. Mill,Textiles,Garments & Apparels,Draft - verify
+PAGEIND,Page Industries,Textiles,Garments & Apparels,Draft - verify
+TRIDENT,Trident,Textiles,Other Textile Products,Draft - verify
+VTL,Vardhman Textiles,Textiles,Other Textile Products,Draft - verify
+WELSPUNLIV,Welspun Living,Textiles,Other Textile Products,Draft - verify

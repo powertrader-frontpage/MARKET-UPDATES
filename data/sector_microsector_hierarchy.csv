@@ -1,0 +1,126 @@
+Sector,Microsector,Stock_Count
+Automobile and Auto Components,2/3 Wheelers,6
+Automobile and Auto Components,Auto Components & Equipments,21
+Automobile and Auto Components,Batteries - Automobile,2
+Automobile and Auto Components,Passenger Cars & Utility Vehicles,6
+Automobile and Auto Components,Tyres & Rubber Products,5
+Capital Goods,Abrasives,1
+Capital Goods,Aerospace & Defense,7
+Capital Goods,Bearings,1
+Capital Goods,Cables - Electricals,4
+Capital Goods,Castings & Forgings,1
+Capital Goods,Commercial Vehicles,2
+Capital Goods,Compressors & Pumps,3
+Capital Goods,Construction Vehicles,2
+Capital Goods,Diesel Engines,2
+Capital Goods,Electrodes,2
+Capital Goods,Heavy Electrical Equipment,14
+Capital Goods,Industrial Electronics,4
+Capital Goods,Industrial Machinery,2
+Capital Goods,Iron & Steel Products,7
+Capital Goods,Other Electrical Equipment,5
+Capital Goods,Other Industrial Products,3
+Capital Goods,Plastic Products - Industrial,2
+Capital Goods,Railway Wagons,2
+Capital Goods,Refractories,1
+Capital Goods,Ship Building & Allied Services,3
+Capital Goods,Tractors,1
+Chemicals,Carbon Black,1
+Chemicals,Commodity Chemicals,3
+Chemicals,Explosives,1
+Chemicals,Fertilizers,4
+Chemicals,Industrial Gases,1
+Chemicals,Pesticides & Agrochemicals,3
+Chemicals,Specialty Chemicals,12
+Chemicals,Trading - Chemicals,1
+Construction Materials,Cement & Cement Products,11
+Construction,Civil Construction,13
+Consumer Durables,Ceramics,1
+Consumer Durables,Consumer Electronics,1
+Consumer Durables,"Gems, Jewellery And Watches",3
+Consumer Durables,Household Appliances,8
+Consumer Durables,Leather And Leather Products,1
+Consumer Durables,Paints,2
+Consumer Services,Diversified Retail,2
+Consumer Services,E-Learning,1
+Consumer Services,E-Retail/ E-Commerce,9
+Consumer Services,Hotels & Resorts,4
+Consumer Services,Restaurants,2
+Consumer Services,Speciality Retail,2
+Consumer Services,"Tour, Travel Related Services",3
+Diversified,Diversified,1
+Fast Moving Consumer Goods,Animal Feed,1
+Fast Moving Consumer Goods,Breweries & Distilleries,4
+Fast Moving Consumer Goods,Cigarettes & Tobacco Products,1
+Fast Moving Consumer Goods,Diversified FMCG,2
+Fast Moving Consumer Goods,Edible Oil,2
+Fast Moving Consumer Goods,Other Agricultural Products,1
+Fast Moving Consumer Goods,Other Beverages,1
+Fast Moving Consumer Goods,Packaged Foods,3
+Fast Moving Consumer Goods,Personal Care,8
+Fast Moving Consumer Goods,Stationary,1
+Fast Moving Consumer Goods,Sugar,2
+Fast Moving Consumer Goods,Tea & Coffee,2
+Financial Services,Asset Management Company,5
+Financial Services,"Depositories, Clearing Houses and Other Intermediaries",1
+Financial Services,Exchange and Data Platform,3
+Financial Services,Financial Institution,6
+Financial Services,Financial Products Distributor,1
+Financial Services,Financial Technology (Fintech),3
+Financial Services,General Insurance,4
+Financial Services,Holding Company,2
+Financial Services,Housing Finance Company,10
+Financial Services,Investment Company,4
+Financial Services,Life Insurance,6
+Financial Services,Non Banking Financial Company (NBFC),18
+Financial Services,Other Bank,1
+Financial Services,Other Capital Market related Services,2
+Financial Services,Private Sector Bank,14
+Financial Services,Public Sector Bank,11
+Financial Services,Ratings,1
+Financial Services,Stockbroking & Allied,6
+Healthcare,Biotechnology,2
+Healthcare,"Healthcare Research, Analytics & Technology",1
+Healthcare,Healthcare Service Provider,2
+Healthcare,Hospital,8
+Healthcare,Medical Equipment & Supplies,1
+Healthcare,Pharmaceuticals,31
+Information Technology,Computers - Software & Consulting,20
+Information Technology,Computers Hardware & Equipments,1
+Information Technology,IT Enabled Services,3
+Information Technology,Software Products,1
+Media Entertainment & Publication,"Film Production, Distribution & Exhibition",1
+Media Entertainment & Publication,TV Broadcasting & Software Production,2
+Metals & Mining,Aluminum,3
+Metals & Mining,Copper,1
+Metals & Mining,Diversified Metals,2
+Metals & Mining,Industrial Minerals,4
+Metals & Mining,Iron & Steel,8
+Metals & Mining,Trading - Minerals,1
+Metals & Mining,Zinc,1
+Oil Gas & Consumable Fuels,Coal,2
+Oil Gas & Consumable Fuels,Gas Transmission/Marketing,1
+Oil Gas & Consumable Fuels,LPG/CNG/PNG/LNG Supplier,4
+Oil Gas & Consumable Fuels,Lubricants,1
+Oil Gas & Consumable Fuels,Oil Exploration & Production,3
+Oil Gas & Consumable Fuels,Oil Storage & Transportation,2
+Oil Gas & Consumable Fuels,Refineries & Marketing,6
+Power,Electric Utilities,17
+Power,Power - Transmission,2
+Realty,Real Estate Investment Trusts (REITs),3
+Realty,"Residential, Commercial Projects",11
+Services,Airline,1
+Services,Airport & Airport services,1
+Services,Business Process Outsourcing (BPO)/ Knowledge Process Outsourcing (KPO),2
+Services,Consulting Services,1
+Services,Diversified Commercial Services,1
+Services,Logistics Solution Provider,2
+Services,Port & Port services,2
+Services,Shipping,2
+Services,Trading & Distributors,2
+Telecommunication,Other Telecom Services,2
+Telecommunication,Telecom - Cellular & Fixed line services,4
+Telecommunication,Telecom - Equipment & Accessories,4
+Telecommunication,Telecom - Infrastructure,1
+Textiles,Garments & Apparels,2
+Textiles,Other Textile Products,3

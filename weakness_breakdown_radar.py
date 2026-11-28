@@ -9,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from canonical_microsector import load_canonical_microsectors
+
 
 OFFICIAL_SECTOR_INDEX_FILES = {
     "Auto": "ind_niftyautolist.csv", "Bank": "ind_niftybanklist.csv",
@@ -341,24 +343,30 @@ def render_weakness_breakdown_radar(sector_stocks, sector_tickers, fyers_session
     st.markdown("## 📉 Weakness & Breakdown Radar")
     st.caption("Independent bearish research page · official Nifty sector-index constituents drive sector context · F&O shortlist is restricted to verified NSE F&O symbols.")
     fo, fo_error = _fo_symbols()
-    sector_map = {str(k): tuple(sorted(set(v))) for k, v in sector_stocks.items()}
-    official_map, official_errors = _official_sector_universe()
-    sector_map.update(official_map)
+    # Radar uses the same 500-stock Sector/Microsector assignments as the
+    # screener and Micro Sector Rotation. Legacy/official index baskets are
+    # not allowed to redefine stock membership here.
+    canonical_baskets, canonical_metadata, canonical_rows = load_canonical_microsectors()
+    sector_members = {}
+    canonical_micro_sectors = {}
+    for microsector, (parent_sector, tickers) in canonical_baskets.items():
+        canonical_micro_sectors[microsector] = (parent_sector, tuple(tickers))
+        sector_members.setdefault(parent_sector, set()).update(tickers)
+    sector_map = {sector: tuple(sorted(tickers)) for sector, tickers in sector_members.items()}
     sector_membership = {}
     for sector, basket in sector_map.items():
         for symbol in basket:
             sector_membership.setdefault(symbol, []).append(sector)
     sector_symbols = set(sector_membership)
-    micro_symbols = {symbol for _, symbols in (micro_sectors or {}).values() for symbol in symbols}
-    all_symbols = sorted(sector_symbols | set(fo) | micro_symbols)
+    micro_sectors = canonical_micro_sectors
+    all_symbols = sorted(sector_symbols)
     with st.expander("Universe & data status", expanded=False):
-        st.write(f"Official Nifty sector baskets loaded: {len(official_map)} / {len(OFFICIAL_SECTOR_INDEX_FILES)}.")
-        st.write(f"Unique mapped constituents: {len(all_symbols)} across {len(sector_map)} baskets.")
+        st.write(f"Canonical Nifty 500 mapping: {canonical_metadata.get('master_stocks', 0)} stocks · {canonical_metadata.get('sectors', 0)} sectors · {canonical_metadata.get('canonical_microsectors', 0)} microsectors.")
+        st.write(f"Unique canonical constituents: {len(all_symbols)} across {len(sector_map)} parent sectors.")
         st.write(f"Verified F&O symbols in NSE file: {len(fo)}.")
         st.write(f"F&O symbols overlapping mapped sector constituents: {len(set(all_symbols) & fo)}.")
         st.write("FYERS session: connected" if fyers_session and fyers_session[1] else "FYERS session: not connected · Yahoo fallback will be used.")
         if fo_error: st.warning(fo_error)
-        if official_errors: st.caption("Official index files unavailable: " + "; ".join(official_errors[:8]))
         st.caption("Stock history uses FYERS first when authenticated; Yahoo fills failed or insufficient FYERS symbols. NIFTY benchmark history uses Yahoo Finance.")
     if not all_symbols:
         st.warning("No sector constituents are available; rankings are withheld.")
