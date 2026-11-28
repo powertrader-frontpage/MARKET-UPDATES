@@ -1,21 +1,29 @@
-name: Python syntax check
+name: Python syntax and canonical microsector checks
 
 on:
   push:
     branches:
-      - mobile-navigation-refactor
+      - canonical-microsector-implementation
   pull_request:
     branches:
       - main
 
 jobs:
-  compile:
+  compile-and-validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Compile dashboard and scanner modules
+      - name: Install validation dependency
+        run: python -m pip install --disable-pip-version-check "pandas>=2.0,<3"
+      - name: Compile dashboard and canonical modules
         run: |
-          python -m py_compile app.py nse500_screener.py explosive_breakout_scanner.py historical_breakout_postmortem.py b1_fundamental_screener.py
+          python -m py_compile app.py nse500_screener.py canonical_microsector.py canonical_microsector_runtime.py canonical_microsectors.py classification_master.py price_symbol_aliases.py
+      - name: Validate canonical alias runtime (278 groups)
+        run: python scripts/test_canonical_microsector_runtime.py
+      - name: Validate verified price-symbol aliases
+        run: python scripts/test_price_symbol_aliases.py
+      - name: Validate dashboard lookup and audited ticker coverage
+        run: python scripts/test_canonical_dashboard_microsector.py
