@@ -164,6 +164,8 @@ def canonical_price_ticker_lookup():
 def map_to_canonical_price_ticker(symbol: str) -> str:
     """Return the audited Yahoo ticker for a master symbol, or preserve unknown symbols."""
     value = str(symbol).strip().upper()
+    if value.startswith("^"):
+        return value
     suffix = ".NS" if value.endswith(".NS") else ""
     base = value[:-3] if suffix else value
     mapped = canonical_price_ticker_lookup().get(base, base + ".NS")
