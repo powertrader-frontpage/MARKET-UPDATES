@@ -12,7 +12,7 @@ import streamlit as st
 import yfinance as yf
 
 from stock_classification import build_classified_universe
-from canonical_microsector import canonical_microsector_lookup, canonical_sector_lookup, canonical_classification_lookup
+from canonical_microsector import load_canonical_microsectors, canonical_microsector_lookup, canonical_sector_lookup, canonical_classification_lookup
 
 
 STAGE_1 = "Stage 1 · Base"
@@ -430,7 +430,11 @@ def _stage_at(weekly, ticker, position, weekly_high, weekly_low):
 
 @st.cache_data(ttl=SCREENER_DATA_TTL_SECONDS, show_spinner=False)
 def _calculate(fyers_app_id="", fyers_access_token=""):
-    universe = _constituents()
+    # The uploaded 500-stock Sector/Microsector master is the sole screener universe.
+    # Do not mix a live constituent download with stale/renamed symbols.
+    _, _, canonical_universe = load_canonical_microsectors()
+    universe = canonical_universe[["Symbol", "Company", "Sector", "Microsector", "Assignment_Status", "Yahoo_Symbol"]].copy()
+    universe = universe.rename(columns={"Yahoo_Symbol": "Ticker", "Company": "Company Name"})
     tickers = tuple(universe["Ticker"].tolist())
     prices, daily_high, daily_low, daily_volume = _daily_ohlc(tickers, fyers_app_id, fyers_access_token)
     if prices.empty or len(prices.index) < 160:
@@ -624,21 +628,15 @@ def _calculate(fyers_app_id="", fyers_access_token=""):
     result = pd.DataFrame(records)
     if result.empty:
         raise ValueError("No NSE 500 symbols had enough usable weekly price history.")
-    # Apply the shared trial Sector/Microsector map to every screener row.
-    # The detailed classification master is descriptive metadata only.
-    result = build_classified_universe(result)
-    sector_by_symbol = canonical_sector_lookup()
-    microsector_by_symbol = canonical_microsector_lookup()
-    classification_by_symbol = canonical_classification_lookup()
+    # The price scan and group labels share the exact same 500-stock source rows.
+    canonical_rows = universe.set_index("Symbol")
     result_symbols = result["Symbol"].astype(str).str.upper()
-    missing_symbols = sorted(set(result_symbols) - set(classification_by_symbol))
+    missing_symbols = sorted(set(result_symbols) - set(canonical_rows.index))
     if missing_symbols:
-        raise ValueError("Screener symbols missing from canonical Nifty 500 mapping: " + ", ".join(missing_symbols))
-    result["Sector"] = result_symbols.map(sector_by_symbol)
-    result["Microsector"] = result_symbols.map(microsector_by_symbol)
-    result["Classification Status"] = result_symbols.map(
-        lambda symbol: classification_by_symbol[symbol]["Assignment_Status"]
-    )
+        raise ValueError("Price history returned symbols outside the canonical 500-stock universe: " + ", ".join(missing_symbols))
+    result["Sector"] = result_symbols.map(canonical_rows["Sector"])
+    result["Microsector"] = result_symbols.map(canonical_rows["Microsector"])
+    result["Classification Status"] = result_symbols.map(canonical_rows["Assignment_Status"])
     # Internal compatibility alias only; all displayed grouping is Sector/Microsector.
     result["Industry"] = result["Microsector"]
     result = result.sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False]).reset_index(drop=True)
