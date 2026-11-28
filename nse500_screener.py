@@ -592,7 +592,7 @@ def render_nse500_screener():
                 for pos, (_, stock) in enumerate(leaders.iterrows(), 1):
                     st.markdown(
                         f'<div style="display:flex;justify-content:space-between;gap:10px;padding:9px 11px;border-bottom:1px solid #34413a;background:rgba(255,255,255,.025);">'
-                        f'<span><b>#{pos} {stock["Symbol"]}</b><small style="display:block;color:#aab6ae;">{stock["Sector"]} · {stock["Stage"]}</small></span>'
+                        f'<span><b>#{pos} {stock["Symbol"]}</b><small style="display:block;color:#aab6ae;">{stock["Sector"]} · {stock["Primary Microsector"]} · {stock["Stage"]}</small></span>'
                         f'<span style="text-align:right;color:#e5c46d;font-weight:800;">RS {int(stock["RS Rank"])}<small style="display:block;color:#aab6ae;">{float(stock["Gap vs 30W %"]):+.1f}% vs 30W</small></span></div>',
                         unsafe_allow_html=True,
                     )
@@ -605,7 +605,7 @@ def render_nse500_screener():
                     move_color = "#3ba77a" if move >= 0 else "#d46b72"
                     st.markdown(
                         f'<div style="display:flex;justify-content:space-between;gap:10px;padding:9px 11px;border-bottom:1px solid #34413a;background:rgba(255,255,255,.025);">'
-                        f'<span><b>#{pos} {stock["Symbol"]}</b><small style="display:block;color:#aab6ae;">{stock["Sector"]} · RS {int(stock["RS Rank"])}</small></span>'
+                        f'<span><b>#{pos} {stock["Symbol"]}</b><small style="display:block;color:#aab6ae;">{stock["Sector"]} · {stock["Primary Microsector"]} · RS {int(stock["RS Rank"])}</small></span>'
                         f'<span style="color:{move_color};font-weight:800;">{move:+.2f}%</span></div>',
                         unsafe_allow_html=True,
                     )
@@ -641,7 +641,7 @@ def render_nse500_screener():
                 st.info("No fresh Stage 2 entry currently meets all strong-momentum filters.")
             else:
                 momentum_cols = [
-                    "Symbol", "Company", "Sector", "Price", "RS Rank",
+                    "Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank",
                     "4W Return %", "12W Return %", "30W Slope %",
                     "Gap vs 30W %", "Volume vs 10W Avg", "52W High Gap %"
                 ]
@@ -726,7 +726,7 @@ def render_nse500_screener():
                 st.info("No Stage 1 stocks currently pass the broad RS, momentum and trend gates.")
             else:
                 early_cols = [
-                    "Symbol", "Company", "Sector", "Price", "RS Rank",
+                    "Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank",
                     "Early Accumulation Score", "Setup Grade", "4W Return %",
                     "12W Return %", "30W Slope %", "Gap vs 30W %",
                     "5W / Prior 10W Volume", "4W Range %", "52W High Gap %"
