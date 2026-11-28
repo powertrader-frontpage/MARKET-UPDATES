@@ -23,6 +23,29 @@ COVERAGE_PATH = ROOT / "data" / "nse_ohlcv_422_symbol_coverage_2026-11-28.csv"
 UNRESOLVED_PRICE_SYMBOLS = {"GFL"}
 
 
+def relative_rotation_zone(aligned: pd.DataFrame, position: int | None = None) -> str | None:
+    """Classify a stock against its benchmark using the dashboard's existing 1M/3M rules."""
+    if aligned is None or aligned.empty:
+        return None
+    current = aligned if position is None else aligned.iloc[:position + 1]
+    if len(current) < 22:
+        return None
+    rel1 = (
+        (current["stock"].iloc[-1] / current["stock"].iloc[-22] - 1) * 100
+        - (current["bench"].iloc[-1] / current["bench"].iloc[-22] - 1) * 100
+    )
+    rel3 = (
+        (current["stock"].iloc[-1] / current["stock"].iloc[-min(64, len(current))] - 1) * 100
+        - (current["bench"].iloc[-1] / current["bench"].iloc[-min(64, len(current))] - 1) * 100
+    )
+    return (
+        "Leading" if rel3 >= 0 and rel1 >= 0 else
+        "Weakening" if rel3 >= 0 else
+        "Improving" if rel1 >= 0 else
+        "Lagging"
+    )
+
+
 @lru_cache(maxsize=1)
 def load_canonical_microsectors():
     """Return canonical microsector baskets, validated metadata and the joined master."""
