@@ -17,6 +17,7 @@ from streamlit_autorefresh import st_autorefresh
 import streamlit.components.v1 as components
 import yfinance as yf
 from nse500_screener import render_nse500_screener
+from canonical_microsector import load_canonical_microsectors
 
 import hashlib
 import hmac
@@ -2434,91 +2435,33 @@ if active_page == "Main Dashboard":
                 st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#a78bfa,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Micro Sector Rotation</div>""", unsafe_allow_html=True)
                 st.caption("Explore leading, improving, weakening and lagging micro industries, compare their strength against NIFTY 500, and drill down to constituent stocks.")
                 st.caption("Custom equal-weight stock baskets · ranks combine 1M/3M/6M returns and 50-EMA breadth. Public prices may be delayed. This is a research tool, not investment advice.")
-                MICRO_SECTORS = {
-                    "API & CDMO": ("Pharma", ["DIVISLAB.NS","LAURUSLABS.NS","NEULANDLAB.NS","SHILPAMED.NS","SUVENPHAR.NS"]),
-                    "Gaming": ("Niche", ["NAZARA.NS","ZENTEC.NS","DREAMFOLKS.NS"]),
-                    "Engineering R&D": ("Technology", ["LTTS.NS","TATAELXSI.NS","KPITTECH.NS","CYIENT.NS"]),
-                    "Telecom Equipment": ("Industrials", ["TEJASNET.NS","HFCL.NS","STLTECH.NS","ITI.NS"]),
-                    "Jewellery": ("Consumer", ["TITAN.NS","KALYANKJIL.NS","PNGJL.NS","THANGAMAYL.NS","SENCO.NS"]),
-                    "Broadcasting": ("Media & Services", ["SUNTV.NS","ZEEL.NS","TVTODAY.NS","NETWORK18.NS","NAZARA.NS"]),
-                    "Brokers": ("Financials", ["ANGELONE.NS","MOTILALOFS.NS","BSE.NS","CDSL.NS","IIFLSEC.NS"]),
-                    "Exchanges & Depositories": ("Financials", ["BSE.NS","CDSL.NS","CAMS.NS","KFINTECH.NS"]),
-                    "Fintech & Payments": ("Financials", ["PAYTM.NS","POLICYBZR.NS","PBFINTECH.NS","CAMS.NS","KFINTECH.NS"]),
-                    "Cooling (ACs & Fans)": ("Consumer Durables", ["VOLTAS.NS","BLUESTARCO.NS","AMBER.NS","HAVELLS.NS","CROMPTON.NS"]),
-                    "Fluorochemicals": ("Chemicals", ["SRF.NS","NAVINFLUOR.NS","FLUOROCHEM.NS","GFL.NS"]),
-                    "Specialty Chemicals": ("Chemicals", ["AARTIIND.NS","DEEPAKNTR.NS","CLEAN.NS","FINEORG.NS","GALAXYSURF.NS"]),
-                    "Agrochemicals": ("Chemicals", ["PIIND.NS","UPL.NS","BAYERCROP.NS","RALLIS.NS","DHANUKA.NS"]),
-                    "Paints & Coatings": ("Chemicals", ["ASIANPAINT.NS","BERGEPAINT.NS","KANSAINER.NS","INDIGOPNTS.NS"]),
-                    "Cables & Wires": ("Industrials", ["POLYCAB.NS","KEI.NS","RRKABEL.NS","FINCABLES.NS"]),
-                    "EMS & Electronics": ("Industrials", ["DIXON.NS","AMBER.NS","KAYNES.NS","SYRMA.NS","AVALON.NS"]),
-                    "Defence Electronics": ("Defence", ["BEL.NS","BDL.NS","DATAPATTNS.NS","ASTRAMICRO.NS","PARAS.NS"]),
-                    "Shipbuilding": ("Industrials", ["COCHINSHIP.NS","GRSE.NS","MAZDOCK.NS","SWANENERGY.NS"]),
-                    "Railway Equipment": ("Industrials", ["TITAGARH.NS","RVNL.NS","TEXRAIL.NS","JWL.NS","RITES.NS"]),
-                    "Industrial Automation": ("Industrials", ["ABB.NS","SIEMENS.NS","THERMAX.NS","HONAUT.NS","CGPOWER.NS"]),
-                    "Power Transformers": ("Power", ["TRANSFORMERS.NS","VOLTAMP.NS","CGPOWER.NS","POWERINDIA.NS"]),
-                    "Renewable Equipment": ("Power", ["SUZLON.NS","INOXWIND.NS","WAAREEENER.NS","PREMIERENE.NS","KPIGREEN.NS"]),
-                    "Power Transmission": ("Power", ["KALPATPOWR.NS","KEC.NS","PFC.NS","REC.NS","POWERGRID.NS"]),
-                    "Data Centres": ("Technology", ["ANANTRAJ.NS","NETWEB.NS","E2E.NS","TECHNOE.NS"]),
-                    "Cybersecurity & IT Services": ("Technology", ["TANLA.NS","KELLTONTEC.NS","ZENSARTECH.NS","CYIENT.NS","LTTS.NS"]),
-                    "Digital Platforms": ("Technology", ["INFOEDGE.NS","JUSTDIAL.NS","NAZARA.NS","CARTRADE.NS","INDIAMART.NS"]),
-                    "Hospitals": ("Healthcare", ["APOLLOHOSP.NS","MAXHEALTH.NS","FORTIS.NS","RAINBOW.NS","KIMS.NS"]),
-                    "Diagnostics": ("Healthcare", ["METROPOLIS.NS","LALPATHLAB.NS","VIJAYA.NS","THYROCARE.NS"]),
-                    "Medical Devices": ("Healthcare", ["POLYMED.NS","CONCORDBIO.NS","YATHARTH.NS","ARTEMISMED.NS"]),
-                    "Domestic Formulations": ("Pharma", ["ALKEM.NS","MANKIND.NS","TORNTPHARM.NS","GLENMARK.NS","AJANTAPHARM.NS"]),
-                    "Biotech & Biosimilars": ("Pharma", ["BIOCON.NS","SYNGENE.NS","DRREDDY.NS","ZYDUSLIFE.NS"]),
-                    "Diagnostics & Lab Services": ("Healthcare", ["METROPOLIS.NS","LALPATHLAB.NS","VIJAYA.NS","KRSNAA.NS"]),
-                    "QSR & Food Service": ("Consumer", ["JUBLFOOD.NS","DEVYANI.NS","SAPPHIRE.NS","WESTLIFE.NS"]),
-                    "Packaged Foods": ("Consumer", ["BRITANNIA.NS","BIKAJI.NS","GODREJAGRO.NS","TATACONSUM.NS","DODLA.NS"]),
-                    "Sugar & Ethanol": ("Agri", ["BALRAMCHIN.NS","TRIVENI.NS","DWARKESH.NS","EIDPARRY.NS","RENUKA.NS"]),
-                    "Dairy": ("Consumer", ["HATSUN.NS","DODLA.NS","HERITGFOOD.NS","PARAGMILK.NS"]),
-                    "Spinning & Yarn": ("Textiles", ["VTL.NS","GOKEX.NS","SANGAMIND.NS","TRIDENT.NS","WELSPUNLIV.NS"]),
-                    "Technical Textiles": ("Textiles", ["GARFIBRES.NS","SRF.NS","KPRMILL.NS","WELSPUNLIV.NS"]),
-                    "Footwear": ("Consumer", ["BATAINDIA.NS","CAMPUS.NS","RELAXO.NS","METROBRAND.NS"]),
-                    "Hotels & Resorts": ("Travel", ["INDHOTEL.NS","LEMONTREE.NS","CHALET.NS","EIHOTEL.NS","ITDC.NS"]),
-                    "Travel Platforms": ("Travel", ["EASEMYTRIP.NS","IXIGO.NS","YATRA.NS","THOMASCOOK.NS"]),
-                    "Logistics & Warehousing": ("Transport", ["DELHIVERY.NS","TCI.NS","MAHLOG.NS","BLUEDART.NS","ALLCARGO.NS"]),
-                    "Ports & Marine Logistics": ("Transport", ["ADANIPORTS.NS","JSWINFRA.NS","GPPL.NS","COCHINSHIP.NS"]),
-                    "Passenger Vehicles": ("Auto", ["M&M.NS","MARUTI.NS","TATAMOTORS.NS","HYUNDAI.NS"]),
-                    "Auto Components": ("Auto", ["BHARATFORG.NS","BOSCHLTD.NS","SONACOMS.NS","UNOMINDA.NS","MOTHERSON.NS"]),
-                    "Tyres": ("Auto", ["MRF.NS","APOLLOTYRE.NS","BALKRISIND.NS","CEATLTD.NS"]),
-                    "EV Components": ("Auto", ["EXIDEIND.NS","AMARAJABAT.NS","SONACOMS.NS","UNOMINDA.NS","SANSERA.NS"]),
-                    "Two-Wheeler Components": ("Auto", ["ENDURANCE.NS","BOSCHLTD.NS","MOTHERSON.NS","SUPRAJIT.NS"]),
-                    "Building Materials": ("Construction", ["ASTRAL.NS","SUPREMEIND.NS","FINOLEXIND.NS","PRINCEPIPE.NS"]),
-                    "Cement & Building Products": ("Construction", ["ULTRACEMCO.NS","SHREECEM.NS","DALBHARAT.NS","JKCEMENT.NS","RAMCOCEM.NS"]),
-                    "Pipes & Fittings": ("Construction", ["ASTRAL.NS","SUPREMEIND.NS","FINPIPE.NS","JINDALSAW.NS"]),
-                    "Real Estate Developers": ("Real Estate", ["DLF.NS","GODREJPROP.NS","OBEROIRLTY.NS","PRESTIGE.NS","PHOENIXLTD.NS"]),
-                    "Building Interiors": ("Construction", ["GREENPANEL.NS","CENTURYPLY.NS","GREENPLY.NS","KAJARIACER.NS"]),
-                    "Gold Loans": ("Financials", ["MUTHOOTFIN.NS","MANAPPURAM.NS","BAJAJHFL.NS"]),
-                    "Microfinance": ("Financials", ["CREDITACC.NS","SPANDANA.NS","SURYODAY.NS","UGROCAP.NS"]),
-                    "Small Finance Banks": ("Financials", ["AUBANK.NS","UJJIVANSFB.NS","EQUITASBNK.NS","ESAFSFB.NS"]),
-                    "Asset Management": ("Financials", ["HDFCAMC.NS","NAM-INDIA.NS","UTIAMC.NS","ABSLAMC.NS"]),
-                    "Insurance": ("Financials", ["HDFCLIFE.NS","SBILIFE.NS","ICICIPRULI.NS","LICI.NS"]),
-                    "Capital Market Services": ("Financials", ["CDSL.NS","CAMS.NS","KFINTECH.NS","BSE.NS","MCX.NS"]),
-                    "Paper & Packaging": ("Materials", ["JKPAPER.NS","TNPL.NS","HUHTAMAKI.NS","PFOCUS.NS"]),
-                    "Glass & Containers": ("Materials", ["BOROSIL.NS","BORORENEW.NS","HINDWAREAP.NS","AGI.NS"]),
-                    "Metals Recycling": ("Materials", ["MIDHANI.NS","HINDCOPPER.NS","NATIONALUM.NS","MOIL.NS"]),
-                    "Mining & Minerals": ("Materials", ["NMDC.NS","COALINDIA.NS","VEDL.NS","HINDZINC.NS"]),
-                    "Oilfield Services": ("Energy", ["OIL.NS","ONGC.NS","SEAMECLTD.NS","GTLINFRA.NS"]),
-                    "City Gas Distribution": ("Energy", ["IGL.NS","MGL.NS","GUJGASLTD.NS","ATGL.NS"]),
-                    "LPG & Gas Equipment": ("Energy", ["GAIL.NS","PETRONET.NS","GESHIP.NS","GULFPETRO.NS"]),
-                    "Water & Waste Management": ("Utilities", ["IONEXCHANG.NS","EMS.NS","VA TECH WABAG.NS","ANTONY.NS"]),
-                    "Agri Inputs": ("Agri", ["COROMANDEL.NS","CHAMBLFERT.NS","FACT.NS","NFL.NS"]),
-                    "Seeds & Crop Science": ("Agri", ["KAVVERITEL.NS","PIIND.NS","RALLIS.NS","DHANUKA.NS"]),
-                    "Fertilizers": ("Agri", ["COROMANDEL.NS","CHAMBLFERT.NS","FACT.NS","RCF.NS","NFL.NS"]),
-                    "Education Services": ("Services", ["NIITLTD.NS","NIITMTS.NS","VERANDA.NS","APTECHT.NS"]),
-                    "Staffing & HR Services": ("Services", ["TEAMLEASE.NS","QUESS.NS","NIITMTS.NS"]),
-                    "Security & Facility Services": ("Services", ["SIS.NS","QUESS.NS","BVCL.NS"]),
-                    "Hospitals & Wellness": ("Healthcare", ["KIMS.NS","YATHARTH.NS","RAINBOW.NS","ARTEMISMED.NS"]),
-                    "Specialty Retail": ("Consumer", ["TRENT.NS","V2RETAIL.NS","ABFRL.NS","SHOPERSTOP.NS"]),
-                    "Home Furnishings": ("Consumer", ["DREAMFOLKS.NS","WELSPUNLIV.NS","TRIDENT.NS","HINDWAREAP.NS"]),
-                    "Alcoholic Beverages": ("Consumer", ["UNITDSPR.NS","RADICO.NS","UBL.NS","GLOBUSSPR.NS"]),
-                    "Tobacco & Allied": ("Consumer", ["ITC.NS","GODFRYPHLP.NS","VSTIND.NS"]),
-                    "Renewable Power Producers": ("Power", ["ADANIGREEN.NS","NTPCGREEN.NS","JSWENERGY.NS","NHPC.NS","SJVN.NS"]),
-                    "Power Utilities": ("Power", ["NTPC.NS","POWERGRID.NS","TATAPOWER.NS","CESC.NS","TORNTPOWER.NS"]),
-                    "IT Hardware": ("Technology", ["NETWEB.NS","DIXON.NS","KAYNES.NS","SYRMA.NS"]),
-                    "Telecom Services": ("Telecom", ["BHARTIARTL.NS","IDEA.NS","INDUSTOWER.NS","TATACOMM.NS"]),
-                    "Financial Technology": ("Financials", ["PAYTM.NS","POLICYBZR.NS","PBFINTECH.NS","ANGELONE.NS"]),
-                }
+                # Canonical primary membership is loaded from the verified 422-stock master.
+                # Legacy broad groups remain display-only references until official NSE hierarchy
+                # fields are completed; they are not used to assign canonical sector identities.
+                MICRO_SECTORS, microsector_metadata, canonical_classification = load_canonical_microsectors()
+                st.caption(
+                    f"Canonical master: {microsector_metadata['master_stocks']} stocks · "
+                    f"{microsector_metadata['canonical_microsectors']} primary microsectors · "
+                    f"{microsector_metadata['eligible_price_stocks']} price-mapped stocks"
+                )
+                if microsector_metadata["canonical_microsectors"] != 278:
+                    st.warning(
+                        "Taxonomy reconciliation is still required: the current 422-stock master "
+                        f"contains {microsector_metadata['canonical_microsectors']} primary microsectors, "
+                        "while the earlier shadow-basket report contains 278. This isolated preview "
+                        "uses the current master; do not promote it to the live app until the difference is reconciled."
+                    )
+                if microsector_metadata["nse_hierarchy_populated_cells"] == 0:
+                    st.info(
+                        "Official NSE macro-sector / sector / industry fields are not populated in the current master. "
+                        "Legacy broad groups are shown only as reference labels; no canonical sector is inferred."
+                    )
+                if microsector_metadata["unresolved_price_symbols"]:
+                    st.warning(
+                        "Price-based rotation excludes unresolved ticker identity: "
+                        + ", ".join(microsector_metadata["unresolved_price_symbols"])
+                        + ". Classification is retained in the master."
+                    )
                 micro_tickers = sorted({ticker for _, tickers in MICRO_SECTORS.values() for ticker in tickers} | {"^CRSLDX"})
                 @st.cache_data(ttl=900, show_spinner=False)
                 def _micro_sector_download(symbols):
@@ -2576,7 +2519,7 @@ if active_page == "Main Dashboard":
                         avg1d, avg1w, avg1, avg3, avg6, avg1y = np.nanmean(arr, axis=0)
                         breadth = float(np.mean(constituent_breadth)) * 100
                         composite = 0.25 * avg1 + 0.40 * avg3 + 0.25 * avg6 + 0.10 * ((breadth - 50) / 5)
-                        micro_rows.append({"Micro sector": micro_name, "Group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1D %": avg1d, "1W %": avg1w, "1M %": avg1, "3M %": avg3, "6M %": avg6, "1Y %": avg1y, "50 EMA breadth %": breadth, "_raw_score": composite})
+                        micro_rows.append({"Micro sector": micro_name, "Reference group": micro_group, "Stocks available": len(constituent_returns), "Stocks listed": len(symbols), "1D %": avg1d, "1W %": avg1w, "1M %": avg1, "3M %": avg3, "6M %": avg6, "1Y %": avg1y, "50 EMA breadth %": breadth, "_raw_score": composite})
                         if constituent_series:
                             aligned = pd.concat(constituent_series, axis=1).sort_index()
                             micro_histories[micro_name] = aligned.mean(axis=1)
@@ -2637,7 +2580,7 @@ if active_page == "Main Dashboard":
                                 f'<span style="background:#d7b967;color:#20251f;border-radius:999px;padding:4px 10px;font-weight:800;">#{idx+1}</span>'
                                 f'<span style="border:1px solid {zone_color};color:{zone_color};border-radius:999px;padding:3px 10px;font-weight:700;">{html.escape(str(row["Zone"]))}</span></div>'
                                 f'<h3 style="margin:12px 0 4px;color:#f2f0e8;">{html.escape(str(row["Micro sector"]))}</h3>'
-                                f'<div style="opacity:.75;font-size:13px;">{html.escape(str(row["Group"]))} · {int(row["Stocks available"])} stocks · Score {int(row["Score"])}</div>'
+                                f'<div style="opacity:.75;font-size:13px;">{html.escape(str(row["Reference group"]))} · {int(row["Stocks available"])} stocks · Score {int(row["Score"])}</div>'
                                 f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:14px;">{metric_html}</div></div>'
                             )
                             st.markdown(card_html, unsafe_allow_html=True)
@@ -2657,14 +2600,14 @@ if active_page == "Main Dashboard":
                     st.subheader("All micro sectors · current rotation status")
                     zone_filter = st.selectbox("Filter micro sectors by rotation zone", ["All zones", "Leading", "Improving", "Weakening", "Lagging"], key="micro_zone_filter")
                     zone_view = micro_df if zone_filter == "All zones" else micro_df[micro_df["Zone"] == zone_filter]
-                    display_cols = ["Micro sector", "Group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Stocks available"]
+                    display_cols = ["Micro sector", "Reference group", "Zone", "Score", "1W %", "1M %", "3M %", "6M %", "1Y %", "50 EMA breadth %", "Stocks available"]
                     st.dataframe(zone_view[display_cols].sort_values("Score", ascending=False), use_container_width=True, hide_index=True)
-                    st.caption("This list shows every available micro sector in each rotation zone—not only the top six cards.")
+                    st.caption("This list shows every available canonical primary microsector. Reference-group labels are legacy display metadata, not canonical NSE sectors.")
         
                     st.subheader("Rotation map: every micro sector against NIFTY 500")
                     map_df = micro_df.dropna(subset=["3M vs NIFTY 500 (pp)", "1M vs NIFTY 500 (pp)"]).copy()
                     if not map_df.empty:
-                        map_fig = px.scatter(map_df, x="3M vs NIFTY 500 (pp)", y="1M vs NIFTY 500 (pp)", size="Stocks available", color="Zone", hover_name="Micro sector", hover_data=["Group","Score","1M %","3M %","6M %"], color_discrete_map=zone_colors, template="plotly_white", title="Relative return and momentum")
+                        map_fig = px.scatter(map_df, x="3M vs NIFTY 500 (pp)", y="1M vs NIFTY 500 (pp)", size="Stocks available", color="Zone", hover_name="Micro sector", hover_data=["Reference group","Score","1M %","3M %","6M %"], color_discrete_map=zone_colors, template="plotly_white", title="Relative return and momentum")
                         map_fig.add_vline(x=0,line_color="#9ca3af")
                         map_fig.add_hline(y=0,line_color="#9ca3af")
                         map_fig.update_layout(height=560, xaxis_title="3M return vs NIFTY 500 (percentage points)", yaxis_title="1M return vs NIFTY 500 (percentage points)", legend_title="Rotation zone")
@@ -2689,7 +2632,7 @@ if active_page == "Main Dashboard":
                         old_zone = _zone_at(len(b_aligned)-6)
                         new_zone = _zone_at(len(b_aligned)-1)
                         if old_zone and new_zone and old_zone != new_zone:
-                            signal_rows.append({"Micro sector":micro_name,"Group":micro_group,"Transition":f"{old_zone} → {new_zone}"})
+                            signal_rows.append({"Micro sector":micro_name,"Reference group":micro_group,"Transition":f"{old_zone} → {new_zone}"})
                     if signal_rows:
                         signal_df = pd.DataFrame(signal_rows)
                         signal_cols = st.columns(2)
@@ -2700,13 +2643,13 @@ if active_page == "Main Dashboard":
                                 st.markdown(f'<div style="border:2px solid {zc}66;border-radius:999px;padding:11px 15px;margin-bottom:8px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;"><b>{html.escape(sr["Micro sector"])}</b><span style="color:{zc};font-weight:750;">{html.escape(sr["Transition"])}</span></div>', unsafe_allow_html=True)
                     else:
                         st.info("No zone changes detected across the latest five available sessions, or insufficient history to verify transitions.")
-                    st.subheader("Group strength")
-                    group_df = micro_df.groupby("Group", as_index=False).agg(**{"Average score":("Score","mean"),"Micro sectors":("Micro sector","count"),"Leading":("Zone",lambda s:int((s=="Leading").sum()))}).sort_values("Average score",ascending=False)
+                    st.subheader("Legacy broad-group reference · not canonical sector strength")
+                    group_df = micro_df.groupby("Reference group", as_index=False).agg(**{"Average score":("Score","mean"),"Micro sectors":("Micro sector","count"),"Leading":("Zone",lambda s:int((s=="Leading").sum()))}).sort_values("Average score",ascending=False)
                     group_cols = st.columns(2)
                     for j, (_, gr) in enumerate(group_df.head(12).iterrows()):
                         with group_cols[j % 2]:
                             group_score = float(gr["Average score"])
-                            group_name = html.escape(str(gr["Group"]))
+                            group_name = html.escape(str(gr["Reference group"]))
                             group_leading = int(gr["Leading"])
                             group_count = int(gr["Micro sectors"])
                             st.markdown(
