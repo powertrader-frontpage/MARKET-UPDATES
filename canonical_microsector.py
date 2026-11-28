@@ -1,8 +1,7 @@
-"""Canonical primary microsector runtime for Market Intelligence Terminal.
+"""Canonical 500-stock Sector/Microsector rotation universe for Market Terminal.
 
-Uses the audited Phase 1 alias map to consolidate verified master labels into
-278 canonical peer groups. The master remains the stock-level source of truth;
-the alias layer only consolidates approved label variants.
+The Nifty 500 mapping is the sole source for rotation grouping. The detailed
+stock-classification master is joined only for descriptive stock metadata.
 """
 from __future__ import annotations
 
@@ -11,17 +10,17 @@ from pathlib import Path
 
 import pandas as pd
 
-from canonical_microsector_runtime import load_canonical_runtime
-from price_symbol_aliases import load_price_symbol_aliases
+from classification_master import load_classification_master
 
 ROOT = Path(__file__).resolve().parent
-MASTER_PATH = ROOT / "data" / "stock_classification_master.csv"
-COVERAGE_PATH = ROOT / "data" / "nse_ohlcv_422_symbol_coverage_2026-11-28.csv"
-PRICE_ALIAS_PATH = ROOT / "data" / "price_symbol_alias_map.csv"
+ROTATION_PATH = ROOT / "data" / "nse500_sector_microsector_master.csv"
+DETAIL_PATH = ROOT / "data" / "stock_classification_master.csv"
 
-# These exceptions are retained in the verified classification master but not
-# used in live price baskets until their security identity/history is resolved.
-UNRESOLVED_PRICE_SYMBOLS = {"GFL"}
+DETAIL_COLUMNS = [
+    "Symbol", "MIT_Primary_Microsector", "MIT_Secondary_Tags",
+    "Evidence_Source", "Evidence_URL", "Evidence_Type", "Verified_On",
+    "Verification_Status", "Review_Notes",
+]
 
 
 def rotation_zone_from_relative_strength(rel1: float, rel3: float) -> str:
@@ -37,7 +36,7 @@ def rotation_zone_from_relative_strength(rel1: float, rel3: float) -> str:
 
 
 def relative_rotation_zone(aligned: pd.DataFrame, position: int | None = None) -> str | None:
-    """Classify a stock against its benchmark using the dashboard's existing 1M/3M rules."""
+    """Classify a stock against its benchmark using the existing 1M/3M rules."""
     if aligned is None or aligned.empty:
         return None
     current = aligned if position is None else aligned.iloc[:position + 1]
@@ -56,145 +55,123 @@ def relative_rotation_zone(aligned: pd.DataFrame, position: int | None = None) -
 
 @lru_cache(maxsize=1)
 def load_canonical_microsectors():
-    """Return validated canonical baskets, diagnostics and the joined stock master."""
-    if not MASTER_PATH.is_file() or not COVERAGE_PATH.is_file():
-        raise FileNotFoundError("Canonical master or audited ticker coverage file is missing.")
+    """Return Sector-parented Microsector baskets, diagnostics and joined stock details."""
+    if not ROTATION_PATH.is_file() or not DETAIL_PATH.is_file():
+        raise FileNotFoundError("Nifty 500 rotation mapping or stock detail master is missing.")
 
-    canonical, symbol_to_canonical, canonical_baskets, audit = load_canonical_runtime(
-        master_path=MASTER_PATH
-    )
-    coverage = pd.read_csv(COVERAGE_PATH, dtype=str, keep_default_na=False)
-    required_coverage = {"Symbol", "Yahoo_Symbol", "OHLCV_Mapping_Status"}
-    missing = required_coverage.difference(coverage.columns)
+    rotation = pd.read_csv(ROTATION_PATH, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    required = {"Symbol", "Company", "Sector", "Microsector", "Assignment_Status"}
+    missing = required.difference(rotation.columns)
     if missing:
-        raise ValueError(f"Ticker coverage missing required columns: {sorted(missing)}")
+        raise ValueError("Nifty 500 rotation mapping is missing columns: " + ", ".join(sorted(missing)))
 
-    coverage["Symbol"] = coverage["Symbol"].astype(str).str.strip().str.upper()
-    if len(coverage) != 422 or coverage["Symbol"].eq("").any() or coverage["Symbol"].duplicated().any():
-        raise ValueError("Ticker coverage must contain exactly 422 unique nonblank master symbols.")
+    for column in required:
+        rotation[column] = rotation[column].astype(str).str.strip()
+    rotation["Symbol"] = rotation["Symbol"].str.upper()
+    duplicate_symbols = sorted(rotation.loc[rotation["Symbol"].duplicated(keep=False), "Symbol"].unique())
+    if duplicate_symbols:
+        raise ValueError("Duplicate NSE symbols in Nifty 500 rotation mapping: " + ", ".join(duplicate_symbols))
+    if len(rotation) != 500 or rotation["Symbol"].eq("").any():
+        raise ValueError("Rotation mapping must contain exactly 500 unique, nonblank NSE symbols.")
+    for column in ("Company", "Sector", "Microsector"):
+        if rotation[column].eq("").any():
+            raise ValueError(f"Rotation mapping contains blank {column} values.")
 
-    joined = canonical.merge(
-        coverage[["Symbol", "Yahoo_Symbol", "OHLCV_Mapping_Status"]],
-        on="Symbol", how="left", validate="one_to_one", indicator=True
+    sector_counts = rotation.groupby("Microsector")["Sector"].nunique()
+    conflicting = sorted(sector_counts[sector_counts.ne(1)].index.tolist())
+    if conflicting:
+        raise ValueError("A Microsector maps to multiple Sectors: " + ", ".join(conflicting))
+
+    details = load_classification_master(DETAIL_PATH)
+    detail_fields = [column for column in DETAIL_COLUMNS if column in details.columns]
+    joined = rotation.merge(
+        details[detail_fields], on="Symbol", how="left",
+        validate="one_to_one", indicator=True
     )
-    if not joined["_merge"].eq("both").all():
-        missing_symbols = joined.loc[joined["_merge"] != "both", "Symbol"].tolist()
-        raise ValueError(f"Ticker coverage missing canonical master symbols: {missing_symbols}")
+    detail_match = joined["_merge"].eq("both")
+    joined["Stock_Detail_Match"] = detail_match
     joined = joined.drop(columns=["_merge"])
-    joined["Yahoo_Symbol"] = joined["Yahoo_Symbol"].astype(str).str.strip().str.upper()
-    joined["Reference_Group"] = joined["Legacy_Broad_Groups"].apply(
-        lambda value: str(value).split("|")[0].strip() if str(value).strip() else "Unassigned"
-    )
-
-    price_aliases = load_price_symbol_aliases(PRICE_ALIAS_PATH)
-    alias_mismatches = []
-    for master_symbol, price_symbol in price_aliases.items():
-        rows = joined.loc[joined["Symbol"].eq(master_symbol), "Yahoo_Symbol"]
-        expected = price_symbol + ".NS"
-        if len(rows) != 1 or rows.iloc[0] != expected:
-            alias_mismatches.append(
-                f"{master_symbol}: expected {expected}, coverage has {rows.iloc[0] if len(rows) else 'MISSING'}"
-            )
-    if alias_mismatches:
-        raise ValueError("Verified price-symbol alias mismatch: " + " | ".join(alias_mismatches))
-
-    mapped = joined[
-        joined["OHLCV_Mapping_Status"].str.upper().eq("MAPPED")
-        & joined["Yahoo_Symbol"].ne("")
-    ].copy()
-    duplicate_mask = mapped["Yahoo_Symbol"].duplicated(keep=False)
-    duplicate_symbols = sorted(mapped.loc[duplicate_mask, "Symbol"].unique().tolist())
-    excluded_symbols = set(UNRESOLVED_PRICE_SYMBOLS) | set(duplicate_symbols)
-    eligible = mapped[~mapped["Symbol"].isin(excluded_symbols)].copy()
+    joined["Yahoo_Symbol"] = joined["Symbol"] + ".NS"
+    # Compatibility fields: consumers still use this canonical label name,
+    # while the displayed parent group is now the actual Sector.
+    joined["Canonical_Microsector"] = joined["Microsector"]
+    joined["Reference_Group"] = joined["Sector"]
 
     baskets = {}
-    for microsector, rows in eligible.groupby("Canonical_Microsector", sort=True):
-        tickers = sorted(rows["Yahoo_Symbol"].tolist())
-        if tickers:
-            reference_groups = sorted(
-                value for value in rows["Reference_Group"].dropna().unique()
-                if str(value).strip()
-            )
-            reference_group = reference_groups[0] if len(reference_groups) == 1 else "Mixed / legacy"
-            baskets[str(microsector)] = (reference_group, tickers)
+    for microsector, rows in joined.groupby("Microsector", sort=True):
+        sector_values = sorted(rows["Sector"].unique().tolist())
+        if len(sector_values) != 1:
+            raise ValueError(f"Microsector {microsector!r} does not have exactly one parent Sector.")
+        tickers = sorted(set(rows["Yahoo_Symbol"].tolist()))
+        baskets[str(microsector)] = (sector_values[0], tickers)
 
-    basket_sizes = [len(tickers) for _, tickers in baskets.values()]
-    hierarchy_columns = [
-        "NSE_Macro_Economic_Sector", "NSE_Sector",
-        "NSE_Industry", "NSE_Basic_Industry",
-    ]
-    hierarchy_populated = int(
-        joined[hierarchy_columns].apply(
-            lambda column: column.astype(str).str.strip().ne("")
-        ).sum().sum()
-    )
+    sizes = joined.groupby("Microsector").size()
+    status_counts = joined["Assignment_Status"].value_counts().to_dict()
     metadata = {
-        "master_stocks": int(len(canonical)),
-        "eligible_price_stocks": int(len(eligible)),
-        "unresolved_price_symbols": sorted(UNRESOLVED_PRICE_SYMBOLS.intersection(set(joined["Symbol"]))),
-        "duplicate_ticker_symbols": duplicate_symbols,
-        "excluded_price_symbols": sorted(excluded_symbols.intersection(set(joined["Symbol"]))),
-        "canonical_microsectors": int(canonical["Canonical_Microsector"].nunique()),
-        "microsectors_with_price_coverage": int(len(baskets)),
-        "single_stock_microsectors": int(sum(size == 1 for size in basket_sizes)),
-        "two_stock_microsectors": int(sum(size == 2 for size in basket_sizes)),
-        "microsectors_with_3plus_stocks": int(sum(size >= 3 for size in basket_sizes)),
-        "microsectors_without_price_coverage": int(canonical["Canonical_Microsector"].nunique() - len(baskets)),
-        "nse_hierarchy_populated_cells": hierarchy_populated,
-        "nse_hierarchy_total_cells": int(len(joined) * len(hierarchy_columns)),
-        "alias_rows": int(audit["alias_rows"]),
-        "alias_coverage_errors": int(audit["alias_coverage_errors"]),
-        "verified_price_aliases": int(len(price_aliases)),
+        "master_stocks": int(len(joined)),
+        "eligible_price_stocks": int(len(joined)),
+        "sectors": int(joined["Sector"].nunique()),
+        "canonical_microsectors": int(joined["Microsector"].nunique()),
+        "microsectors_with_price_coverage": 0,
+        "single_stock_microsectors": int((sizes == 1).sum()),
+        "two_stock_microsectors": int((sizes == 2).sum()),
+        "microsectors_with_3plus_stocks": int((sizes >= 3).sum()),
+        "microsectors_without_price_coverage": 0,
+        "detail_master_matches": int(detail_match.sum()),
+        "rotation_only_stocks": int((~detail_match).sum()),
+        "detail_master_only_stocks": int(len(details) - detail_match.sum()),
+        "assignment_status_counts": status_counts,
+        "draft_assignments": int(joined["Assignment_Status"].str.casefold().eq("draft - verify").sum()),
+        "price_symbols_are_provisional": True,
     }
     return baskets, metadata, joined
 
 
 @lru_cache(maxsize=1)
-def canonical_price_ticker_lookup():
-    """Map only unambiguous master symbols to audited Yahoo price tickers."""
-    _, metadata, joined = load_canonical_microsectors()
-    excluded = set(metadata["excluded_price_symbols"])
-    return {
-        str(row.Symbol).upper(): str(row.Yahoo_Symbol).upper()
-        for row in joined.itertuples(index=False)
-        if str(row.Symbol).upper() not in excluded
-        and str(row.OHLCV_Mapping_Status).upper() == "MAPPED"
-        and str(row.Yahoo_Symbol).strip()
-    }
-
-
-def map_to_canonical_price_ticker(symbol: str) -> str:
-    """Return the audited Yahoo ticker for a master symbol, or preserve unknown symbols."""
-    value = str(symbol).strip().upper()
-    if value.startswith("^"):
-        return value
-    suffix = ".NS" if value.endswith(".NS") else ""
-    base = value[:-3] if suffix else value
-    mapped = canonical_price_ticker_lookup().get(base, base + ".NS")
-    return mapped if mapped.endswith(".NS") or mapped.startswith("^") else mapped + ".NS"
+def canonical_microsector_lookup():
+    """Map each Nifty 500 NSE symbol and its direct Yahoo ticker to one Microsector."""
+    _, _, joined = load_canonical_microsectors()
+    lookup = dict(zip(joined["Symbol"], joined["Microsector"]))
+    lookup.update({symbol + ".NS": micro for symbol, micro in lookup.copy().items()})
+    return lookup
 
 
 @lru_cache(maxsize=1)
-def canonical_microsector_lookup():
-    """Map master symbols and unique current price symbols to one canonical group."""
-    _, metadata, joined = load_canonical_microsectors()
-    lookup = dict(zip(
-        joined["Symbol"].astype(str).str.upper(),
-        joined["Canonical_Microsector"].astype(str)
-    ))
-    excluded = set(metadata["excluded_price_symbols"])
-    # Add current Yahoo symbols only when the crosswalk is one-to-one and eligible.
-    eligible = joined[
-        ~joined["Symbol"].isin(excluded)
-        & joined["OHLCV_Mapping_Status"].str.upper().eq("MAPPED")
-        & joined["Yahoo_Symbol"].ne("")
-    ]
-    for row in eligible.itertuples(index=False):
-        ticker = str(row.Yahoo_Symbol).upper()
-        if ticker.endswith(".NS"):
-            lookup[ticker[:-3]] = str(row.Canonical_Microsector)
-    price_aliases = load_price_symbol_aliases(PRICE_ALIAS_PATH)
-    for master_symbol, price_symbol in price_aliases.items():
-        if master_symbol in lookup:
-            lookup[price_symbol] = lookup[master_symbol]
+def canonical_sector_lookup():
+    """Map each Nifty 500 NSE symbol and its direct Yahoo ticker to one Sector."""
+    _, _, joined = load_canonical_microsectors()
+    lookup = dict(zip(joined["Symbol"], joined["Sector"]))
+    lookup.update({symbol + ".NS": sector for symbol, sector in lookup.copy().items()})
     return lookup
+
+
+@lru_cache(maxsize=1)
+def canonical_classification_lookup():
+    """Return the shared Sector, Microsector and assignment status for each stock."""
+    _, _, joined = load_canonical_microsectors()
+    return {
+        row.Symbol: {
+            "Sector": row.Sector,
+            "Microsector": row.Microsector,
+            "Assignment_Status": row.Assignment_Status,
+        }
+        for row in joined.itertuples(index=False)
+    }
+
+
+@lru_cache(maxsize=1)
+def canonical_price_ticker_lookup():
+    """Return direct NSE-to-Yahoo symbol mappings for the 500-stock trial universe."""
+    _, _, joined = load_canonical_microsectors()
+    return dict(zip(joined["Symbol"], joined["Yahoo_Symbol"]))
+
+
+def map_to_canonical_price_ticker(symbol: str) -> str:
+    """Map a stock to its current trial-universe Yahoo ticker."""
+    value = str(symbol).strip().upper()
+    if not value:
+        return value
+    if value.startswith("^"):
+        return value
+    base = value[:-3] if value.endswith(".NS") else value
+    return canonical_price_ticker_lookup().get(base, base + ".NS")
