@@ -2918,6 +2918,8 @@ if active_page == "Main Dashboard":
                             "Minimum daily coverage": min_coverage, "Period return %": sector_perf,
                             "NIFTY 500 return %": benchmark_perf,
                             "Relative return vs NIFTY 500 (pp)": sector_perf - benchmark_perf,
+                            # Compatibility alias for downstream sector export/confirmation consumers.
+                            "Relative return vs NIFTY (pp)": sector_perf - benchmark_perf,
                             "1D vs NIFTY 500 (pp)": _relative_window(2),
                             "1W vs NIFTY 500 (pp)": _relative_window(6),
                             "3W vs NIFTY 500 (pp)": _relative_window(16),
