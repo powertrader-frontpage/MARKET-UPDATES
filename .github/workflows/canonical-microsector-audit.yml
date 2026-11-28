@@ -19,6 +19,9 @@ on:
       - "scripts/build_peer_group_assignment_review.py"
       - "scripts/test_canonical_microsector_runtime.py"
       - "ranking_snapshot.py"
+      - "price_symbol_aliases.py"
+      - "data/price_symbol_alias_map.csv"
+      - "scripts/test_price_symbol_aliases.py"
       - "scripts/test_ranking_snapshot.py"
       - "scripts/run_ranking_invariance.py"
       - "data/ranking_invariance_snapshot.json"
@@ -43,11 +46,13 @@ jobs:
       - name: Install audit dependency
         run: python -m pip install --disable-pip-version-check pandas
       - name: Compile canonical modules
-        run: python -m py_compile classification_master.py canonical_microsectors.py canonical_microsector_runtime.py scripts/test_canonical_microsector_runtime.py ranking_snapshot.py scripts/test_ranking_snapshot.py scripts/run_ranking_invariance.py scripts/audit_canonical_microsectors.py scripts/build_canonical_microsector_shadow.py scripts/build_microsector_per_consumer_shadow.py scripts/audit_sector_hierarchy_completeness.py scripts/build_sector_classification_review_register.py scripts/build_peer_group_assignment_review.py
+        run: python -m py_compile classification_master.py canonical_microsectors.py canonical_microsector_runtime.py scripts/test_canonical_microsector_runtime.py ranking_snapshot.py price_symbol_aliases.py scripts/test_price_symbol_aliases.py scripts/test_ranking_snapshot.py scripts/run_ranking_invariance.py scripts/audit_canonical_microsectors.py scripts/build_canonical_microsector_shadow.py scripts/build_microsector_per_consumer_shadow.py scripts/audit_sector_hierarchy_completeness.py scripts/build_sector_classification_review_register.py scripts/build_peer_group_assignment_review.py
       - name: Test master-driven canonical runtime in shadow mode
         run: python scripts/test_canonical_microsector_runtime.py
       - name: Test frozen ranking input snapshot integrity
         run: python scripts/test_ranking_snapshot.py
+      - name: Test verified price-symbol aliases
+        run: python scripts/test_price_symbol_aliases.py
       - name: Run frozen-snapshot ranking impact audit when a capture exists
         if: hashFiles('data/ranking_invariance_snapshot.json') != ''
         run: python scripts/run_ranking_invariance.py
