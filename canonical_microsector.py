@@ -148,13 +148,47 @@ def load_canonical_microsectors():
 
 
 @lru_cache(maxsize=1)
+def canonical_price_ticker_lookup():
+    """Map only unambiguous master symbols to audited Yahoo price tickers."""
+    _, metadata, joined = load_canonical_microsectors()
+    excluded = set(metadata["excluded_price_symbols"])
+    return {
+        str(row.Symbol).upper(): str(row.Yahoo_Symbol).upper()
+        for row in joined.itertuples(index=False)
+        if str(row.Symbol).upper() not in excluded
+        and str(row.OHLCV_Mapping_Status).upper() == "MAPPED"
+        and str(row.Yahoo_Symbol).strip()
+    }
+
+
+def map_to_canonical_price_ticker(symbol: str) -> str:
+    """Return the audited Yahoo ticker for a master symbol, or preserve unknown symbols."""
+    value = str(symbol).strip().upper()
+    suffix = ".NS" if value.endswith(".NS") else ""
+    base = value[:-3] if suffix else value
+    mapped = canonical_price_ticker_lookup().get(base, base + ".NS")
+    return mapped if mapped.endswith(".NS") or mapped.startswith("^") else mapped + ".NS"
+
+
+@lru_cache(maxsize=1)
 def canonical_microsector_lookup():
-    """Map master symbols and verified current price symbols to one canonical group."""
-    _, _, joined = load_canonical_microsectors()
+    """Map master symbols and unique current price symbols to one canonical group."""
+    _, metadata, joined = load_canonical_microsectors()
     lookup = dict(zip(
         joined["Symbol"].astype(str).str.upper(),
         joined["Canonical_Microsector"].astype(str)
     ))
+    excluded = set(metadata["excluded_price_symbols"])
+    # Add current Yahoo symbols only when the crosswalk is one-to-one and eligible.
+    eligible = joined[
+        ~joined["Symbol"].isin(excluded)
+        & joined["OHLCV_Mapping_Status"].str.upper().eq("MAPPED")
+        & joined["Yahoo_Symbol"].ne("")
+    ]
+    for row in eligible.itertuples(index=False):
+        ticker = str(row.Yahoo_Symbol).upper()
+        if ticker.endswith(".NS"):
+            lookup[ticker[:-3]] = str(row.Canonical_Microsector)
     price_aliases = load_price_symbol_aliases(PRICE_ALIAS_PATH)
     for master_symbol, price_symbol in price_aliases.items():
         if master_symbol in lookup:
