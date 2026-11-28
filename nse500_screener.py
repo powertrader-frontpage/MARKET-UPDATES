@@ -12,7 +12,7 @@ import streamlit as st
 import yfinance as yf
 
 from stock_classification import build_classified_universe
-from canonical_microsector import canonical_microsector_lookup
+from canonical_microsector import canonical_microsector_lookup, canonical_sector_lookup, canonical_classification_lookup
 
 
 STAGE_1 = "Stage 1 · Base"
@@ -73,7 +73,7 @@ def _constituents():
             raise ValueError("NSE API returned no constituent records.")
         frame = pd.DataFrame(records).rename(columns={
             "symbol": "Symbol", "companyName": "Company Name",
-            "industry": "Industry", "meta": "Meta",
+            "microsector": "Industry", "meta": "Meta",
         })
         if "Company Name" not in frame.columns and "Meta" in frame.columns:
             frame["Company Name"] = frame["Meta"].map(
@@ -92,20 +92,20 @@ def _normalise_constituents(frame: pd.DataFrame) -> pd.DataFrame:
     cols = {str(c).strip().lower(): c for c in frame.columns}
     symbol_col = cols.get("symbol")
     company_col = cols.get("company name") or cols.get("companyname")
-    industry_col = cols.get("industry")
+    microsector_col = cols.get("microsector")
     sector_col = cols.get("sector")
     if symbol_col is None:
         raise ValueError("Official Nifty 500 data has no Symbol column.")
     symbols = frame[symbol_col].astype(str).str.strip()
-    industry_values = frame[industry_col].astype(str).str.strip() if industry_col else (
+    microsector_values = frame[microsector_col].astype(str).str.strip() if microsector_col else (
         frame[sector_col].astype(str).str.strip() if sector_col else pd.Series("Unclassified", index=frame.index)
     )
-    sector_values = frame[sector_col].astype(str).str.strip() if sector_col else industry_values
+    sector_values = frame[sector_col].astype(str).str.strip() if sector_col else microsector_values
     out = pd.DataFrame({
         "Symbol": symbols,
         "Company": frame[company_col].astype(str).str.strip() if company_col else symbols,
         "Sector": sector_values,
-        "Industry": industry_values,
+        "Microsector": microsector_values,
     })
     out = out[out["Symbol"].ne("") & out["Symbol"].str.lower().ne("nan")].drop_duplicates("Symbol")
     if len(out) < 450:
@@ -624,21 +624,30 @@ def _calculate(fyers_app_id="", fyers_access_token=""):
     result = pd.DataFrame(records)
     if result.empty:
         raise ValueError("No NSE 500 symbols had enough usable weekly price history.")
-    # Add evidence-backed MIT labels without changing official Sector/Industry fields
-    # or any technical/relative-strength calculations.
+    # Apply the shared trial Sector/Microsector map to every screener row.
+    # The detailed classification master is descriptive metadata only.
     result = build_classified_universe(result)
-    canonical_microsector_by_symbol = canonical_microsector_lookup()
-    result["Primary Microsector"] = (
-        result["Symbol"].astype(str).str.upper().map(canonical_microsector_by_symbol)
-        .fillna("Not in audited master")
+    sector_by_symbol = canonical_sector_lookup()
+    microsector_by_symbol = canonical_microsector_lookup()
+    classification_by_symbol = canonical_classification_lookup()
+    result_symbols = result["Symbol"].astype(str).str.upper()
+    missing_symbols = sorted(set(result_symbols) - set(classification_by_symbol))
+    if missing_symbols:
+        raise ValueError("Screener symbols missing from canonical Nifty 500 mapping: " + ", ".join(missing_symbols))
+    result["Sector"] = result_symbols.map(sector_by_symbol)
+    result["Microsector"] = result_symbols.map(microsector_by_symbol)
+    result["Classification Status"] = result_symbols.map(
+        lambda symbol: classification_by_symbol[symbol]["Assignment_Status"]
     )
+    # Internal compatibility alias only; all displayed grouping is Sector/Microsector.
+    result["Industry"] = result["Microsector"]
     result = result.sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False]).reset_index(drop=True)
 
-    # Stock strength relative to the median return of its assigned sector/industry peer group.
+    # Stock strength relative to the median return of its assigned sector/microsector peer group.
     result["RS vs Sector 4W (pp)"] = result["4W Return %"] - result.groupby("Sector")["4W Return %"].transform("median")
     result["RS vs Sector 12W (pp)"] = result["12W Return %"] - result.groupby("Sector")["12W Return %"].transform("median")
-    result["RS vs Industry 4W (pp)"] = result["4W Return %"] - result.groupby("Industry")["4W Return %"].transform("median")
-    result["RS vs Industry 12W (pp)"] = result["12W Return %"] - result.groupby("Industry")["12W Return %"].transform("median")
+    result["RS vs Microsector 4W (pp)"] = result["4W Return %"] - result.groupby("Industry")["4W Return %"].transform("median")
+    result["RS vs Microsector 12W (pp)"] = result["12W Return %"] - result.groupby("Industry")["12W Return %"].transform("median")
 
     # Sector leadership is context for the daily breakout watch, not a stock-selection filter.
     universe_median_4w = pd.to_numeric(result["4W Return %"], errors="coerce").median()
@@ -674,15 +683,15 @@ def _calculate(fyers_app_id="", fyers_access_token=""):
     )
     sector_rs_map = sectors.set_index("Sector")["Median RS"].to_dict()
 
-    industry_rows = []
+    microsector_rows = []
     universe_median_4w = pd.to_numeric(result["4W Return %"], errors="coerce").median()
     universe_median_12w = pd.to_numeric(result["12W Return %"], errors="coerce").median()
-    for industry, group in result.groupby("Industry", dropna=False):
+    for microsector, group in result.groupby("Industry", dropna=False):
         ret4 = pd.to_numeric(group["4W Return %"], errors="coerce").dropna()
         ret12 = pd.to_numeric(group["12W Return %"], errors="coerce").dropna()
         daily = pd.to_numeric(group["Daily Change %"], errors="coerce").dropna()
-        industry_rows.append({
-            "Industry": industry, "Stocks": int(len(group)),
+        microsector_rows.append({
+            "Microsector": microsector, "Stocks": int(len(group)),
             "Median RS Rank": round(float(group["RS Rank"].median()), 1),
             "4W Return %": round(float(ret4.median()), 2) if len(ret4) else np.nan,
             "12W Return %": round(float(ret12.median()), 2) if len(ret12) else np.nan,
@@ -691,7 +700,7 @@ def _calculate(fyers_app_id="", fyers_access_token=""):
             "Stage 2 %": round(float((group["Stage"] == STAGE_2).mean() * 100), 1),
             "Advancing Stocks %": round(float((daily > 0).mean() * 100), 1) if len(daily) else np.nan,
         })
-    industries = pd.DataFrame(industry_rows).sort_values(
+    industries = pd.DataFrame(microsector_rows).sort_values(
         ["12W RS vs NSE 500 (pp)", "4W RS vs NSE 500 (pp)", "Median RS Rank"],
         ascending=False, na_position="last"
     )
@@ -866,7 +875,7 @@ def render_nse500_screener():
                 summary_cols = st.columns(4)
                 for col, label in zip(summary_cols, ["Leading", "Improving", "Weakening", "Lagging"]):
                     col.metric(label, int(strength_counts.get(label, 0)))
-                daily_breakout_cols = ["Symbol", "Company", "Sector", "Primary Microsector", "Sector Strength", "Sector 4W RS vs NSE 500 (pp)", "Sector 12W RS vs NSE 500 (pp)", "Price", "Daily Breakout Date", "Daily Breakout Close", "Daily Breakout Resistance", "Daily Breakout Volume / 20D", "RS Rank", "Base Setup"]
+                daily_breakout_cols = ["Symbol", "Company", "Sector", "Microsector", "Sector Strength", "Sector 4W RS vs NSE 500 (pp)", "Sector 12W RS vs NSE 500 (pp)", "Price", "Daily Breakout Date", "Daily Breakout Close", "Daily Breakout Resistance", "Daily Breakout Volume / 20D", "RS Rank", "Base Setup"]
                 def _highlight_sector_strength(value):
                     if value == "Leading":
                         return "background-color: #D9F2E3; color: #14532D; font-weight: 700;"
@@ -889,7 +898,7 @@ def render_nse500_screener():
             st.caption("A ranking aid, not a prediction. Strict mode applies hard confirmation filters and shows up to 20 strongest candidates; Broad mode ranks every current Stage 2 stock.")
             quality_mode = st.radio("Stage 2 view", ["Strict · Top 20", "Broad · All Stage 2"], horizontal=True, key="nse500_quality_mode")
             quality_frame = strict_stage2 if quality_mode == "Strict · Top 20" else ranked_stage2
-            quality_cols = ["Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank", "Breakout Quality", "Base Setup", "Fresh B2", "Volume vs 10W Avg", "Sector Median RS", "30W Slope %", "Gap vs 30W %", "Base Count"]
+            quality_cols = ["Symbol", "Company", "Sector", "Microsector", "Price", "RS Rank", "Breakout Quality", "Base Setup", "Fresh B2", "Volume vs 10W Avg", "Sector Median RS", "30W Slope %", "Gap vs 30W %", "Base Count"]
             if quality_frame.empty:
                 st.info("No stocks currently meet all strict breakout-quality filters. Switch to Broad mode to inspect all Stage 2 stocks.")
             else:
@@ -899,7 +908,7 @@ def render_nse500_screener():
             st.markdown("#### v8 · Current Stage 2 Winner-Profile Watchlist")
             st.caption("All current Stage 2 stocks ranked by historical winner-profile resemblance. Uses 12W momentum, 13W excess vs NIFTY 500, 30W position/slope, prior 52W high and a current Stage 2 duration proxy (not historical B1 base duration). Research ranking only; not a probability or buy signal. Missing benchmark data earns no relative-strength points.")
             v8_frame = current_stage2.sort_values(["v8 Setup Score", "RS Rank"], ascending=[False, False])
-            v8_cols = ["Symbol", "Company", "Sector", "Primary Microsector", "Price", "v8 Setup Score", "Prior 12W %", "13W Excess vs NIFTY500 (pp)", "RS Rank", "30W Slope %", "Gap vs 30W %", "Base Setup", "Fresh B2", "Base Count", "New Stage 2"]
+            v8_cols = ["Symbol", "Company", "Sector", "Microsector", "Price", "v8 Setup Score", "Prior 12W %", "13W Excess vs NIFTY500 (pp)", "RS Rank", "30W Slope %", "Gap vs 30W %", "Base Setup", "Fresh B2", "Base Count", "New Stage 2"]
             st.dataframe(v8_frame[v8_cols], use_container_width=True, hide_index=True, height=400)
             st.download_button("Download v8 Stage 2 watchlist (CSV)", v8_frame[v8_cols].to_csv(index=False).encode("utf-8"), "nse500_v8_current_stage2.csv", "text/csv", key="download_nse500_v8_stage2")
 
@@ -924,7 +933,7 @@ def render_nse500_screener():
                 for pos, (_, stock) in enumerate(leaders.iterrows(), 1):
                     st.markdown(
                         f'<div style="display:flex;justify-content:space-between;gap:10px;padding:9px 11px;border-bottom:1px solid #34413a;background:rgba(255,255,255,.025);">'
-                        f'<span><b>#{pos} {stock["Symbol"]}</b><small style="display:block;color:#aab6ae;">{stock["Sector"]} · {stock["Primary Microsector"]} · {stock["Stage"]}</small></span>'
+                        f'<span><b>#{pos} {stock["Symbol"]}</b><small style="display:block;color:#aab6ae;">{stock["Sector"]} · {stock["Microsector"]} · {stock["Stage"]}</small></span>'
                         f'<span style="text-align:right;color:#e5c46d;font-weight:800;">RS {int(stock["RS Rank"])}<small style="display:block;color:#aab6ae;">{float(stock["Gap vs 30W %"]):+.1f}% vs 30W</small></span></div>',
                         unsafe_allow_html=True,
                     )
@@ -973,7 +982,7 @@ def render_nse500_screener():
                 st.info("No fresh Stage 2 entry currently meets all strong-momentum filters.")
             else:
                 momentum_cols = [
-                    "Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank",
+                    "Symbol", "Company", "Sector", "Microsector", "Price", "RS Rank",
                     "4W Return %", "12W Return %", "30W Slope %",
                     "Gap vs 30W %", "Volume vs 10W Avg", "52W High Gap %"
                 ]
@@ -1058,7 +1067,7 @@ def render_nse500_screener():
                 st.info("No Stage 1 stocks currently pass the broad RS, momentum and trend gates.")
             else:
                 early_cols = [
-                    "Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank",
+                    "Symbol", "Company", "Sector", "Microsector", "Price", "RS Rank",
                     "Early Accumulation Score", "Setup Grade", "4W Return %",
                     "12W Return %", "30W Slope %", "Gap vs 30W %",
                     "5W / Prior 10W Volume", "4W Range %", "52W High Gap %"
@@ -1080,7 +1089,7 @@ def render_nse500_screener():
             if fresh.empty:
                 st.info("No confirmed Stage 1 → Stage 2 transitions were detected in the latest completed week.")
             else:
-                fresh_cols = ["Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank", "Gap vs 30W %", "Extension", "Daily Change %"]
+                fresh_cols = ["Symbol", "Company", "Sector", "Microsector", "Price", "RS Rank", "Gap vs 30W %", "Extension", "Daily Change %"]
                 st.dataframe(fresh[fresh_cols], use_container_width=True, hide_index=True, height=min(360, 42 + 38 * len(fresh)))
                 st.download_button(
                     "Download fresh Stage 2 entries (CSV)",
@@ -1126,22 +1135,22 @@ def render_nse500_screener():
                 st.download_button("Download stock RS versus sector (CSV)", sector_stock_view[sector_rs_cols].to_csv(index=False).encode("utf-8"), "nse500_stock_rs_vs_sector.csv", "text/csv", key="download_nse500_rs_vs_sector")
             st.dataframe(sectors, use_container_width=True, hide_index=True, height=230)
 
-            st.markdown("""<div style="font-size:22px;font-weight:800;background:linear-gradient(90deg,#a78bfa,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Industry-level rotation · leaders and laggards</div>""", unsafe_allow_html=True)
-            st.caption("Industries ranked by median 4W/12W performance relative to the NSE 500 universe, with Stage 2 participation and advancing-stock breadth. Uses completed weekly bars.")
+            st.markdown("""<div style="font-size:22px;font-weight:800;background:linear-gradient(90deg,#a78bfa,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Microsector-level rotation · leaders and laggards</div>""", unsafe_allow_html=True)
+            st.caption("Microsectors ranked by median 4W/12W performance relative to the NSE 500 universe, with Stage 2 participation and advancing-stock breadth. Uses completed weekly bars.")
             if isinstance(industries, pd.DataFrame) and not industries.empty:
-                industry_period = st.segmented_control("Industry rotation ranking", ["4W", "12W"], default="12W", key="nse500_industry_rotation_period")
-                industry_metric = "4W RS vs NSE 500 (pp)" if industry_period == "4W" else "12W RS vs NSE 500 (pp)"
-                industry_view = industries.sort_values([industry_metric, "Median RS Rank"], ascending=False, na_position="last")
-                top_industries = industry_view.head(6)
-                bottom_industries = industry_view.tail(6).sort_values(industry_metric)
+                microsector_period = st.segmented_control("Microsector rotation ranking", ["4W", "12W"], default="12W", key="nse500_microsector_rotation_period")
+                microsector_metric = "4W RS vs NSE 500 (pp)" if microsector_period == "4W" else "12W RS vs NSE 500 (pp)"
+                microsector_view = industries.sort_values([microsector_metric, "Median RS Rank"], ascending=False, na_position="last")
+                top_microsectors = microsector_view.head(6)
+                bottom_microsectors = microsector_view.tail(6).sort_values(microsector_metric)
                 ic1, ic2 = st.columns(2)
                 with ic1:
-                    st.markdown("**LEADING INDUSTRIES**")
-                    st.dataframe(top_industries, use_container_width=True, hide_index=True, height=300)
+                    st.markdown("**LEADING MICROSECTORS**")
+                    st.dataframe(top_microsectors, use_container_width=True, hide_index=True, height=300)
                 with ic2:
-                    st.markdown("**LAGGING INDUSTRIES**")
-                    st.dataframe(bottom_industries, use_container_width=True, hide_index=True, height=300)
-                st.download_button("Download industry rotation (CSV)", industry_view.to_csv(index=False).encode("utf-8"), "nse500_industry_rotation.csv", "text/csv", key="download_nse500_industry_rotation")
+                    st.markdown("**LAGGING MICROSECTORS**")
+                    st.dataframe(bottom_microsectors, use_container_width=True, hide_index=True, height=300)
+                st.download_button("Download microsector rotation (CSV)", microsector_view.to_csv(index=False).encode("utf-8"), "nse500_microsector_rotation.csv", "text/csv", key="download_nse500_microsector_rotation")
             else:
                 st.info("Industry rotation data is unavailable for this scan.")
 
