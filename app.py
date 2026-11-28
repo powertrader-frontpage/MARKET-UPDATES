@@ -3482,12 +3482,11 @@ if active_page == "Main Dashboard":
                     # Dual-confirmation stock-strength scan: qualifying micro-sectors are retained.
                     # Validate the broad sector only where a reliable mapping and current zone exist.
                     # Unmapped groups remain included and are labelled transparently.
+                    # Canonical basket parent names are already the approved Sector labels.
+                    # Do not translate them through the retired legacy broad-group crosswalk.
                     micro_group_to_main_sector = {
-                        "Pharma": "Pharma", "Technology": "IT", "Industrials": "Infrastructure",
-                        "Media & Services": "Media", "Financials": "Financial Services",
-                        "Consumer": "Consumption", "Consumer Durables": "Consumption",
-                        "Power": "Energy", "Auto": "Auto", "Construction": "Infrastructure",
-                        "Real Estate": "Realty",
+                        str(parent_sector): str(parent_sector)
+                        for parent_sector, _symbols in MICRO_SECTORS.values()
                     }
                     current_main_zones = {item["Sector"]: item["Current zone"] for item in rotation_rows}
                     eligible_main_sectors = {
@@ -3503,12 +3502,17 @@ if active_page == "Main Dashboard":
                         # Where no reliable mapping exists, retain the stock on its qualifying micro-sector
                         # zone and label the broad-sector check as unavailable instead of excluding it.
                         strength_scan["Main sector zone"] = strength_scan["Main sector"].map(current_main_zones)
-                        mapped_rows = strength_scan["Main sector"].notna()
+                        # Apply a parent-sector zone filter only where an exact same-name
+                        # sector-index signal exists. Other canonical sectors remain eligible
+                        # on their own microsector zone; no guessed crosswalk is introduced.
+                        has_exact_sector_index = strength_scan["Main sector"].isin(current_main_zones)
                         strength_scan = strength_scan[
-                            (~mapped_rows) | strength_scan["Main sector zone"].isin(["Leading", "Improving"])
+                            (~has_exact_sector_index) | strength_scan["Main sector zone"].isin(["Leading", "Improving"])
                         ].copy()
-                        strength_scan["Main sector"] = strength_scan["Main sector"].fillna("Not mapped")
-                        strength_scan["Main sector zone"] = strength_scan["Main sector zone"].fillna("Not mapped · micro-sector only")
+                        strength_scan["Main sector"] = strength_scan["Main sector"].fillna("Unmapped")
+                        strength_scan["Main sector zone"] = strength_scan["Main sector zone"].fillna(
+                            "Not separately indexed · microsector zone governs"
+                        )
                         strength_scan["Micro sector zone"] = strength_scan["Micro sector"].map(
                             micro_df.set_index("Micro sector")["Zone"].to_dict()
                         )
