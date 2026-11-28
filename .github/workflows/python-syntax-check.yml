@@ -18,6 +18,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install validation dependencies
+        run: python -m pip install pandas numpy
       - name: Compile dashboard and scanner modules
         run: |
           python -m py_compile app.py nse500_screener.py canonical_microsector.py canonical_microsector_runtime.py canonical_microsectors.py classification_master.py price_symbol_aliases.py explosive_breakout_scanner.py historical_breakout_postmortem.py b1_fundamental_screener.py
