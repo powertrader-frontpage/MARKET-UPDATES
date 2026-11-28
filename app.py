@@ -2467,8 +2467,10 @@ if active_page == "Main Dashboard":
                     )
                 st.caption(
                     f"Price-covered microsectors: {microsector_metadata['microsectors_with_price_coverage']} · "
-                    f"single-stock baskets: {microsector_metadata['single_stock_microsectors']} · "
-                    f"baskets with 3+ stocks: {microsector_metadata['microsectors_with_3plus_stocks']}. "
+                    f"single-stock: {microsector_metadata['single_stock_microsectors']} · "
+                    f"two-stock: {microsector_metadata['two_stock_microsectors']} · "
+                    f"3+ stocks: {microsector_metadata['microsectors_with_3plus_stocks']} · "
+                    f"no price coverage: {microsector_metadata['microsectors_without_price_coverage']}. "
                     "Single-stock breadth is a stock-level proxy, not diversified group breadth."
                 )
                 if microsector_metadata["excluded_price_symbols"]:
