@@ -108,6 +108,10 @@ def load_canonical_microsectors():
             reference_group = reference_groups[0] if len(reference_groups) == 1 else "Mixed / legacy"
             baskets[str(microsector)] = (reference_group, symbols)
 
+    basket_sizes = [len(symbols) for _, symbols in baskets.values()]
+    single_stock_baskets = sum(size == 1 for size in basket_sizes)
+    three_plus_stock_baskets = sum(size >= 3 for size in basket_sizes)
+
     hierarchy_columns = [
         "NSE_Macro_Economic_Sector", "NSE_Sector",
         "NSE_Industry", "NSE_Basic_Industry",
@@ -126,6 +130,8 @@ def load_canonical_microsectors():
         "excluded_price_symbols": sorted(excluded_symbols.intersection(set(joined["Symbol"]))),
         "canonical_microsectors": int(master["MIT_Primary_Microsector"].nunique()),
         "microsectors_with_price_coverage": int(len(baskets)),
+        "single_stock_microsectors": int(single_stock_baskets),
+        "microsectors_with_3plus_stocks": int(three_plus_stock_baskets),
         "nse_hierarchy_populated_cells": hierarchy_populated,
         "nse_hierarchy_total_cells": int(len(joined) * len(hierarchy_columns)),
         "excluded_unresolved_count": int(len(excluded_symbols.intersection(set(joined["Symbol"])))),
