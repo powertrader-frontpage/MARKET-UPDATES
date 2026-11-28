@@ -12,6 +12,7 @@ import streamlit as st
 import yfinance as yf
 
 from stock_classification import build_classified_universe
+from canonical_microsector import canonical_microsector_lookup
 
 
 STAGE_1 = "Stage 1 · Base"
@@ -626,6 +627,11 @@ def _calculate(fyers_app_id="", fyers_access_token=""):
     # Add evidence-backed MIT labels without changing official Sector/Industry fields
     # or any technical/relative-strength calculations.
     result = build_classified_universe(result)
+    canonical_microsector_by_symbol = canonical_microsector_lookup()
+    result["Primary Microsector"] = (
+        result["Symbol"].astype(str).str.upper().map(canonical_microsector_by_symbol)
+        .fillna("Not in audited master")
+    )
     result = result.sort_values(["RS Rank", "Gap vs 30W %"], ascending=[False, False]).reset_index(drop=True)
 
     # Stock strength relative to the median return of its assigned sector/industry peer group.
@@ -860,7 +866,7 @@ def render_nse500_screener():
                 summary_cols = st.columns(4)
                 for col, label in zip(summary_cols, ["Leading", "Improving", "Weakening", "Lagging"]):
                     col.metric(label, int(strength_counts.get(label, 0)))
-                daily_breakout_cols = ["Symbol", "Company", "Sector", "Sector Strength", "Sector 4W RS vs NSE 500 (pp)", "Sector 12W RS vs NSE 500 (pp)", "Price", "Daily Breakout Date", "Daily Breakout Close", "Daily Breakout Resistance", "Daily Breakout Volume / 20D", "RS Rank", "Base Setup"]
+                daily_breakout_cols = ["Symbol", "Company", "Sector", "Primary Microsector", "Sector Strength", "Sector 4W RS vs NSE 500 (pp)", "Sector 12W RS vs NSE 500 (pp)", "Price", "Daily Breakout Date", "Daily Breakout Close", "Daily Breakout Resistance", "Daily Breakout Volume / 20D", "RS Rank", "Base Setup"]
                 def _highlight_sector_strength(value):
                     if value == "Leading":
                         return "background-color: #D9F2E3; color: #14532D; font-weight: 700;"
@@ -883,7 +889,7 @@ def render_nse500_screener():
             st.caption("A ranking aid, not a prediction. Strict mode applies hard confirmation filters and shows up to 20 strongest candidates; Broad mode ranks every current Stage 2 stock.")
             quality_mode = st.radio("Stage 2 view", ["Strict · Top 20", "Broad · All Stage 2"], horizontal=True, key="nse500_quality_mode")
             quality_frame = strict_stage2 if quality_mode == "Strict · Top 20" else ranked_stage2
-            quality_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Breakout Quality", "Base Setup", "Fresh B2", "Volume vs 10W Avg", "Sector Median RS", "30W Slope %", "Gap vs 30W %", "Base Count"]
+            quality_cols = ["Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank", "Breakout Quality", "Base Setup", "Fresh B2", "Volume vs 10W Avg", "Sector Median RS", "30W Slope %", "Gap vs 30W %", "Base Count"]
             if quality_frame.empty:
                 st.info("No stocks currently meet all strict breakout-quality filters. Switch to Broad mode to inspect all Stage 2 stocks.")
             else:
@@ -893,7 +899,7 @@ def render_nse500_screener():
             st.markdown("#### v8 · Current Stage 2 Winner-Profile Watchlist")
             st.caption("All current Stage 2 stocks ranked by historical winner-profile resemblance. Uses 12W momentum, 13W excess vs NIFTY 500, 30W position/slope, prior 52W high and a current Stage 2 duration proxy (not historical B1 base duration). Research ranking only; not a probability or buy signal. Missing benchmark data earns no relative-strength points.")
             v8_frame = current_stage2.sort_values(["v8 Setup Score", "RS Rank"], ascending=[False, False])
-            v8_cols = ["Symbol", "Company", "Sector", "Price", "v8 Setup Score", "Prior 12W %", "13W Excess vs NIFTY500 (pp)", "RS Rank", "30W Slope %", "Gap vs 30W %", "Base Setup", "Fresh B2", "Base Count", "New Stage 2"]
+            v8_cols = ["Symbol", "Company", "Sector", "Primary Microsector", "Price", "v8 Setup Score", "Prior 12W %", "13W Excess vs NIFTY500 (pp)", "RS Rank", "30W Slope %", "Gap vs 30W %", "Base Setup", "Fresh B2", "Base Count", "New Stage 2"]
             st.dataframe(v8_frame[v8_cols], use_container_width=True, hide_index=True, height=400)
             st.download_button("Download v8 Stage 2 watchlist (CSV)", v8_frame[v8_cols].to_csv(index=False).encode("utf-8"), "nse500_v8_current_stage2.csv", "text/csv", key="download_nse500_v8_stage2")
 
@@ -918,7 +924,7 @@ def render_nse500_screener():
                 for pos, (_, stock) in enumerate(leaders.iterrows(), 1):
                     st.markdown(
                         f'<div style="display:flex;justify-content:space-between;gap:10px;padding:9px 11px;border-bottom:1px solid #34413a;background:rgba(255,255,255,.025);">'
-                        f'<span><b>#{pos} {stock["Symbol"]}</b><small style="display:block;color:#aab6ae;">{stock["Sector"]} · {stock["Stage"]}</small></span>'
+                        f'<span><b>#{pos} {stock["Symbol"]}</b><small style="display:block;color:#aab6ae;">{stock["Sector"]} · {stock["Primary Microsector"]} · {stock["Stage"]}</small></span>'
                         f'<span style="text-align:right;color:#e5c46d;font-weight:800;">RS {int(stock["RS Rank"])}<small style="display:block;color:#aab6ae;">{float(stock["Gap vs 30W %"]):+.1f}% vs 30W</small></span></div>',
                         unsafe_allow_html=True,
                     )
@@ -967,7 +973,7 @@ def render_nse500_screener():
                 st.info("No fresh Stage 2 entry currently meets all strong-momentum filters.")
             else:
                 momentum_cols = [
-                    "Symbol", "Company", "Sector", "Price", "RS Rank",
+                    "Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank",
                     "4W Return %", "12W Return %", "30W Slope %",
                     "Gap vs 30W %", "Volume vs 10W Avg", "52W High Gap %"
                 ]
@@ -1052,7 +1058,7 @@ def render_nse500_screener():
                 st.info("No Stage 1 stocks currently pass the broad RS, momentum and trend gates.")
             else:
                 early_cols = [
-                    "Symbol", "Company", "Sector", "Price", "RS Rank",
+                    "Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank",
                     "Early Accumulation Score", "Setup Grade", "4W Return %",
                     "12W Return %", "30W Slope %", "Gap vs 30W %",
                     "5W / Prior 10W Volume", "4W Range %", "52W High Gap %"
@@ -1074,7 +1080,7 @@ def render_nse500_screener():
             if fresh.empty:
                 st.info("No confirmed Stage 1 → Stage 2 transitions were detected in the latest completed week.")
             else:
-                fresh_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Gap vs 30W %", "Extension", "Daily Change %"]
+                fresh_cols = ["Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank", "Gap vs 30W %", "Extension", "Daily Change %"]
                 st.dataframe(fresh[fresh_cols], use_container_width=True, hide_index=True, height=min(360, 42 + 38 * len(fresh)))
                 st.download_button(
                     "Download fresh Stage 2 entries (CSV)",
