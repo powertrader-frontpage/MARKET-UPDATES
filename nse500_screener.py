@@ -774,7 +774,7 @@ def render_nse500_screener():
 
             st.markdown("#### Current Stage 2 watchlist · all confirmed uptrends")
             st.caption(f"{len(current_stage2)} NSE 500 stocks currently meet the Stage 2 rules; fresh entries are flagged separately above.")
-            stage2_cols = ["Symbol", "Company", "Sector", "Price", "RS Rank", "Gap vs 30W %", "Extension", "New Stage 2"]
+            stage2_cols = ["Symbol", "Company", "Sector", "Primary Microsector", "Price", "RS Rank", "Gap vs 30W %", "Extension", "New Stage 2"]
             st.dataframe(current_stage2[stage2_cols], use_container_width=True, hide_index=True, height=360)
             st.download_button(
                 "Download all Stage 2 stocks (CSV)",
