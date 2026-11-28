@@ -3104,7 +3104,7 @@ if active_page == "Main Dashboard":
                         change = f"{prior_stock_zone} → {current_stock_zone}" if prior_stock_zone and current_stock_zone and prior_stock_zone != current_stock_zone else "No zone change"
                         if prior_stock_zone and current_stock_zone and prior_stock_zone != current_stock_zone:
                             constituent_transitions.append({"Stock":symbol.replace(".NS",""),"Transition":change})
-                        constituent_rows.append({"Stock":symbol.replace(".NS",""),"Primary Microsector":CANONICAL_MICROSECTOR_SYMBOL_MAP.get(symbol.replace(".NS","").upper(), "Not in audited master"),"Zone entry date":stock_zone_entry or "—","Days in current zone":stock_zone_days if stock_zone_days else "Insufficient history","Rotation zone":current_stock_zone,"Zone change (5 sessions)":change,"1D %":(last_close/previous_close-1)*100 if previous_close else np.nan,"1M %":(last_close/float(close.iloc[-min(22,len(close))])-1)*100,"3M %":(last_close/float(close.iloc[-min(64,len(close))])-1)*100,"1M vs NIFTY 500 (pp)":rel1_now,"3M vs NIFTY 500 (pp)":rel3_now,"Above 50 EMA":bool(last_close>ema50) if pd.notna(ema50) else "Insufficient history"})
+                        constituent_rows.append({"Stock":symbol.replace(".NS",""),"Microsector":CANONICAL_MICROSECTOR_SYMBOL_MAP.get(symbol.replace(".NS","").upper(), "Not in Nifty 500 mapping"),"Zone entry date":stock_zone_entry or "—","Days in current zone":stock_zone_days if stock_zone_days else "Insufficient history","Rotation zone":current_stock_zone,"Zone change (5 sessions)":change,"1D %":(last_close/previous_close-1)*100 if previous_close else np.nan,"1M %":(last_close/float(close.iloc[-min(22,len(close))])-1)*100,"3M %":(last_close/float(close.iloc[-min(64,len(close))])-1)*100,"1M vs NIFTY 500 (pp)":rel1_now,"3M vs NIFTY 500 (pp)":rel3_now,"Above 50 EMA":bool(last_close>ema50) if pd.notna(ema50) else "Insufficient history"})
                     if constituent_rows:
                         constituent_df = pd.DataFrame(constituent_rows)
                         st.caption(f"{sector_choice} · {len(constituent_df)} of {len(sector_symbols)} mapped constituents with usable price history. Stock zones compare relative 1M and 3M returns against NIFTY 500.")
@@ -3121,7 +3121,7 @@ if active_page == "Main Dashboard":
                         else:
                             st.info("No constituent stock zone changes detected over the latest five available sessions.")
                         st.markdown("**Strongest stocks in this sector**")
-                        st.dataframe(_style_rotation_table(constituent_df.sort_values("3M vs NIFTY 500 (pp)",ascending=False).head(5)[["Stock","Primary Microsector","Rotation zone","1D %","1M %","3M %","1M vs NIFTY 500 (pp)","3M vs NIFTY 500 (pp)"]], zone_columns=("Rotation zone",)),use_container_width=True,hide_index=True)
+                        st.dataframe(_style_rotation_table(constituent_df.sort_values("3M vs NIFTY 500 (pp)",ascending=False).head(5)[["Stock","Microsector","Rotation zone","1D %","1M %","3M %","1M vs NIFTY 500 (pp)","3M vs NIFTY 500 (pp)"]], zone_columns=("Rotation zone",)),use_container_width=True,hide_index=True)
                     else:
                         st.warning("No constituent price history returned for this sector. No sample values are shown.")
         
