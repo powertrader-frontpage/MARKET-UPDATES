@@ -17,7 +17,7 @@ from streamlit_autorefresh import st_autorefresh
 import streamlit.components.v1 as components
 import yfinance as yf
 from nse500_screener import render_nse500_screener
-from canonical_microsector import load_canonical_microsectors, relative_rotation_zone, rotation_zone_from_relative_strength
+from canonical_microsector import load_canonical_microsectors, canonical_microsector_lookup, relative_rotation_zone, rotation_zone_from_relative_strength
 
 import hashlib
 import hmac
@@ -1007,7 +1007,7 @@ def get_auto_universe(period: str = "2y") -> pd.DataFrame:
         combined = pd.concat(rows,ignore_index=True)
         try:
             _, _, _canonical_master = load_canonical_microsectors()
-            _micro_map = _canonical_master.set_index("Symbol")["MIT_Primary_Microsector"].to_dict()
+            _micro_map = canonical_microsector_lookup()
             combined["Primary Microsector"] = combined["Symbol"].astype(str).str.upper().map(_micro_map).fillna("Unclassified")
         except Exception:
             combined["Primary Microsector"] = "Unclassified"
@@ -2339,7 +2339,7 @@ if active_page == "Main Dashboard":
                     "Consumption": ["TITAN.NS","TRENT.NS","DMART.NS","ETERNAL.NS","NYKAA.NS","INDIGO.NS","JUBLFOOD.NS","PAGEIND.NS","ASIANPAINT.NS","HAVELLS.NS"],
                 }
                 _, _, _shared_classification_for_rotation = load_canonical_microsectors()
-                _primary_microsector_by_symbol = _shared_classification_for_rotation.set_index("Symbol")["MIT_Primary_Microsector"].to_dict()
+                _primary_microsector_by_symbol = canonical_microsector_lookup()
                 with st.expander("Sector constituent stocks · stock-level rotation and transitions", expanded=True):
                     sector_choice = st.selectbox("Choose sector to inspect its stocks", sorted(SECTOR_STOCKS.keys()), key="sector_stock_rotation_choice")
                     sector_symbols = SECTOR_STOCKS[sector_choice]
