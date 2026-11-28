@@ -23,6 +23,7 @@ from canonical_microsector import (
     canonical_microsector_lookup,
     map_to_canonical_price_ticker,
     relative_rotation_zone,
+    rotation_zone_from_relative_strength,
 )
 from ranking_snapshot import save_ranking_snapshot_to_github
 from price_symbol_aliases import load_price_symbol_aliases, map_price_symbol
@@ -615,11 +616,13 @@ try:
         CANONICAL_MICROSECTOR_MASTER,
     ) = load_canonical_microsectors()
     MICRO_SECTORS = CANONICAL_MICROSECTOR_BASKETS
+    CANONICAL_MICROSECTOR_SYMBOL_MAP = canonical_microsector_lookup()
     CANONICAL_MICROSECTOR_LOAD_ERROR = None
 except Exception as _canonical_basket_error:
     CANONICAL_MICROSECTOR_BASKETS = {}
     CANONICAL_MICROSECTOR_METADATA = {}
     CANONICAL_MICROSECTOR_MASTER = pd.DataFrame()
+    CANONICAL_MICROSECTOR_SYMBOL_MAP = {}
     CANONICAL_MICROSECTOR_LOAD_ERROR = str(_canonical_basket_error)
     MICRO_SECTORS = {}
 
@@ -3101,7 +3104,7 @@ if active_page == "Main Dashboard":
                         change = f"{prior_stock_zone} → {current_stock_zone}" if prior_stock_zone and current_stock_zone and prior_stock_zone != current_stock_zone else "No zone change"
                         if prior_stock_zone and current_stock_zone and prior_stock_zone != current_stock_zone:
                             constituent_transitions.append({"Stock":symbol.replace(".NS",""),"Transition":change})
-                        constituent_rows.append({"Stock":symbol.replace(".NS",""),"Zone entry date":stock_zone_entry or "—","Days in current zone":stock_zone_days if stock_zone_days else "Insufficient history","Rotation zone":current_stock_zone,"Zone change (5 sessions)":change,"1D %":(last_close/previous_close-1)*100 if previous_close else np.nan,"1M %":(last_close/float(close.iloc[-min(22,len(close))])-1)*100,"3M %":(last_close/float(close.iloc[-min(64,len(close))])-1)*100,"1M vs NIFTY 500 (pp)":rel1_now,"3M vs NIFTY 500 (pp)":rel3_now,"Above 50 EMA":bool(last_close>ema50) if pd.notna(ema50) else "Insufficient history"})
+                        constituent_rows.append({"Stock":symbol.replace(".NS",""),"Primary Microsector":CANONICAL_MICROSECTOR_SYMBOL_MAP.get(symbol.replace(".NS","").upper(), "Not in audited master"),"Zone entry date":stock_zone_entry or "—","Days in current zone":stock_zone_days if stock_zone_days else "Insufficient history","Rotation zone":current_stock_zone,"Zone change (5 sessions)":change,"1D %":(last_close/previous_close-1)*100 if previous_close else np.nan,"1M %":(last_close/float(close.iloc[-min(22,len(close))])-1)*100,"3M %":(last_close/float(close.iloc[-min(64,len(close))])-1)*100,"1M vs NIFTY 500 (pp)":rel1_now,"3M vs NIFTY 500 (pp)":rel3_now,"Above 50 EMA":bool(last_close>ema50) if pd.notna(ema50) else "Insufficient history"})
                     if constituent_rows:
                         constituent_df = pd.DataFrame(constituent_rows)
                         st.caption(f"{sector_choice} · {len(constituent_df)} of {len(sector_symbols)} mapped constituents with usable price history. Stock zones compare relative 1M and 3M returns against NIFTY 500.")
@@ -3118,7 +3121,7 @@ if active_page == "Main Dashboard":
                         else:
                             st.info("No constituent stock zone changes detected over the latest five available sessions.")
                         st.markdown("**Strongest stocks in this sector**")
-                        st.dataframe(_style_rotation_table(constituent_df.sort_values("3M vs NIFTY 500 (pp)",ascending=False).head(5)[["Stock","Rotation zone","1D %","1M %","3M %","1M vs NIFTY 500 (pp)","3M vs NIFTY 500 (pp)"]], zone_columns=("Rotation zone",)),use_container_width=True,hide_index=True)
+                        st.dataframe(_style_rotation_table(constituent_df.sort_values("3M vs NIFTY 500 (pp)",ascending=False).head(5)[["Stock","Primary Microsector","Rotation zone","1D %","1M %","3M %","1M vs NIFTY 500 (pp)","3M vs NIFTY 500 (pp)"]], zone_columns=("Rotation zone",)),use_container_width=True,hide_index=True)
                     else:
                         st.warning("No constituent price history returned for this sector. No sample values are shown.")
         
@@ -3322,11 +3325,8 @@ if active_page == "Main Dashboard":
                                 "3M %": ret3, "6M %": ret6, "1Y %": ret1y,
                                 "1M vs NIFTY 500 (pp)": rel1_export, "3M vs NIFTY 500 (pp)": rel3_export,
                                 "Stock Rotation Zone": (
-                                    "Leading" if pd.notna(rel1_export) and pd.notna(rel3_export) and rel1_export >= 0 and rel3_export >= 0 else
-                                    "Weakening" if pd.notna(rel1_export) and pd.notna(rel3_export) and rel3_export >= 0 else
-                                    "Improving" if pd.notna(rel1_export) and pd.notna(rel3_export) and rel1_export >= 0 else
-                                    "Lagging" if pd.notna(rel1_export) and pd.notna(rel3_export) else
-                                    "Insufficient data"
+                                    relative_rotation_zone(stock_aligned_export)
+                                    if not stock_aligned_export.empty else "Insufficient data"
                                 ),
                                 "Days in current zone": stock_zone_days,
                                 "Zone entry date": stock_zone_entry,
@@ -3375,7 +3375,7 @@ if active_page == "Main Dashboard":
                     def _micro_zone(row):
                         ahead = pd.notna(row["3M vs NIFTY 500 (pp)"]) and row["3M vs NIFTY 500 (pp)"] >= 0
                         rising = pd.notna(row["1M vs NIFTY 500 (pp)"]) and row["1M vs NIFTY 500 (pp)"] >= 0
-                        return "Leading" if ahead and rising else "Weakening" if ahead else "Improving" if rising else "Lagging"
+                        return rotation_zone_from_relative_strength(row["1M vs NIFTY 500 (pp)"], row["3M vs NIFTY 500 (pp)"])
                     micro_df["Zone"] = micro_df.apply(_micro_zone, axis=1)
                     # Share the exact Main Dashboard microsector rotation zones with HVQ.
                     st.session_state["master_microsector_rotation_zones"] = dict(zip(
