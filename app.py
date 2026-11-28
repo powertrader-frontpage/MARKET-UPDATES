@@ -2860,8 +2860,13 @@ if active_page == "Main Dashboard":
                     except Exception:
                         pass
                     return pd.Series(dtype=float)
-                benchmark_raw = _download_daily(("^CRSLDX",))
-                canonical_benchmark = _series(benchmark_raw, "^CRSLDX", "Close")
+                benchmark_frame, benchmark_error = get_history("^CRSLDX", "6mo", "1d")
+                if not benchmark_frame.empty:
+                    benchmark_frame = benchmark_frame.dropna(subset=["Date", "Close"]).sort_values("Date").drop_duplicates("Date", keep="last").copy()
+                    benchmark_frame["_day"] = pd.to_datetime(benchmark_frame["Date"]).dt.date
+                    canonical_benchmark = benchmark_frame.set_index("_day")["Close"]
+                else:
+                    canonical_benchmark = pd.Series(dtype=float)
                 if canonical_benchmark.empty:
                     st.warning("NIFTY 500 benchmark history is unavailable. Canonical sector zones are withheld.")
                 elif not canonical_sector_raw.empty:
@@ -2870,6 +2875,8 @@ if active_page == "Main Dashboard":
                         for symbol in symbols:
                             close = _canonical_sector_close(symbol)
                             if len(close) >= 12:
+                                close = close.copy()
+                                close.index = pd.to_datetime(close.index).date
                                 close_columns[symbol] = close
                         if not close_columns:
                             continue
