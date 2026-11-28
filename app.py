@@ -3221,9 +3221,12 @@ if active_page == "Main Dashboard":
                     st.error(f"Canonical microsector baskets could not be loaded; no legacy basket results are substituted. Details: {CANONICAL_MICROSECTOR_LOAD_ERROR}")
                 else:
                     st.caption(
-                        f"Canonical primary taxonomy · {CANONICAL_MICROSECTOR_METADATA.get('canonical_microsectors', 0)} approved groups · "
-                        f"{CANONICAL_MICROSECTOR_METADATA.get('eligible_price_stocks', 0)} unambiguous price-mapped stocks. "
-                        "Single-stock groups are stock-level proxies; legacy broad-group labels are reference context only, not official NSE hierarchy."
+                        f"TRIAL TAXONOMY · {CANONICAL_MICROSECTOR_METADATA.get('master_stocks', 0)} stocks · "
+                        f"{CANONICAL_MICROSECTOR_METADATA.get('sectors', 0)} sectors · "
+                        f"{CANONICAL_MICROSECTOR_METADATA.get('canonical_microsectors', 0)} microsectors. "
+                        f"{CANONICAL_MICROSECTOR_METADATA.get('detail_master_matches', 0)} stocks joined to the detailed research master by exact NSE symbol; "
+                        f"{CANONICAL_MICROSECTOR_METADATA.get('draft_assignments', 0)} rotation assignments are marked Draft - verify. "
+                        "Price-history availability is validated separately at runtime. Single-stock microsectors are stock-level proxies."
                     )
                 micro_tickers = sorted({ticker for _, tickers in MICRO_SECTORS.values() for ticker in tickers} | {"^CRSLDX"})
                 @st.cache_data(ttl=900, show_spinner=False)
