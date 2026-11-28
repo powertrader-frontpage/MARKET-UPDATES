@@ -2435,6 +2435,7 @@ if active_page == "Main Dashboard":
                 st.markdown("""<div style="font-size:clamp(24px,3vw,34px);font-weight:850;background:linear-gradient(90deg,#a78bfa,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Micro Sector Rotation</div>""", unsafe_allow_html=True)
                 st.caption("Explore leading, improving, weakening and lagging micro industries, compare their strength against NIFTY 500, and drill down to constituent stocks.")
                 st.caption("Canonical primary-microsector equal-weight baskets · existing 1M/3M/6M returns, 50-EMA breadth and 25/35/25/15 ranking weights are preserved. Public prices may be delayed. This is a research tool, not investment advice.")
+                st.caption("Historical candles in this preview still use the existing Yahoo Finance route. FYERS-primary historical data for the full constituent universe remains a separate pending integration.")
                 # Canonical primary membership is loaded from the verified 422-stock master.
                 # Legacy broad groups remain display-only references until official NSE hierarchy
                 # fields are completed; they are not used to assign canonical sector identities.
