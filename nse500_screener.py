@@ -1152,7 +1152,7 @@ def render_nse500_screener():
                     st.dataframe(bottom_microsectors, use_container_width=True, hide_index=True, height=300)
                 st.download_button("Download microsector rotation (CSV)", microsector_view.to_csv(index=False).encode("utf-8"), "nse500_microsector_rotation.csv", "text/csv", key="download_nse500_microsector_rotation")
             else:
-                st.info("Industry rotation data is unavailable for this scan.")
+                st.info("Microsector rotation data is unavailable for this scan.")
 
             # Sector-wise Stage 2 participation: fresh Stage 2 entries and B2 base stocks.
             fresh_sector_stocks = results[
