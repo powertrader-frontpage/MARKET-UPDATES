@@ -17,7 +17,7 @@ from streamlit_autorefresh import st_autorefresh
 import streamlit.components.v1 as components
 import yfinance as yf
 from nse500_screener import render_nse500_screener
-from canonical_microsector import load_canonical_microsectors, relative_rotation_zone
+from canonical_microsector import load_canonical_microsectors, relative_rotation_zone, rotation_zone_from_relative_strength
 
 import hashlib
 import hmac
@@ -2386,7 +2386,7 @@ if active_page == "Main Dashboard":
                         rel3_now = (aligned_stock["stock"].iloc[-1] / aligned_stock["stock"].iloc[-min(64,len(aligned_stock))] - 1) * 100 - (aligned_stock["bench"].iloc[-1] / aligned_stock["bench"].iloc[-min(64,len(aligned_stock))] - 1) * 100
                         change = f"{prior_stock_zone} → {current_stock_zone}" if prior_stock_zone and current_stock_zone and prior_stock_zone != current_stock_zone else "No zone change"
                         if prior_stock_zone and current_stock_zone and prior_stock_zone != current_stock_zone:
-                            constituent_transitions.append({"Stock":symbol.replace(".NS",""),"Transition":change})
+                            constituent_transitions.append({"Stock":symbol.replace(".NS",""),"Primary Microsector":_primary_microsector_by_symbol.get(symbol.replace(".NS",""),"Unclassified"),"Transition":change})
                         constituent_rows.append({"Stock":symbol.replace(".NS",""),"Primary Microsector":_primary_microsector_by_symbol.get(symbol.replace(".NS",""),"Unclassified"),"Rotation zone":current_stock_zone,"Zone change (5 sessions)":change,"1D %":(last_close/previous_close-1)*100 if previous_close else np.nan,"1M %":(last_close/float(close.iloc[-min(22,len(close))])-1)*100,"3M %":(last_close/float(close.iloc[-min(64,len(close))])-1)*100,"1M vs NIFTY 500 (pp)":rel1_now,"3M vs NIFTY 500 (pp)":rel3_now,"Above 50 EMA":bool(last_close>ema50) if pd.notna(ema50) else "Insufficient history"})
                     if constituent_rows:
                         constituent_df = pd.DataFrame(constituent_rows)
@@ -2545,11 +2545,12 @@ if active_page == "Main Dashboard":
                     bench3 = bench.iloc[-1] / bench.iloc[-min(64, len(bench))] * 100 - 100 if len(bench) >= 64 else np.nan
                     micro_df["1M vs NIFTY 500 (pp)"] = micro_df["1M %"] - bench1
                     micro_df["3M vs NIFTY 500 (pp)"] = micro_df["3M %"] - bench3
-                    def _micro_zone(row):
-                        ahead = pd.notna(row["3M vs NIFTY 500 (pp)"]) and row["3M vs NIFTY 500 (pp)"] >= 0
-                        rising = pd.notna(row["1M vs NIFTY 500 (pp)"]) and row["1M vs NIFTY 500 (pp)"] >= 0
-                        return "Leading" if ahead and rising else "Weakening" if ahead else "Improving" if rising else "Lagging"
-                    micro_df["Zone"] = micro_df.apply(_micro_zone, axis=1)
+                    micro_df["Zone"] = micro_df.apply(
+                        lambda row: rotation_zone_from_relative_strength(
+                            row["1M vs NIFTY 500 (pp)"], row["3M vs NIFTY 500 (pp)"]
+                        ),
+                        axis=1,
+                    )
                     micro_df = micro_df.sort_values("Score", ascending=False).reset_index(drop=True)
                     latest_dates = [s.index[-1] for s in [bench] if not s.empty]
                     asof = pd.Timestamp(latest_dates[0]).strftime("%d %b %Y") if latest_dates else "date unavailable"
@@ -2693,7 +2694,7 @@ if active_page == "Main Dashboard":
                         previous_zone = relative_rotation_zone(stock_aligned, len(stock_aligned)-6) if len(stock_aligned) >= 27 else None
                         transition = f"{previous_zone} → {current_zone}" if previous_zone and current_zone and previous_zone != current_zone else "No zone change"
                         if previous_zone and current_zone and previous_zone != current_zone:
-                            stock_transition_rows.append({"Stock":symbol.replace(".NS",""),"Transition":transition})
+                            stock_transition_rows.append({"Stock":symbol.replace(".NS",""),"Primary Microsector":_primary_microsector_by_symbol.get(symbol.replace(".NS",""),"Unclassified"),"Transition":transition})
                         rel1_value = (last / float(close.iloc[-min(22,len(close))]) - 1) * 100 - (float(bench.iloc[-1]) / float(bench.iloc[-min(22,len(bench))]) - 1) * 100 if len(bench) >= 22 else np.nan
                         rel3_value = (last / float(close.iloc[-min(64,len(close))]) - 1) * 100 - (float(bench.iloc[-1]) / float(bench.iloc[-min(64,len(bench))]) - 1) * 100 if len(bench) >= 64 else np.nan
                         drill_rows.append({"Stock":symbol.replace(".NS",""),"Primary Microsector":_primary_microsector_by_symbol.get(symbol.replace(".NS",""),"Unclassified"),"Rotation zone":current_zone,"Zone change (5 sessions)":transition,"Latest close":last,"1D %":(last/prev-1)*100 if prev else np.nan,"1M %":(last/close.iloc[-min(22,len(close))]-1)*100,"3M %":(last/close.iloc[-min(64,len(close))]-1)*100,"1M vs NIFTY 500 (pp)":rel1_value,"3M vs NIFTY 500 (pp)":rel3_value,"Above 50 EMA":bool(last>e50) if pd.notna(e50) else "Insufficient history"})
