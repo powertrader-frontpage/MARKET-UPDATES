@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from canonical_microsector import load_canonical_microsectors, canonical_microsector_lookup
+from canonical_microsector import load_canonical_microsectors, canonical_microsector_lookup, map_to_canonical_price_ticker
 
 
 def main():
@@ -21,6 +21,10 @@ def main():
     assert sum(len(tickers) for _, tickers in baskets.values()) == metadata["eligible_price_stocks"]
     assert len({ticker for _, tickers in baskets.values() for ticker in tickers}) == metadata["eligible_price_stocks"]
     assert "GFL" in metadata["excluded_price_symbols"], metadata
+    assert map_to_canonical_price_ticker("AMARAJABAT.NS") == "ARE&M.NS"
+    assert map_to_canonical_price_ticker("TATAMOTORS.NS") == "TMPV.NS"
+    assert map_to_canonical_price_ticker("GFL.NS") == "GFL.NS"
+    assert map_to_canonical_price_ticker("^CRSLDX") == "^CRSLDX"
 
     for old, current in {
         "AMARAJABAT": "ARE&M",
