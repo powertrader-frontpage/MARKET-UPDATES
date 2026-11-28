@@ -17,7 +17,7 @@ from streamlit_autorefresh import st_autorefresh
 import streamlit.components.v1 as components
 import yfinance as yf
 from nse500_screener import render_nse500_screener
-from canonical_microsector import load_canonical_microsectors, canonical_microsector_lookup, relative_rotation_zone, rotation_zone_from_relative_strength
+from canonical_microsector import load_canonical_microsectors, canonical_microsector_lookup, map_to_canonical_price_ticker, relative_rotation_zone, rotation_zone_from_relative_strength
 
 import hashlib
 import hmac
@@ -973,8 +973,10 @@ AUTO_UNIVERSE = {
 def get_auto_universe(period: str = "2y") -> pd.DataFrame:
     """Fetch actual daily OHLCV for a fixed large-cap universe; return empty data on source failure."""
     tickers = list(AUTO_UNIVERSE)
+    price_tickers = {ticker: map_to_canonical_price_ticker(ticker) for ticker in tickers}
+    download_tickers = sorted(set(price_tickers.values()))
     try:
-        raw = yf.download(tickers, period=period, interval="1d", auto_adjust=False, group_by="ticker",
+        raw = yf.download(download_tickers, period=period, interval="1d", auto_adjust=False, group_by="ticker",
                           threads=False, progress=False, actions=False)
         if raw is None or raw.empty:
             return pd.DataFrame()
@@ -982,9 +984,10 @@ def get_auto_universe(period: str = "2y") -> pd.DataFrame:
         for ticker in tickers:
             try:
                 if isinstance(raw.columns, pd.MultiIndex):
-                    if ticker not in raw.columns.get_level_values(0):
+                    price_ticker = price_tickers[ticker]
+                    if price_ticker not in raw.columns.get_level_values(0):
                         continue
-                    part=raw[ticker].copy()
+                    part=raw[price_ticker].copy()
                 else:
                     part=raw.copy()
                 part=part.reset_index()
@@ -2343,7 +2346,8 @@ if active_page == "Main Dashboard":
                 with st.expander("Sector constituent stocks · stock-level rotation and transitions", expanded=True):
                     sector_choice = st.selectbox("Choose sector to inspect its stocks", sorted(SECTOR_STOCKS.keys()), key="sector_stock_rotation_choice")
                     sector_symbols = SECTOR_STOCKS[sector_choice]
-                    sector_stock_tickers = tuple(sorted(set(sector_symbols + ["^CRSLDX"])))
+                    sector_price_tickers = {symbol: map_to_canonical_price_ticker(symbol) for symbol in sector_symbols}
+                    sector_stock_tickers = tuple(sorted(set(sector_price_tickers.values()) | {"^CRSLDX"}))
                     @st.cache_data(ttl=900, show_spinner=False)
                     def _sector_stock_download(symbols):
                         try:
@@ -2370,7 +2374,7 @@ if active_page == "Main Dashboard":
                     constituent_rows = []
                     constituent_transitions = []
                     for symbol in sector_symbols:
-                        close = _sector_stock_close(symbol)
+                        close = _sector_stock_close(sector_price_tickers[symbol])
                         if len(close) < 60 or len(sector_bench) < 60:
                             continue
                         close = close.sort_index()
@@ -3015,7 +3019,8 @@ if active_page == "Sector Leadership & Heatmap":
                         stock_leaders = []
                         with st.spinner(f'Ranking {leader["Sector"]} stocks…'):
                             for stock_name, stock_ticker in stock_universe:
-                                stock_df, stock_err = get_history(stock_ticker, "3mo", "1d")
+                                stock_price_ticker = map_to_canonical_price_ticker(stock_ticker)
+                                stock_df, stock_err = get_history(stock_price_ticker, "3mo", "1d")
                                 if stock_df.empty:
                                     continue
                                 stock_close = pd.to_numeric(stock_df["Close"], errors="coerce").dropna()
@@ -3023,7 +3028,7 @@ if active_page == "Sector Leadership & Heatmap":
                                     stock_return = (float(stock_close.iloc[-1]) / float(stock_close.iloc[-6]) - 1) * 100
                                     _stock_symbol = stock_ticker.replace(".NS", "").upper()
                                     stock_leaders.append({
-                                        "Stock": stock_name, "Ticker": stock_ticker,
+                                        "Stock": stock_name, "Ticker": stock_price_ticker,
                                         "Primary Microsector": _primary_microsector_by_symbol.get(_stock_symbol, "Unclassified"),
                                         "1W return (%)": stock_return
                                     })
@@ -3081,7 +3086,8 @@ if active_page == "Sector Leadership & Heatmap":
         st.session_state["nifty50_heatmap_loaded"] = True
     if st.session_state.get("nifty50_heatmap_loaded", False):
         with st.spinner("Loading NIFTY 50 constituent performance…"):
-            heatmap_df = _nifty50_heatmap_data(tuple(NIFTY50_HEATMAP_SYMBOLS))
+            heatmap_symbols = tuple(sorted(set(map_to_canonical_price_ticker(symbol) for symbol in NIFTY50_HEATMAP_SYMBOLS)))
+            heatmap_df = _nifty50_heatmap_data(heatmap_symbols)
         if heatmap_df.empty:
             st.warning("NIFTY 50 heatmap data is temporarily unavailable from the public data source.")
         else:
